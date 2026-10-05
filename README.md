@@ -42,7 +42,11 @@ Nothing big lives in this repo.
   names (standardize adds the `DEF-` prefix).
 - **skin**: keeps IN's skeleton and writes only new JOINTS_0/WEIGHTS_0
   (TokenRig's skin-only mode on the given bones). This is the weightforge
-  candidate.
+  candidate. Twist/helper bones (motionforge's `DEF-*_twist.*`, marked by
+  `extras.hll_helper`) share their driver's joint, so the model would see
+  two joints in one place and match its output back wrongly (seen: thigh
+  weights landing on the thigh helpers). `skin` runs the model on a copy
+  without them and gives them zero weight; weightforge's fix weights them.
 - **joints**: rigforge hints from any rigged GLB.
 
 `R.json` is genforge's adapter contract: `{"ok", "outputs" (relative to
@@ -66,7 +70,8 @@ Over four Andras runs the weightforge score stayed in 44-48 raw and
 
 Fast tests, no model: GLB IO, humanoid naming (both facings, rejects
 non-humanoids), skin-only weight mapping (skeleton untouched, only
-weights change), joints doc, report schema, exit 2 without a report.
+weights change), helper bones hidden from the model, joints doc, report
+schema, exit 2 without a report.
 The real-model numbers are in `docs/evaluation.md`.
 
 ## Port notes (patches/apple-silicon.patch)

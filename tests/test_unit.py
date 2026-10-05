@@ -68,6 +68,45 @@ class T(unittest.TestCase):
         mapping, missing = name_humanoid(names, parents, heads)
         self.assertTrue(missing)
 
+    def with_helper(self, name, extras=True):
+        """The fixture plus a helper on l_arm (motionforge's twist bone layout)."""
+        g = Glb.read(self.glb(name))
+        nodes, skin = g.js["nodes"], g.js["skins"][0]
+        arm = [j for j in skin["joints"] if nodes[j]["name"] == "l_arm"][0]
+        sh = [i for i, n in enumerate(nodes) if arm in n.get("children", [])][0]
+        node = {"name": "DEF-l_arm_twist.L" if not extras else "helper",
+                "translation": nodes[arm]["translation"]}
+        if extras:
+            node["extras"] = {"hll_helper": {"driver": "l_arm", "share": 0.5}}
+        nodes.append(node)
+        nodes[sh]["children"].append(len(nodes) - 1)
+        ibm = g.accessor(skin["inverseBindMatrices"])
+        k = skin["joints"].index(arm)
+        skin["joints"].append(len(nodes) - 1)
+        skin["inverseBindMatrices"] = g.push_accessor(np.vstack([ibm, ibm[k]]), "MAT4")
+        return g, k
+
+    def test_helpers_are_hidden_from_the_model(self):
+        g, arm = self.with_helper("h.glb")
+        n = len(HUMANOID)
+        self.assertEqual(g.helper_joints(), {n: arm})
+        bare, kept = g.without_helpers()
+        self.assertEqual(kept, list(range(n)))
+        self.assertEqual(bare.skeleton()[0], [x for x, _, _ in HUMANOID])
+        np.testing.assert_allclose(bare.skeleton()[2], Glb.read(self.glb("plain.glb")).skeleton()[2], atol=1e-6)
+        # The original keeps its helper; written copies read back.
+        out = os.path.join(self.tmp, "bare.glb")
+        bare.write(out)
+        self.assertEqual(len(Glb.read(out).skeleton()[0]), n)
+        self.assertEqual(len(g.skeleton()[0]), n + 1)
+
+    def test_helper_by_name(self):
+        # Name convention needs a driver called <base>.<side>: rename l_arm.
+        g, arm = self.with_helper("n.glb", extras=False)
+        skin = g.js["skins"][0]
+        g.js["nodes"][skin["joints"][arm]]["name"] = "DEF-l_arm.L"
+        self.assertEqual(g.helper_joints(), {len(HUMANOID): arm})
+
     def test_map_weights_keeps_skeleton_changes_only_weights(self):
         orig_p = self.glb("orig.glb")
         # "model output": same mesh, joints renamed bone_N, heads quantized, weights moved to the parent joint

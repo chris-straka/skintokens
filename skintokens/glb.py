@@ -130,6 +130,75 @@ class Glb:
         P = [self.accessor(p["attributes"]["POSITION"]) for m in self.js.get("meshes", []) for p in m["primitives"]]
         return np.concatenate(P)
 
+    def helper_joints(self) -> dict[int, int]:
+        """{helper: driver} as first-skin joint indices.
+
+        Twist/helper bones (motionforge's HLL skeleton: DEF-upper_arm_twist.L,
+        DEF-thigh_twist.R, ...) sit on their driver's joint and turn by a share
+        of it. Marked by node extras.hll_helper.driver, else by the name
+        `<driver>_twist.<side>`.
+        """
+        skins = self.js.get("skins") or []
+        if not skins:
+            return {}
+        joints = skins[0]["joints"]
+        nodes = self.js["nodes"]
+        names = [nodes[j].get("name", "") for j in joints]
+        out = {}
+        for k, j in enumerate(joints):
+            extra = (nodes[j].get("extras") or {}).get("hll_helper") or {}
+            driver = extra.get("driver")
+            if driver is None:
+                base, _, side = names[k].rpartition(".")
+                if side in ("L", "R") and base.endswith("_twist"):
+                    driver = f"{base[: -len('_twist')]}.{side}"
+            if driver in names and names.index(driver) != k:
+                out[k] = names.index(driver)
+        return out
+
+    def without_helpers(self) -> tuple["Glb", list[int]]:
+        """A copy whose skin leaves out the helper joints (their weight goes
+        to the driver; the helper nodes are detached from the hierarchy).
+        Returns (copy, kept): kept[i] is the original index of joint i."""
+        import copy
+
+        helpers = self.helper_joints()
+        g = Glb(copy.deepcopy(self.js), bytearray(self.bin))
+        if not helpers:
+            return g, list(range(len(self.js["skins"][0]["joints"])))
+        skin = g.js["skins"][0]
+        joints = skin["joints"]
+        kept = [k for k in range(len(joints)) if k not in helpers]
+        new_of = {old: new for new, old in enumerate(kept)}
+        for h, d in helpers.items():
+            new_of[h] = new_of[d]
+        ibm = self.accessor(skin["inverseBindMatrices"])[kept]
+        skin["inverseBindMatrices"] = g.push_accessor(ibm, "MAT4")
+        dropped = {joints[h] for h in helpers}
+        skin["joints"] = [joints[k] for k in kept]
+        for nd in g.js["nodes"]:
+            if "children" in nd:
+                nd["children"] = [c for c in nd["children"] if c not in dropped]
+                if not nd["children"]:
+                    del nd["children"]
+        for p in g.skinned_primitives():
+            a = p["attributes"]
+            J = g.accessor(a["JOINTS_0"]).astype(int)
+            g.set_accessor(a["JOINTS_0"], np.vectorize(new_of.get)(J))
+        return g, kept
+
+    def push_accessor(self, arr: np.ndarray, kind: str) -> int:
+        """Append float32 rows as a new accessor; returns its index."""
+        data = np.asarray(arr, dtype="<f4").tobytes()
+        self.bin += b"\0" * ((4 - len(self.bin) % 4) % 4)
+        views = self.js.setdefault("bufferViews", [])
+        views.append({"buffer": 0, "byteOffset": len(self.bin), "byteLength": len(data)})
+        self.bin += data
+        self.js["buffers"][0]["byteLength"] = len(self.bin)
+        accs = self.js.setdefault("accessors", [])
+        accs.append({"bufferView": len(views) - 1, "componentType": 5126, "count": len(arr), "type": kind})
+        return len(accs) - 1
+
     def rename_joints(self, mapping: dict[str, str]) -> None:
         skins = self.js.get("skins") or []
         if not skins:

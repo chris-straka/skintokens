@@ -204,15 +204,29 @@ def cmd_skin(a):
         raise Usage(f"{a.input}: skin needs a rigged GLB ({e})") from e
     report = a.report or os.path.join(os.path.dirname(os.path.abspath(a.out)), "result.json")
     t0 = time.time()
+    # Helper bones share their driver's joint: the model would see two
+    # joints in one place and its output could not be matched back. It skins
+    # the skeleton without them; helpers keep zero weight (weightforge's fix
+    # weights them, see README).
+    bare, kept = g.without_helpers()
     with tempfile.TemporaryDirectory(prefix="skintokens_") as tmp:
         raw = os.path.join(tmp, "raw.glb")
-        rc, tail = run_model(a.input, raw, a.seed, ["--use_skeleton", "--use_transfer"])
+        model_in = a.input
+        if len(kept) != len(g.js["skins"][0]["joints"]):
+            model_in = os.path.join(tmp, "bare.glb")
+            bare.write(model_in)
+        rc, tail = run_model(model_in, raw, a.seed, ["--use_skeleton", "--use_transfer"])
         details = {"seed": a.seed, "model": MODEL, "upstream": UPSTREAM_COMMIT}
         if rc != 0:
             write_report(report, [], "skin", False, details, f"model run failed (exit {rc}): {tail}")
             return 1
         try:
-            details.update(map_weights(g, Glb.read(raw)))
+            details.update(map_weights(bare, Glb.read(raw)))
+            for pb, po in zip(bare.skinned_primitives(), g.skinned_primitives()):
+                J = bare.accessor(pb["attributes"]["JOINTS_0"]).astype(int)
+                g.set_accessor(po["attributes"]["JOINTS_0"], np.asarray(kept)[J])
+                g.set_accessor(po["attributes"]["WEIGHTS_0"], bare.accessor(pb["attributes"]["WEIGHTS_0"]))
+            details["helpers_unweighted"] = len(g.js["skins"][0]["joints"]) - len(kept)
         except ValueError as e:
             write_report(report, [], "skin", False, details, str(e))
             return 1
