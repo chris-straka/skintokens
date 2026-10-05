@@ -1,0 +1,11 @@
+#!/bin/bash
+# skintokens CLI shim: runs skintokens/cli.py in the pinned SkinTokens venv.
+# SKINTOKENS_HOME (default ~/.local/share/skintokens) holds upstream/ and .venv/ (see setup.sh).
+here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+home="${SKINTOKENS_HOME:-$HOME/.local/share/skintokens}"
+py="$home/.venv/bin/python"
+if [ ! -x "$py" ]; then
+  echo "skintokens: no venv at $home/.venv; run $here/setup.sh" >&2
+  exit 2
+fi
+exec "$py" "$here/skintokens/cli.py" "$@"

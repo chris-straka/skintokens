@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+*.glb
+!tests/fixtures/*.glb
+*.log
+.DS_Store

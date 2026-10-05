@@ -1,0 +1,288 @@
+diff --git a/bpy_server.py b/bpy_server.py
+index c22455c..7cd0780 100755
+--- a/bpy_server.py
++++ b/bpy_server.py
+@@ -1,3 +1,6 @@
++import sys
++from pathlib import Path
++sys.path.insert(0, str(Path(__file__).resolve().parent / "compat"))  # SDPA flash_attn shim
+ from src.server.bpy_server import run
+ 
+ def main():
+diff --git a/compat/flash_attn_interface.py b/compat/flash_attn_interface.py
+new file mode 100644
+index 0000000..ae7217a
+--- /dev/null
++++ b/compat/flash_attn_interface.py
+@@ -0,0 +1,19 @@
++"""SDPA stand-in for flash_attn_interface.flash_attn_func (FA3 API) on hosts
++without flash-attn. Layout (B, L, H, D) in and out; GQA by repeat; returns
++(out, None) like FA3."""
++import torch.nn.functional as F
++
++def flash_attn_func(q, k, v, *args, **kwargs):
++    q = q.transpose(1, 2)
++    k = k.transpose(1, 2)
++    v = v.transpose(1, 2)
++    if q.shape[1] != k.shape[1]:
++        r = q.shape[1] // k.shape[1]
++        k = k.repeat_interleave(r, dim=1)
++        v = v.repeat_interleave(r, dim=1)
++    if k.dtype != q.dtype:
++        k = k.to(q.dtype)
++    if v.dtype != q.dtype:
++        v = v.to(q.dtype)
++    out = F.scaled_dot_product_attention(q, k, v)
++    return out.transpose(1, 2), None
+diff --git a/demo.py b/demo.py
+index a2cb3a2..116fe86 100755
+--- a/demo.py
++++ b/demo.py
+@@ -9,6 +9,7 @@ import time
+ from pathlib import Path
+ from typing import List, Iterable, Optional, Tuple
+ 
++sys.path.insert(0, str(Path(__file__).resolve().parent / "compat"))  # SDPA flash_attn shim
+ import gradio as gr
+ import requests
+ from torch import Tensor
+@@ -28,6 +29,7 @@ from src.server.spec import (
+     bytes_to_object,
+ )
+ from src.data.vertex_group import voxel_skin
++from src.device import DEVICE
+ 
+ MODEL_CKPTS = [
+     "experiments/articulation_xl_quantization_256_token_4/grpo_1400.ckpt",
+@@ -68,6 +70,7 @@ def start_bpy_server():
+     return proc
+ 
+ 
++CLS = "articulation"  # skeleton class token: articulation | vroid | rignet (--cls)
+ model = None
+ tokenizer = None
+ transform = None
+@@ -163,14 +166,14 @@ def run_rig(
+     datapath = {
+         "data_name": None,
+         "loader": "bpy_server",
+-        "filepaths": {"articulation": [str(p) for p in filepaths]},
++        "filepaths": {CLS: [str(p) for p in filepaths]},
+     }
+ 
+     dataset_config = DatasetConfig.parse(
+         shuffle=False,
+         batch_size=1,
+-        num_workers=1,
+-        pin_memory=True,
++        num_workers=1 if DEVICE == "cuda" else 0,  # spawn can't pickle MPS tensors
++        pin_memory=DEVICE == "cuda",
+         persistent_workers=False,
+         datapath=datapath,
+     ).split_by_cls()
+@@ -182,13 +185,13 @@ def run_rig(
+         process_fn=model._process_fn,
+     )
+ 
+-    dataloader = module.predict_dataloader()["articulation"]
++    dataloader = module.predict_dataloader()[CLS]
+ 
+     results_out = []
+ 
+     for i, batch in tqdm(enumerate(dataloader), total=len(dataloader)):
+         batch = {
+-            k: v.to("cuda") if isinstance(v, Tensor) else v
++            k: v.to(DEVICE) if isinstance(v, Tensor) else v
+             for k, v in batch.items()
+         }
+ 
+@@ -439,8 +442,15 @@ if __name__ == "__main__":
+     parser.add_argument("--hf_path", default=None)
+ 
+     parser.add_argument("--gradio", action="store_true")
++    parser.add_argument("--cls", default="articulation", choices=["articulation", "vroid", "rignet"],
++                        help="skeleton class token; vroid = VRoid humanoid template names")
++    parser.add_argument("--seed", type=int, default=None)
+ 
+     args = parser.parse_args()
++    CLS = args.cls
++    if args.seed is not None:
++        import random, numpy, torch
++        random.seed(args.seed); numpy.random.seed(args.seed); torch.manual_seed(args.seed)
+ 
+     server_proc = start_bpy_server()
+     wait_for_bpy_server()
+diff --git a/src/device.py b/src/device.py
+new file mode 100644
+index 0000000..ae53e7b
+--- /dev/null
++++ b/src/device.py
+@@ -0,0 +1,18 @@
++"""Device selection for non-CUDA hosts (Apple Silicon port).
++
++SKINTOKENS_DEVICE=cuda|mps|cpu overrides; default: cuda, else mps, else cpu.
++"""
++import os
++import torch
++
++def _pick() -> str:
++    env = os.environ.get("SKINTOKENS_DEVICE")
++    if env:
++        return env
++    if torch.cuda.is_available():
++        return "cuda"
++    if torch.backends.mps.is_available():
++        return "mps"
++    return "cpu"
++
++DEVICE = _pick()
+diff --git a/src/model/michelangelo/utils/misc.py b/src/model/michelangelo/utils/misc.py
+index 2174de3..5615337 100755
+--- a/src/model/michelangelo/utils/misc.py
++++ b/src/model/michelangelo/utils/misc.py
+@@ -120,7 +120,7 @@ def get_free_space(path):
+     return free_space
+ 
+ def get_device_type():
+-    return torch.cuda.get_device_name(0)
++    return torch.cuda.get_device_name(0) if torch.cuda.is_available() else ""
+ 
+ def get_hostname():
+     import socket
+diff --git a/src/model/skin_vae/autoencoders/FSQ.py b/src/model/skin_vae/autoencoders/FSQ.py
+index 9f7bcf0..e9beed1 100755
+--- a/src/model/skin_vae/autoencoders/FSQ.py
++++ b/src/model/skin_vae/autoencoders/FSQ.py
+@@ -8,6 +8,7 @@ import torch.nn as nn
+ from torch.nn import Module
+ from torch import Tensor, int32
+ from torch.amp import autocast
++from src.device import DEVICE
+ 
+ from einops import rearrange, pack, unpack
+ 
+@@ -168,7 +169,7 @@ class FSQ(Module):
+ 
+         # whether to force quantization step to be full precision or not
+         force_f32 = self.force_quantization_f32
+-        quantization_context = partial(autocast, 'cuda', enabled = False) if force_f32 else nullcontext
++        quantization_context = partial(autocast, DEVICE, enabled = False) if force_f32 else nullcontext
+ 
+         with quantization_context():
+             orig_dtype = z.dtype
+diff --git a/src/model/skin_vae_model.py b/src/model/skin_vae_model.py
+index a2b4e88..963478c 100755
+--- a/src/model/skin_vae_model.py
++++ b/src/model/skin_vae_model.py
+@@ -8,6 +8,7 @@ import math
+ import numpy as np
+ import random
+ import torch
++from src.device import DEVICE
+ import torch.nn.functional as F
+ 
+ from src.rig_package.info.asset import Asset
+@@ -136,7 +137,7 @@ class SkinVAEModel(ModelSpec):
+             uniform_skin=uniform_skin,
+         )
+     
+-    @torch.autocast(device_type='cuda', dtype=torch.bfloat16)
++    @torch.autocast(device_type=DEVICE, dtype=torch.bfloat16)
+     def training_step(self, batch: Dict) -> Dict:
+         raise NotImplementedError()
+     
+@@ -171,7 +172,7 @@ class SkinVAEModel(ModelSpec):
+     def forward(self, batch: Dict) -> Dict:
+         return self.training_step(batch=batch)
+ 
+-    @torch.autocast('cuda', dtype=torch.bfloat16)
++    @torch.autocast(DEVICE, dtype=torch.bfloat16)
+     def predict_step(self, batch: Dict) -> Dict:
+         vertices: Tensor = batch['vertices'].float() # (B, N, 3)
+         num_bones: List[int] = batch['num_bones']
+diff --git a/src/model/tokenrig.py b/src/model/tokenrig.py
+index ab35e3f..ea9d3b7 100755
+--- a/src/model/tokenrig.py
++++ b/src/model/tokenrig.py
+@@ -8,6 +8,7 @@ from typing import Dict, List, Tuple
+ import math
+ import numpy as np
+ import torch
++from src.device import DEVICE
+ import torch.nn.functional as F
+ 
+ LLM_LOCAL_DIR = Path("models/Qwen3-0.6B")
+@@ -106,7 +107,7 @@ class TokenRig(ModelSpec):
+         llm_config.torch_dtype = torch.bfloat16
+         llm_config.pre_norm = True
+         self.llm_config = llm_config
+-        self.transformer = AutoModelForCausalLM.from_config(config=llm_config, attn_implementation="flash_attention_2").to(torch.bfloat16)
++        self.transformer = AutoModelForCausalLM.from_config(config=llm_config, attn_implementation="flash_attention_2" if DEVICE == "cuda" else "sdpa").to(torch.bfloat16)
+         
+         self.output_proj = nn.Sequential(
+             nn.Linear(self.mesh_encoder.width, self.hidden_size),
+@@ -147,7 +148,7 @@ class TokenRig(ModelSpec):
+         rate = (self.global_step-start_steps) / (end_steps-start_steps)
+         return min(max((1.0-math.cos(math.pi * rate))/2, 0), 1)
+ 
+-    @torch.autocast(device_type='cuda', dtype=torch.bfloat16)
++    @torch.autocast(device_type=DEVICE, dtype=torch.bfloat16)
+     def training_step(self, batch: Dict) -> Dict:
+         raise NotImplementedError()
+     
+@@ -191,7 +192,7 @@ class TokenRig(ModelSpec):
+             start_tokens_list.append(start_tokens)
+         return start_tokens_list
+     
+-    @torch.autocast(device_type='cuda', dtype=torch.bfloat16)
++    @torch.autocast(device_type=DEVICE, dtype=torch.bfloat16)
+     def generate(
+         self,
+         vertices: Tensor,
+@@ -401,6 +402,7 @@ class TokenRig(ModelSpec):
+                     sampled_skin=res.skin_pred.detach().float().cpu().numpy(),
+                     joints=res.detokenize_output.joints,
+                     parents=np.array(res.detokenize_output.parents),
++                    joint_names=res.detokenize_output.joint_names,  # port fix: keep template names (vroid)
+                     cls=asset.cls,
+                     path=asset.path,
+                 )
+diff --git a/src/rig_package/parser/bpy.py b/src/rig_package/parser/bpy.py
+index fc33b8c..ce78a68 100755
+--- a/src/rig_package/parser/bpy.py
++++ b/src/rig_package/parser/bpy.py
+@@ -589,6 +589,7 @@ def make_asset(
+         bpy.ops.object.armature_add(enter_editmode=True)
+         armature = bpy.data.armatures.get('Armature')
+         armature_name = asset.armature_name if asset.armature_name is not None else 'Armature'
++        bpy.context.object.name = armature_name  # port fix: skin-only transfer kept the old name
+         
+         edit_bones = armature.edit_bones
+         
+diff --git a/src/server/spec.py b/src/server/spec.py
+index f2ca6d7..ba1862c 100755
+--- a/src/server/spec.py
++++ b/src/server/spec.py
+@@ -68,7 +68,7 @@ def bytes_to_object(b, map_location=None):
+ def get_model(
+     ckpt_path: str,
+     hf_path: Optional[str]=None,
+-    device='cuda',
++    device=None,
+ ) -> TokenRig:
+     model = TokenRig.load_from_system_checkpoint(checkpoint_path=ckpt_path)
+     if hf_path is not None:
+@@ -76,10 +76,11 @@ def get_model(
+         a = AutoModel.from_pretrained(
+             hf_path,
+             local_files_only=True,
+-            _attn_implementation="flash_attention_2",
++            _attn_implementation="flash_attention_2" if torch.cuda.is_available() else "sdpa",
+             torch_dtype=torch.bfloat16,
+         )
+         model.transformer.model.load_state_dict(a.state_dict())
+ 
+-    model = model.to(device)
++    from ..device import DEVICE
++    model = model.to(device or DEVICE)
+     return model
