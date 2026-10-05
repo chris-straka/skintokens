@@ -38,3 +38,8 @@ checkpoints, loaded by the upstream model code.
 Log a rig produced here as: "skeleton + skin weights by SkinTokens
 (VAST-AI, MIT code and weights) via `skintokens rig` vX, seed N". The mesh
 keeps its own provenance (Tripo plan, retopoforge, etc.).
+
+`patches/apple-silicon.patch` changes one line in
+`src/model/michelangelo/utils/misc.py` (CUDA device name only when CUDA is
+present). That hunk and its context lines come from GPL-3.0-derived code and
+stay under GPL-3.0; the rest of the patch touches MIT upstream files.

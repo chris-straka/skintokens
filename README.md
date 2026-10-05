@@ -11,7 +11,7 @@ Replaces `~/SWE/blender/unirig-mac` (retired 2026-10-05) as:
 - rigforge's **joint-hint source** (`skintokens joints` writes
   `skintokens-joints/1`, the unirig-joints/1 schema under a new name).
 
-Local-only repo (no remote). Python because the model is PyTorch with no
+Public repo: github.com/chris-straka/skintokens. Python for now because the model is PyTorch with no
 other runtime; everything else calls it as a CLI. Why it replaced UniRig,
 with numbers and sheets: [docs/evaluation.md](docs/evaluation.md).
 Licenses and provenance: [PROVENANCE.md](PROVENANCE.md).
