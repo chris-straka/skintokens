@@ -1,5 +1,80 @@
 # SkinTokens vs UniRig vs the game rig (2026-10-05)
 
+The numbers below this first section were measured with the Python
+wrapper (PyTorch on MPS), which the Rust port has since replaced; the
+first section is how the port was proven equivalent.
+
+## Rust port: how parity was proven (2026-10-05)
+
+Reference: the Python wrapper at commit `ac86785` (upstream `273b691d` +
+the Mac patch, official checkpoint). `parity/dump_ref.py` (at that
+commit) recorded upstream's intermediates on a fixed input, both in fp32
+on the CPU and as production runs (bf16 autocast on MPS); the Rust side
+(`skintokens parity-net`, `parity-input`) ran each network piece on the
+same inputs and the same sampled indices. Rust: candle 0.11, Metal, f32.
+
+Deterministic pieces, Andras 13k (rig mode; skin mode on the game rig
+gave the same picture), Rust vs Python fp32:
+
+| Piece | max abs diff | rel | cosine |
+|---|---|---|---|
+| Shape encoder latents (512x512); FPS picks 512/512 identical | 3.4e-4 | 6e-5 | 0.9999999 |
+| Mesh condition after output_proj (512x896) | 2.6e-4 | 6e-5 | 1.0000000 |
+| VAE condition latents (384x512) | 1.1e-5 | 3e-5 | 1.0000000 |
+| LM logits, 43-token fixed prefix (33036 vocab); argmax 43/43 (skin: 144/144) | 2.3e-5 | 1.2e-6 | 0.9999999 |
+| VAE decoder weights for fixed tokens (54000 points x 28 joints) | 5.1e-6 | 5e-6 | 1.0000000 |
+| Greedy decoding, 208 tokens (skin: 215) | identical | | |
+| 10-beam search without sampling, 215 tokens (skin: 215) | identical | | |
+
+For scale: Python against itself, bf16-MPS vs fp32, differs by 6e-2
+(rel) in the encoder and up to 3.9 in the logits. Input pipeline vs
+Blender + trimesh: same 14,731 faces (2 duplicates dropped like
+Blender), normals within 2e-4, normalized vertices within 7e-7. In
+skin mode 11-18 prompt tokens out of 85-103 land one bin apart: those
+joints sit exactly on a token-bin edge (the game rig came from UniRig
+tokens) and only bit-exact Blender float32 math rounds them the same;
+running Rust with Python's exact prompt gave the same scores.
+
+Upstream behaviours found and kept: the predict sampler uses 54,000
+surface points only (its vertex-sample count is never passed); the
+model-wide `.to(bfloat16)` also rounds the VAE embedder's frequencies and
+Qwen's rotary `inv_freq`; the vocabulary switch forces the end token one
+skin token early, so the last joint's fourth code is decoded from the
+end-token id; Blender's exporter drops influences <= 1e-4.
+
+End to end, weightforge 0.1.0 + motionforge standardize (current, with
+the 4 twist helpers; 26 bones), same day, same chain:
+
+| | Python (seeds) | Rust (seeds) |
+|---|---|---|
+| Andras 13k `rig`, raw | 48.1 / 49.6 / 46.9 / 48.9 | 48.9 / 49.9 / 51.5 / 49.7 |
+| same, after `weights fix` | 61.0 / 64.9 / 64.6 / 62.7 | 65.1 / 65.3 / 60.6 / 60.8 |
+| Rehearsal mesh (5,766 verts) `rig`, raw | 48.7 / 44.4 / 50.0 | 47.9 / 49.2 / 52.4 |
+| same, after `weights fix` (genforge chain: 68.7) | 69.3 / 68.4 / 69.9 | 68.9 / 69.1 / 66.9 |
+| genforge `--mode rehearsal` on Andras (rig -> standardize -> check -> fix) | 48.2 -> 68.7, 3 failing regions | 47.9 -> 68.9, the same 3 regions and vertex counts |
+| `skin` on the standardized game rig, raw (8 seeds) | 43.5-45.8, mean 44.3 | 44.4-47.1, mean 45.8 |
+| same as weightforge candidate: candidate score | 71.1-72.4 | 72.2-73.3 |
+| same: `weights fix` result | 44.8-56.2, mean 52.2 | 44.6-47.2, mean 45.9 |
+
+The last row is weightforge, not SkinTokens: its greedy region pick is
+not monotonic in candidate quality. Rust's skin weights score higher on
+their own and as a candidate, the per-joint weight mass matches Python
+(Python-vs-Rust per-vertex difference 0.042 = Python seed-to-seed 0.041),
+and degrading a Rust candidate with noise (raw 46.6 -> 38.3) raised the
+fix result from 46.8 to 49.5. Better candidates get locked in early by
+the smallest-edit-first rule and `optimize` then starts from that mix.
+
+Speed and memory on the M4 (16 GB), same session: `rig` Andras 13k
+31.5-32.7 s (Python 47.8-49.5 s), `skin` 20.5-21 s (Python 34-36 s);
+peak RSS 3.7 GB (Python 3.0 GB; Rust keeps f32 weights,
+`SKINTOKENS_DTYPE=bf16`: 2.4 GB, 18.9 s, same scores). Same seed gives
+the same file (the Python wrapper did not). Joint docs (`skintokens
+joints`) are identical to the Python ones (max diff 7e-16).
+
+Sheets (Python left, Rust right): `~/Downloads/skintokens-rust/`.
+
+## SkinTokens vs UniRig (Python wrapper era)
+
 Question: should SkinTokens replace UniRig (`unirig-mac`) as the
 pipeline's ML rigger, and does it unblock genforge's skin-weight gate
 (weightforge fails every Andras rig: 22 -> 37 after fix, rigforge rerig

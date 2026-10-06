@@ -1,8 +1,4 @@
-__pycache__/
-*.pyc
-.venv/
+target/
 *.glb
-!tests/fixtures/*.glb
 *.log
 .DS_Store
-target/

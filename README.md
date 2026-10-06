@@ -3,29 +3,34 @@
 Auto-rigging for the HLL character pipeline with SkinTokens / TokenRig
 (VAST-AI-Research, arXiv 2602.04805, MIT code and weights), the successor
 to UniRig. A mesh goes in; a skeleton and skin weights come out, as GLB.
-Replaces `~/SWE/blender/unirig-mac` (retired 2026-10-05) as:
+It is:
 
 - weightforge's **ML candidate** (`weights fix --skintokens` runs
   `skintokens skin`; scored like every other candidate, never trusted
-  blindly), and
+  blindly),
 - rigforge's **joint-hint source** (`skintokens joints` writes
-  `skintokens-joints/1`, the unirig-joints/1 schema under a new name).
+  `skintokens-joints/1`, the unirig-joints/1 schema under a new name), and
+- genforge's default **rig stage** (`skintokens rig`).
 
-Public repo: github.com/chris-straka/skintokens. Python for now because the model is PyTorch with no
-other runtime; everything else calls it as a CLI. Why it replaced UniRig,
+Rust (candle, Metal on Apple Silicon, CPU fallback), no Python at
+runtime: the official checkpoint is read directly and GLBs are read and
+written in pure Rust. It replaced the Python/PyTorch wrapper on
+2026-10-05 after matching it tensor for tensor; how parity was proven,
 with numbers and sheets: [docs/evaluation.md](docs/evaluation.md).
-Licenses and provenance: [PROVENANCE.md](PROVENANCE.md).
+Licenses and provenance: [PROVENANCE.md](PROVENANCE.md). Public repo:
+github.com/chris-straka/skintokens.
 
 ## Setup
 
-    ./setup.sh          # once: pinned upstream + Mac patch, venv, weights (~1.6 GB)
+    cargo build --release      # target/release/skintokens; bin/skintokens runs it
+    ./fetch-weights.sh         # once: official grpo_1400.ckpt (1.1 GB, pinned, checksummed)
     bin/skintokens doctor
 
-`setup.sh` builds `$SKINTOKENS_HOME` (default `~/.local/share/skintokens`):
-the upstream checkout at `273b691d` with `patches/apple-silicon.patch`
-applied, a Python 3.11 venv from `requirements.lock.txt`, and the
-checkpoints in the Hugging Face cache (pinned revisions) linked in.
-Nothing big lives in this repo.
+The weights are looked up in `$SKINTOKENS_CKPT`, then
+`$SKINTOKENS_HOME/weights/grpo_1400.ckpt` (`SKINTOKENS_HOME` defaults to
+`~/.local/share/skintokens`), then the Hugging Face cache at the pinned
+revision. One checkpoint holds everything: TokenRig, the shape encoder
+and the FSQ-CVAE skin decoder.
 
 ## Use
 
@@ -34,20 +39,24 @@ Nothing big lives in this repo.
     skintokens joints IN.glb OUT.json [--subject NAME]
     skintokens doctor
 
-- **rig**: skeleton + weights for an unrigged mesh (texture and scale
-  kept). For `--class humanoid` the joints are named by structure with
-  Mixamo names, so motionforge's `adapter standardize` maps them onto the
-  HLL 22-bone skeleton (`DEF-*`); a skeleton without the humanoid core
-  fails (`ok: false`, exit 1). Other classes keep TokenRig's `bone_N`
-  names (standardize adds the `DEF-` prefix).
-- **skin**: keeps IN's skeleton and writes only new JOINTS_0/WEIGHTS_0
-  (TokenRig's skin-only mode on the given bones). This is the weightforge
-  candidate. Twist/helper bones (motionforge's `DEF-*_twist.*`, marked by
-  `extras.hll_helper`) share their driver's joint, so the model would see
-  two joints in one place and match its output back wrongly (seen: thigh
-  weights landing on the thigh helpers). `skin` runs the model on a copy
-  without them and gives them zero weight; weightforge's fix weights them.
-- **joints**: rigforge hints from any rigged GLB.
+- **rig**: skeleton + weights for an unrigged mesh. The input GLB is kept
+  as is (meshes, materials, textures, node placement); an `Armature` node
+  with the joints and a skin are added. Bones follow Blender's
+  convention (local Y along the bone, roll 0), like the files the Python
+  wrapper got from Blender. For `--class humanoid` the joints are named
+  by structure with Mixamo names, so motionforge's `adapter standardize`
+  maps them onto the HLL 22-bone skeleton (`DEF-*`); a skeleton without
+  the humanoid core fails (`ok: false`, exit 1). Other classes keep
+  TokenRig's `bone_N` names (standardize adds the `DEF-` prefix). An
+  already rigged input is re-rigged (its skin and animations dropped).
+- **skin**: keeps IN's skeleton and rewrites only its JOINTS_0/WEIGHTS_0
+  bytes in place (TokenRig's skin-only mode on the given bones). This is
+  the weightforge candidate. Twist/helper bones (motionforge's
+  `DEF-*_twist.*`, marked by `extras.hll_helper`) share their driver's
+  joint, so the model would see two joints in one place; `skin` runs the
+  model without them and gives them zero weight; weightforge's fix
+  weights them.
+- **joints**: rigforge hints from any rigged GLB (no model run).
 
 `R.json` is genforge's adapter contract: `{"ok", "outputs" (relative to
 R.json's folder), "tool": "skintokens", "version", "stage", "<stage>":
@@ -58,37 +67,52 @@ or setup error (no report). Inputs are never modified. A genforge
     "rig": ["skintokens", "rig", "{input}", "{out}", "--report", "{report}", "--class", "{class}"]
 
 One inference runs at a time per machine (a file lock in
-`$SKINTOKENS_HOME`). On the M4 (MPS): ~35-55 s per character, ~4 GB.
-Sampling is stochastic and MPS kernels are not bit-deterministic: the
-same `--seed` gives joints within ~2 cm and locally different weights.
-Over four Andras runs the weightforge score stayed in 44-48 raw and
-59-62 after `weights fix`, so pick-best over seeds buys little.
+`$SKINTOKENS_HOME`). On the M4 (Metal, f32): ~32 s per `rig` and ~21 s
+per `skin` on Andras (13.6k verts), ~3.7 GB peak; the Python wrapper took
+~48 s and ~35 s. Same `--seed`, same machine, same output (the Python
+wrapper was not reproducible); different seeds vary like the original
+(raw weightforge 48.9-51.5 on Andras over four seeds).
+
+Environment: `SKINTOKENS_DEVICE=cpu|metal` (default Metal if present),
+`SKINTOKENS_DTYPE=bf16` (default f32; bf16 peaks at 2.4 GB, is a little faster, scores
+the same), `SKINTOKENS_VERBOSE=1` (stage timings).
+
+## How it is built
+
+- `crates/skintokens` (MIT): CLI, GLB I/O (`gltf` crate to read; edits on
+  the raw JSON/binary so untouched data stays byte for byte), mesh
+  pipeline (upstream's trim/normalize/surface sampling, Blender's
+  armature frame and duplicate-face drop), TokenRig's Qwen3 LM, the
+  skeleton tokenizer, transformers' beam sampling with TokenRig's
+  vocabulary switch, the FSQ-CVAE decoder, humanoid naming.
+- `crates/skintokens-encoder` (**GPL-3.0**): the point-cloud shape
+  encoder, ported from Michelangelo-derived code. The binary links it,
+  so the built binary is GPL-3.0; callers only run it as a separate
+  process.
+- `crates/skintokens-nn` (MIT): shared layers, attention, FPS.
+
+Upstream details kept on purpose (all verified against the Python run):
+the 54k-point cloud is surface samples only; the VAE embedder and rotary
+frequencies use bf16-rounded constants (upstream casts those buffers);
+the generation stops one skin token early and decodes the last joint's
+fourth code from the end-of-sequence id; influences <= 1e-4 are dropped
+as Blender's exporter does. Dropped: `--postprocess` (upstream's voxel
+skin pass, unused by any caller).
 
 ## Checks
 
-    $SKINTOKENS_HOME/.venv/bin/python -m unittest discover -s tests
+    cargo test --release
 
-Fast tests, no model: GLB IO, humanoid naming (both facings, rejects
-non-humanoids), skin-only weight mapping (skeleton untouched, only
-weights change), helper bones hidden from the model, joints doc, report
-schema, exit 2 without a report.
-The real-model numbers are in `docs/evaluation.md`.
-
-## Port notes (patches/apple-silicon.patch)
-
-Upstream targets CUDA + flash-attn. The patch: device pick
-(`SKINTOKENS_DEVICE`, else cuda > mps > cpu) for autocast and model
-placement; an SDPA stand-in for `flash_attn_interface`; Qwen3 with
-`sdpa` attention off CUDA; no dataloader worker processes off CUDA (MPS
-tensors cannot be pickled); `--cls` and `--seed` on `demo.py`. Two
-upstream bugs fixed on the way: predicted joint names were dropped from
-the asset, and skin-only transfer crashed when the input armature was not
-named `Armature`.
+Fast tests, no model: GLB I/O, humanoid naming (both facings, rejects
+non-humanoids), helper-bone detection, joints doc, CLI exit codes,
+tokenizer round trip, k-d tree, trim, top-4 weights. Model-level parity
+was checked against the Python reference with `skintokens parity-net`
+(see docs/evaluation.md); the real-model numbers are there too.
 
 ## Layout
 
-- `skintokens/` — CLI (`cli.py`), GLB access (`glb.py`), naming (`naming.py`). MIT.
-- `bin/skintokens` — shim into the pinned venv.
-- `patches/`, `setup.sh`, `requirements.lock.txt` — the pinned runtime.
-- `tests/` — fast tests + synthetic GLB fixture.
-- `docs/evaluation.md` — SkinTokens vs UniRig vs Tripo/game weights.
+- `crates/` - the three crates above.
+- `bin/skintokens` - shim to `target/release/skintokens`.
+- `fetch-weights.sh` - pinned checkpoint download.
+- `tools/joints_samples/` - a `skintokens-joints/1` sample rigforge's tests read.
+- `docs/evaluation.md` - SkinTokens vs UniRig vs the game rig; Rust vs Python parity.

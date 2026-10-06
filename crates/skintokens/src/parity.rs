@@ -1,5 +1,6 @@
 //! Developer checks against tensors dumped from the Python reference
-//! (`parity/dump_ref.py`): `skintokens parity-net REFDIR`.
+//! (`parity/dump_ref.py` at commit ac86785, run in the old upstream venv):
+//! `skintokens parity-net REFDIR [gen]`, `skintokens parity-input IN DIR rig|skin`.
 
 use std::path::Path;
 
