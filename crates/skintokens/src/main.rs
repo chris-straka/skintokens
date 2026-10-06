@@ -1,16 +1,6 @@
 //! skintokens: SkinTokens/TokenRig auto-rigging as a file-in, file-out CLI.
 
-mod generate;
-mod geom;
-mod glb;
-mod mesh;
-mod model;
-mod naming;
-mod parity;
-mod pipeline;
-mod qwen;
-mod tokenizer;
-mod vae;
+use skintokens::{generate, glb, model, parity, pipeline};
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
