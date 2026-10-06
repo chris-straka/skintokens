@@ -143,19 +143,15 @@ impl Normalize {
 }
 
 pub const NUM_SAMPLES: usize = 54000;
-pub const NUM_VERTEX_SAMPLES: usize = 16384;
 
-/// Upstream's `mix` sampler without vertex groups: up to 16384 mesh
-/// vertices (random order, their vertex normals) then area-weighted
-/// surface points (face normals) up to 54000. Positions in the normalized frame.
+/// Upstream's `mix` sampler at predict time: its config names 16384 vertex
+/// samples, but the call for the main cloud does not pass that count, so
+/// all 54000 points are area-weighted surface samples with face normals.
+/// Positions in the normalized frame. (`vnorm` is used only for meshes
+/// without area.)
 pub fn sample(vertices: &[V3], faces: &[[u32; 3]], vnorm: &[V3], fnorm: &[V3], rng: &mut Rng) -> Vec<[f32; 6]> {
     let mut out = Vec::with_capacity(NUM_SAMPLES);
-    let perm = rng.permutation(vertices.len());
-    for &i in perm.iter().take(NUM_VERTEX_SAMPLES) {
-        let (v, n) = (vertices[i], vnorm[i]);
-        out.push([v[0] as f32, v[1] as f32, v[2] as f32, n[0] as f32, n[1] as f32, n[2] as f32]);
-    }
-    let rest = NUM_SAMPLES - out.len();
+    let rest = NUM_SAMPLES;
     let mut cum = Vec::with_capacity(faces.len());
     let mut total = 0.0;
     for f in faces {
@@ -214,8 +210,10 @@ pub fn transfer_skin(samples: &[[f32; 6]], skin: &[Vec<f32>], vertices: &[V3]) -
         .collect()
 }
 
-/// Top-4 influences per vertex, renormalized over those four (Blender
-/// export with group_per_vertex=4). Returns (joint indices, weights).
+/// Top-4 influences per vertex, renormalized over those four (upstream's
+/// group_per_vertex=4), then what Blender's glTF exporter does to them:
+/// influences <= 1e-4 dropped and the rest renormalized. Returns (joint
+/// indices, weights).
 pub fn top4(skin: &[Vec<f32>]) -> (Vec<[u16; 4]>, Vec<[f32; 4]>) {
     let mut js = Vec::with_capacity(skin.len());
     let mut ws = Vec::with_capacity(skin.len());
@@ -229,6 +227,16 @@ pub fn top4(skin: &[Vec<f32>]) -> (Vec<[u16; 4]>, Vec<[f32; 4]>) {
         for t in 0..k {
             j4[t] = idx[t] as u16;
             w4[t] = if s > 0.0 { row[idx[t]].max(0.0) / s } else if t == 0 { 1.0 } else { 0.0 };
+        }
+        // Blender export: drop <= 1e-4 (the top one always survives here), renormalize
+        for t in 1..4 {
+            if w4[t] <= 1e-4 {
+                w4[t] = 0.0;
+            }
+        }
+        let s2: f32 = w4.iter().sum();
+        if s2 > 0.0 {
+            w4.iter_mut().for_each(|w| *w /= s2);
         }
         // unused slots: joint 0, weight 0 (glTF convention)
         for t in 0..4 {

@@ -213,3 +213,100 @@ impl Qwen3 {
         }
     }
 }
+
+/// KV storage for beam search without copies: the prompt's keys/values are
+/// kept once, every generated token gets a slot in a pool written in place,
+/// and each beam attends to the prompt plus the slots on its own path (a
+/// mask), so reordering beams is bookkeeping on the host.
+pub struct BeamCache {
+    /// per layer: prompt K^T (Hkv, D, P) and V (Hkv, P, D)
+    prompt: Vec<(Tensor, Tensor)>,
+    /// per layer: pool K^T (Hkv, D, cap) and V (Hkv, cap, D)
+    pool: Vec<(Tensor, Tensor)>,
+    pub cap: usize,
+    pub used: usize,
+    pub prompt_len: usize,
+}
+
+impl Qwen3 {
+    /// Turns a prefilled single-sequence cache into a beam cache.
+    pub fn beam_cache(&self, c: &Cache, cap: usize) -> Result<BeamCache> {
+        let mut prompt = vec![];
+        let mut pool = vec![];
+        for e in &c.kv {
+            let (k, v) = e.as_ref().ok_or_else(|| anyhow::anyhow!("cache not prefilled"))?;
+            let k = k.squeeze(0)?; // (Hkv, P, D)
+            let v = v.squeeze(0)?.contiguous()?;
+            prompt.push((k.t()?.contiguous()?, v));
+            pool.push(self.empty_pool(cap)?);
+        }
+        Ok(BeamCache { prompt, pool, cap, used: 0, prompt_len: c.len })
+    }
+
+    fn empty_pool(&self, cap: usize) -> Result<(Tensor, Tensor)> {
+        let (hk, d) = (self.cfg.kv_heads, self.cfg.head_dim);
+        Ok((Tensor::zeros((hk, d, cap), self.dtype, &self.device)?, Tensor::zeros((hk, cap, d), self.dtype, &self.device)?))
+    }
+
+    /// One decoding step for B beams. `ids`: each beam's newest token;
+    /// `paths`: each beam's pool slots in order, the last being the slot for
+    /// this token (= cache.used + b). Returns logits (B, vocab) f32.
+    pub fn beam_step(&self, ids: &[u32], paths: &[Vec<usize>], cache: &mut BeamCache) -> Result<Tensor> {
+        let b = ids.len();
+        if cache.used + b > cache.cap {
+            let grow = cache.cap.max(b);
+            for p in cache.pool.iter_mut() {
+                let (zk, zv) = self.empty_pool(grow)?;
+                *p = (Tensor::cat(&[&p.0, &zk], 2)?, Tensor::cat(&[&p.1, &zv], 1)?);
+            }
+            cache.cap += grow;
+        }
+        let (h, hk, d) = (self.cfg.heads, self.cfg.kv_heads, self.cfg.head_dim);
+        let g = h / hk;
+        let pl = cache.prompt_len;
+        let cap = cache.cap;
+        // additive mask over [prompt | pool] for each (beam, group) row
+        let mut mask = vec![f32::NEG_INFINITY; b * (pl + cap)];
+        for (bi, path) in paths.iter().enumerate() {
+            let row = &mut mask[bi * (pl + cap)..(bi + 1) * (pl + cap)];
+            row[..pl].iter_mut().for_each(|m| *m = 0.0);
+            for &s in path {
+                row[pl + s] = 0.0;
+            }
+        }
+        let mask = Tensor::from_vec(mask, (b, 1, pl + cap), &self.device)?
+            .broadcast_as((b, g, pl + cap))?
+            .reshape((1, b * g, pl + cap))?
+            .to_dtype(DType::F32)?;
+        let (cos, sin) = self.rope(pl + cache.used / b.max(1), 1)?;
+        let mut x = self.embed_ids(&ids.iter().map(|&t| vec![t]).collect::<Vec<_>>())?.to_dtype(self.dtype)?;
+        let scale = 1.0 / (d as f64).sqrt();
+        for (i, ly) in self.layers.iter().enumerate() {
+            let hn = ly.input_norm.forward(&x)?;
+            let q = ly.q.forward(&hn)?.reshape((b, 1, h, d))?;
+            let k = ly.k.forward(&hn)?.reshape((b, 1, hk, d))?;
+            let v = ly.v.forward(&hn)?.reshape((b, hk, d))?;
+            let q = Self::apply_rope(&ly.q_norm.forward(&q)?.transpose(1, 2)?, &cos, &sin)?; // (b, h, 1, d)
+            let k = Self::apply_rope(&ly.k_norm.forward(&k)?.transpose(1, 2)?, &cos, &sin)?; // (b, hk, 1, d)
+            // write this step's keys/values into slots used..used+b
+            let (pk, pv) = &cache.pool[i];
+            pk.slice_set(&k.squeeze(2)?.permute((1, 2, 0))?.contiguous()?, 2, cache.used)?; // (hk, d, b)
+            pv.slice_set(&v.transpose(0, 1)?.contiguous()?, 1, cache.used)?; // (hk, b, d)
+            // queries grouped by kv head: (hk, b*g, d)
+            let qg = q.squeeze(2)?.reshape((b, hk, g, d))?.permute((1, 0, 2, 3))?.reshape((hk, b * g, d))?.contiguous()?;
+            let (kpt, vp) = &cache.prompt[i];
+            let sp = qg.matmul(kpt)?;
+            let sg = qg.matmul(pk)?;
+            let s = (Tensor::cat(&[&sp, &sg], 2)?.to_dtype(DType::F32)? * scale)?.broadcast_add(&mask)?;
+            let p = candle_nn::ops::softmax_last_dim(&s)?.to_dtype(self.dtype)?;
+            let o = (p.narrow(2, 0, pl)?.contiguous()?.matmul(vp)? + p.narrow(2, pl, cap)?.contiguous()?.matmul(pv)?)?;
+            let o = o.reshape((hk, b, g, d))?.permute((1, 0, 2, 3))?.reshape((b, 1, h * d))?;
+            x = (x + ly.o.forward(&o)?)?;
+            let hn = ly.post_norm.forward(&x)?;
+            let m = ly.down.forward(&(ly.gate.forward(&hn)?.silu()? * ly.up.forward(&hn)?)?)?;
+            x = (x + m)?;
+        }
+        cache.used += b;
+        Ok(self.lm_head.forward(&self.norm.forward(&x)?)?.to_dtype(DType::F32)?.squeeze(1)?)
+    }
+}

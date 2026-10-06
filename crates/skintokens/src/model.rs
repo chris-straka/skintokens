@@ -118,6 +118,12 @@ impl TokenRig {
     /// Full run on one normalized cloud. `start` = prompt tokens (class head,
     /// or a whole skeleton for skin-only).
     pub fn run(&self, pts: &[[f32; 6]], start: &[u32], cfg: &GenConfig, seed: u64) -> Result<Output> {
+        let t = std::time::Instant::now();
+        let lap = |what: &str| {
+            if std::env::var("SKINTOKENS_VERBOSE").is_ok() {
+                eprintln!("  [{:>6.1} s] {what}", t.elapsed().as_secs_f64());
+            }
+        };
         let cond = self.cond_tensor(pts)?;
         let points: Vec<[f32; 3]> = pts.iter().map(|p| [p[0], p[1], p[2]]).collect();
         let mut rng = Rng::new(seed);
@@ -126,6 +132,7 @@ impl TokenRig {
         let eq = self.encoder.select_queries(&points, 0);
         let (_, mc) = self.mesh_cond(&cond, &eq)?;
         let prompt = self.prompt(&mc, start)?;
+        lap("encoders");
         let g = Grammar { init: start.to_vec(), eos_lm: self.eos_lm, tokens_per_skin: TOKENS_PER_SKIN };
         let gen = if cfg.num_beams == 1 && !cfg.do_sample {
             generate::greedy(&self.llm, &prompt, cfg, &g)?
@@ -134,7 +141,10 @@ impl TokenRig {
         };
         let mut ids = start.to_vec();
         ids.extend(gen);
-        match self.decode(&ids, &cond, &cond_latents)? {
+        lap(&format!("generated {} tokens", ids.len()));
+        let dec = self.decode(&ids, &cond, &cond_latents)?;
+        lap("decoded skin");
+        match dec {
             Some((skeleton, skin)) => Ok(Output { ids, skeleton, skin }),
             None => bail!("the model did not produce skin tokens for every joint"),
         }

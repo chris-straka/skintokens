@@ -32,6 +32,10 @@ fn prepare(parts: Vec<(Vec<V3>, Vec<[u32; 3]>)>, joints: &[V3], rng: &mut Rng) -
     let fnorm = nm.face_normals();
     let vnorm = nm.vertex_normals(&fnorm);
     let samples = mesh::sample(&verts, &nm.faces, &vnorm, &fnorm, rng);
+    if let Ok(p) = std::env::var("SKINTOKENS_DUMP_SAMPLES") {
+        let flat: Vec<f32> = samples.iter().flatten().copied().collect();
+        let _ = candle_core::Tensor::from_vec(flat, (samples.len(), 6), &candle_core::Device::Cpu).and_then(|t| t.write_npy(p));
+    }
     Prepared { mesh, norm, verts, samples }
 }
 
@@ -373,7 +377,16 @@ pub fn skin(input: &Glb, model: &TokenRig, cfg: &GenConfig, seed: u64) -> Result
     let model_parts: Vec<(Vec<V3>, Vec<[u32; 3]>)> = parts.iter().map(|p| (p.positions.iter().map(|&v| arm(v)).collect(), p.triangles.clone())).collect();
     let prep = prepare(model_parts, &joints_model, &mut rng);
     let jn: Vec<[f64; 3]> = joints_model.iter().map(|&j| prep.norm.apply(j)).collect();
-    let start = tokenizer::tokenize(&jn, &parents, tokenizer::CLS_ARTICULATION);
+    let mut start = tokenizer::tokenize(&jn, &parents, tokenizer::CLS_ARTICULATION);
+    // developer hooks for parity experiments
+    if let Ok(p) = std::env::var("SKINTOKENS_DUMP_TOKENS") {
+        let t: Vec<i64> = start.iter().map(|&x| x as i64).collect();
+        let _ = candle_core::Tensor::from_vec(t.clone(), t.len(), &candle_core::Device::Cpu).and_then(|t| t.write_npy(p));
+    }
+    if let Ok(p) = std::env::var("SKINTOKENS_START_TOKENS") {
+        let t = candle_core::Tensor::read_npy(p)?.to_dtype(candle_core::DType::I64)?.to_vec1::<i64>()?;
+        start = t.into_iter().map(|x| x as u32).collect();
+    }
     let out = model.run(&prep.samples, &start, cfg, rng.next_u64())?;
     if out.skin.first().map(|r| r.len()) != Some(kept.len()) {
         bail!("model returned {} joints for {} given", out.skin.first().map(|r| r.len()).unwrap_or(0), kept.len());

@@ -28,11 +28,12 @@ pub struct GenConfig {
 }
 
 impl Default for GenConfig {
-    /// demo.py's defaults.
+    /// demo.py's defaults (SKINTOKENS_NUM_BEAMS / SKINTOKENS_GREEDY for experiments).
     fn default() -> Self {
+        let env = |k: &str| std::env::var(k).ok();
         GenConfig {
-            num_beams: 10,
-            do_sample: true,
+            num_beams: env("SKINTOKENS_NUM_BEAMS").and_then(|v| v.parse().ok()).unwrap_or(10),
+            do_sample: env("SKINTOKENS_NO_SAMPLE").is_none(),
             top_k: 5,
             top_p: 0.95,
             temperature: 1.0,
@@ -189,7 +190,9 @@ pub fn beam_search(model: &Qwen3, prompt: &Tensor, cfg: &GenConfig, g: &Grammar,
 
     let mut cache = model.new_cache();
     let first = model.forward(prompt, &mut cache, false)?;
-    let mut cache = cache.expand(nb)?;
+    let mut cache = model.beam_cache(&cache, nb * 256)?;
+    // pool slots of each running beam's generated tokens
+    let mut paths: Vec<Vec<usize>> = vec![vec![]; nb];
     let first_row = row(&first, 0)?;
     let vocab = first_row.len();
 
@@ -203,7 +206,10 @@ pub fn beam_search(model: &Qwen3, prompt: &Tensor, cfg: &GenConfig, g: &Grammar,
     let mut cur_len = 0usize;
     let mut rows: Vec<Vec<f32>> = vec![first_row; nb];
 
+    let prof = std::env::var("SKINTOKENS_PROFILE").is_ok();
+    let (mut t_cpu, mut t_gpu, mut t_cache) = (0f64, 0f64, 0f64);
     loop {
+        let tc = std::time::Instant::now();
         // b. log-probs, processors, accumulate
         let mut acc = Vec::with_capacity(nb * vocab);
         for (b, r) in rows.iter_mut().enumerate() {
@@ -288,12 +294,24 @@ pub fn beam_search(model: &Qwen3, prompt: &Tensor, cfg: &GenConfig, g: &Grammar,
         if !heuristic_unsatisfied || all_hit {
             break;
         }
+        t_cpu += tc.elapsed().as_secs_f64();
         // next forward pass for the running beams
-        cache.select(&src)?;
-        let last: Vec<Vec<u32>> = running.iter().map(|s| vec![*s.last().unwrap()]).collect();
-        let e = model.embed_ids(&last)?;
-        let logits = model.forward(&e, &mut cache, false)?;
+        let tk = std::time::Instant::now();
+        let base = cache.used;
+        paths = src.iter().enumerate().map(|(bi, &s)| {
+            let mut p = paths[s].clone();
+            p.push(base + bi);
+            p
+        }).collect();
+        t_cache += tk.elapsed().as_secs_f64();
+        let tg = std::time::Instant::now();
+        let last: Vec<u32> = running.iter().map(|s| *s.last().unwrap()).collect();
+        let logits = model.beam_step(&last, &paths, &mut cache)?;
         rows = (0..nb).map(|b| row(&logits, b)).collect::<Result<_>>()?;
+        t_gpu += tg.elapsed().as_secs_f64();
+    }
+    if prof {
+        eprintln!("  beam search: cpu {t_cpu:.1} s, cache reorder {t_cache:.1} s, forward+readback {t_gpu:.1} s, {cur_len} steps");
     }
     Ok(finished.into_iter().next().unwrap_or_default())
 }
