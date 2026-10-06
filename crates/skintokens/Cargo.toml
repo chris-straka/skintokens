@@ -1,0 +1,24 @@
+[package]
+name = "skintokens"
+description = "SkinTokens / TokenRig auto-rigging (skeleton + skin weights) as a file-in, file-out CLI"
+license = "MIT"
+edition.workspace = true
+version.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "skintokens"
+path = "src/main.rs"
+
+[features]
+default = ["metal"]
+metal = ["candle-core/metal", "candle-nn/metal"]
+
+[dependencies]
+candle-core.workspace = true
+candle-nn.workspace = true
+anyhow.workspace = true
+skintokens-encoder = { path = "../skintokens-encoder" }
+skintokens-nn = { path = "../skintokens-nn" }
+serde_json = { version = "1", features = ["preserve_order"] }
+gltf = { version = "1.4", default-features = false, features = ["utils", "names"] }
