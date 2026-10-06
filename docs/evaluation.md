@@ -6,7 +6,7 @@ first section is how the port was proven equivalent.
 
 ## Rust port: how parity was proven (2026-10-05)
 
-Reference: the Python wrapper at commit `ac86785` (upstream `273b691d` +
+Reference: the Python wrapper at commit `76d7311` (upstream `273b691d` +
 the Mac patch, official checkpoint). `parity/dump_ref.py` (at that
 commit) recorded upstream's intermediates on a fixed input, both in fp32
 on the CPU and as production runs (bf16 autocast on MPS); the Rust side

@@ -28,7 +28,7 @@ Until 2026-10-05 this repo was a Python wrapper around the upstream
 PyTorch code with an Apple Silicon patch and a `bpy` helper (GPL-3.0)
 for GLB I/O. It was replaced after the Rust port matched it (see
 docs/evaluation.md, "Rust port"); the last Python version is commit
-`ac86785` (wrapper, `patches/apple-silicon.patch`, `setup.sh`,
+`76d7311` (wrapper, `patches/apple-silicon.patch`, `setup.sh`,
 `requirements.lock.txt`) and the parity dump scripts are in `parity/` at
 that commit.
 
