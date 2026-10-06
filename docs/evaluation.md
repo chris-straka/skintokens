@@ -64,6 +64,14 @@ and degrading a Rust candidate with noise (raw 46.6 -> 38.3) raised the
 fix result from 46.8 to 49.5. Better candidates get locked in early by
 the smallest-edit-first rule and `optimize` then starts from that mix.
 
+Fixed in weightforge the same day (exact region pick, weightforge
+`docs/pick-and-bands.md`). Same 16 skins as candidates on the same rig:
+Python now fixes to 46.4-58.3 (mean 49.9), Rust to 52.3-52.5 (mean 52.5).
+Noise no longer raises the fix (amplitude 0.5 and up: 47.3 and below,
+against 52.5 clean), and no candidate leaves the fix below the
+no-candidate 46.4. On this 16-failing-region rig the search runs out of
+budget, so a 0.25-noise copy still fixed better (58.5).
+
 Speed and memory on the M4 (16 GB), same session: `rig` Andras 13k
 31.5-32.7 s (Python 47.8-49.5 s), `skin` 20.5-21 s (Python 34-36 s);
 peak RSS 3.7 GB (Python 3.0 GB; Rust keeps f32 weights,
