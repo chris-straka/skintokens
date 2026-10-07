@@ -12,7 +12,7 @@ It is:
   `skintokens-joints/1`, the unirig-joints/1 schema under a new name), and
 - genforge's default **rig stage** (`skintokens rig`).
 
-Rust (candle, Metal on Apple Silicon, CPU fallback), no Python at
+Rust (candle; Metal on Apple Silicon, CPU elsewhere, no CUDA), no Python at
 runtime: the official checkpoint is read directly and GLBs are read and
 written in pure Rust. It replaced the Python/PyTorch wrapper on
 2026-10-05 after matching it tensor for tensor; how parity was proven,
@@ -23,6 +23,7 @@ github.com/chris-straka/skintokens.
 ## Setup
 
     cargo build --release      # target/release/skintokens; bin/skintokens runs it
+                               # Linux: add --no-default-features (CPU; Metal is macOS-only)
     ./fetch-weights.sh         # once: official grpo_1400.ckpt (1.1 GB, pinned, checksummed)
     bin/skintokens doctor
 
