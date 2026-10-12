@@ -1,6 +1,6 @@
 # skintokens
 
-Auto-rigging for the HLL character pipeline with SkinTokens / TokenRig
+Auto-rigging for the game character pipeline with SkinTokens / TokenRig
 (VAST-AI-Research, arXiv 2602.04805, MIT code and weights), the successor
 to UniRig. A mesh goes in; a skeleton and skin weights come out, as GLB.
 It is:
@@ -46,14 +46,14 @@ and the FSQ-CVAE skin decoder.
   convention (local Y along the bone, roll 0), like the files the Python
   wrapper got from Blender. For `--class humanoid` the joints are named
   by structure with Mixamo names, so motionforge's `adapter standardize`
-  maps them onto the HLL 22-bone skeleton (`DEF-*`); a skeleton without
+  maps them onto the standard humanoid 22-bone skeleton (`DEF-*`); a skeleton without
   the humanoid core fails (`ok: false`, exit 1). Other classes keep
   TokenRig's `bone_N` names (standardize adds the `DEF-` prefix). An
   already rigged input is re-rigged (its skin and animations dropped).
 - **skin**: keeps IN's skeleton and rewrites only its JOINTS_0/WEIGHTS_0
   bytes in place (TokenRig's skin-only mode on the given bones). This is
   the weightforge candidate. Twist/helper bones (motionforge's
-  `DEF-*_twist.*`, marked by `extras.hll_helper`) share their driver's
+  `DEF-*_twist.*`, marked by `extras.helper_bone`) share their driver's
   joint, so the model would see two joints in one place; `skin` runs the
   model without them and gives them zero weight; weightforge's fix
   weights them.
@@ -69,10 +69,10 @@ or setup error (no report). Inputs are never modified. A genforge
 
 One inference runs at a time per machine (a file lock in
 `$SKINTOKENS_HOME`). On the M4 (Metal, f32): ~32 s per `rig` and ~21 s
-per `skin` on Andras (13.6k verts), ~3.7 GB peak; the Python wrapper took
+per `skin` on a 13.6k-vert hero mesh, ~3.7 GB peak; the Python wrapper took
 ~48 s and ~35 s. Same `--seed`, same machine, same output (the Python
 wrapper was not reproducible); different seeds vary like the original
-(raw weightforge 48.9-51.5 on Andras over four seeds).
+(raw weightforge 48.9-51.5 on that hero over four seeds).
 
 Environment: `SKINTOKENS_DEVICE=cpu|metal` (default Metal if present),
 `SKINTOKENS_DTYPE=bf16` (default f32; bf16 peaks at 2.4 GB, is a little faster, scores

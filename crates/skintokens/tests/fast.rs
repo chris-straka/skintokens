@@ -96,7 +96,7 @@ fn humanoid_glb(mirror_z: bool, with_helper: bool) -> Glb {
     if with_helper {
         // a twist helper on l_arm, as motionforge's standardize adds them
         let arm = 1 + 7;
-        nodes.push(json!({"name": "helper", "translation": [0.0, 0.0, 0.0], "extras": {"hll_helper": {"driver": "l_arm", "share": 0.5}}}));
+        nodes.push(json!({"name": "helper", "translation": [0.0, 0.0, 0.0], "extras": {"helper_bone": {"driver": "l_arm", "share": 0.5}}}));
         let hi = nodes.len() - 1;
         nodes[arm].as_object_mut().unwrap().entry("children").or_insert(json!([])).as_array_mut().unwrap().push(json!(hi));
         skin_joints.push(hi);

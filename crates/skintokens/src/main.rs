@@ -24,7 +24,7 @@ const HELP: &str = "skintokens: SkinTokens/TokenRig auto-rigging as a file-in, f
 
 rig    generates a skeleton and skin weights for an unrigged mesh. Humanoid
        joints are named by structure (Mixamo names) so motionforge's
-       standardize adapter maps them onto the HLL skeleton.
+       standardize adapter maps them onto the standard humanoid skeleton.
 skin   keeps IN's skeleton and replaces only its weights (JOINTS_0/WEIGHTS_0
        bytes): a weightforge `fix --candidate`. Twist/helper bones are hidden
        from the model and left unweighted.

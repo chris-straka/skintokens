@@ -3,7 +3,7 @@
 //!
 //! TokenRig's general ("articulation") class emits unnamed joints (bone_0..).
 //! For humanoids they are named by structure so motionforge's standardize
-//! adapter maps them onto the HLL skeleton: Mixamo names, which it already
+//! adapter maps them onto the standard humanoid skeleton: Mixamo names, which it already
 //! reads. glTF frame: +Y up; the character's left is +X when it faces +Z, and
 //! the toes decide the facing. Joints the walk cannot place keep a
 //! non-canonical name (`extra_*`); standardize folds their weights into the

@@ -259,13 +259,13 @@ pub fn rig(input: &Glb, model: &TokenRig, cfg: &GenConfig, seed: u64, humanoid: 
 // ------------------------------------------------------------------ skin
 
 /// Twist/helper bones (motionforge's DEF-*_twist.*): {helper node: driver
-/// node}. Marked by node extras.hll_helper.driver, else by the name
+/// node}. Marked by node extras.helper_bone.driver, else by the name
 /// `<driver>_twist.<side>`.
 pub fn helper_joints(g: &Glb, joint_nodes: &[usize]) -> HashMap<usize, usize> {
     let names: Vec<String> = joint_nodes.iter().map(|&n| g.nodes()[n]["name"].as_str().unwrap_or("").to_string()).collect();
     let mut out = HashMap::new();
     for (k, &n) in joint_nodes.iter().enumerate() {
-        let mut driver = g.nodes()[n]["extras"]["hll_helper"]["driver"].as_str().map(String::from);
+        let mut driver = g.nodes()[n]["extras"]["helper_bone"]["driver"].as_str().map(String::from);
         if driver.is_none() {
             if let Some((base, side)) = names[k].rsplit_once('.') {
                 if (side == "L" || side == "R") && base.ends_with("_twist") {

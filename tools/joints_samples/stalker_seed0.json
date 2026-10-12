@@ -2,7 +2,7 @@
   "format": "skintokens-joints/1",
   "subject": "stalker",
   "seed": 0,
-  "source": "skintokens rig (seed 0) on games/hll stalker.glb, parts joined",
+  "source": "skintokens rig (seed 0) on a game's stalker.glb, parts joined",
   "frame": "source mesh frame as stored (glTF, Y-up); positions in source units",
   "normalizer": {
     "center": [
