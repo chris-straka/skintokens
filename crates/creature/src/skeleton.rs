@@ -282,9 +282,16 @@ impl Skeleton {
                 }
                 let most = if l.role == Role::Leg && (an.kind == Kind::FourLegged || an.kind == Kind::ManyLimbed) { 3 } else { 2 };
                 if let Some(mid) = hinted(l, body, h, most) {
-                    // keep what comes before the limb is out of the body (the shoulder or hip)
+                    // keep what comes before the limb is out of the body (the
+                    // shoulder or hip) and, on a leg, the foot joint
                     let mut v: Vec<f64> = fracs[li].iter().copied().filter(|&f| f <= 0.0).collect();
-                    v.extend(mid);
+                    if l.role == Role::Leg {
+                        let foot = *fracs[li].last().unwrap();
+                        v.extend(mid.into_iter().filter(|&f| f <= foot - 0.12));
+                        v.push(foot);
+                    } else {
+                        v.extend(mid);
+                    }
                     fracs[li] = v;
                 }
             }

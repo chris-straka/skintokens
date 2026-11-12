@@ -5,7 +5,7 @@ same inputs, same outputs, a different rig.
 
     python3 tools/creature_route.py MODEL.fbx OUT_DIR [--name NAME]
         [--class monster|hero|npc] [--tris N] [--height M] [--convention +x|...|none]
-        [--seed N] [--no-ml] [--no-clips] [--fix-args "..."] [--keep-tries]
+        [--seed N] [--no-ml] [--no-clips] [--hint PREDICTED.glb] [--fix-args "..."] [--keep-tries]
 
 Steps, each a tool of its own:
 
@@ -93,6 +93,7 @@ def main():
     ap.add_argument("--seed", type=int, default=1, help="for the model's weights (the only step with chance in it)")
     ap.add_argument("--no-ml", action="store_true", help="don't offer the model's weights to the fix")
     ap.add_argument("--no-clips", action="store_true")
+    ap.add_argument("--hint", default="", help="a rig of this model from `skintokens rig`: knees and elbows go where its joints are")
     ap.add_argument("--no-fix", action="store_true")
     ap.add_argument("--fix-args", default="")
     ap.add_argument("--fix-timeout", type=int, default=1800)
@@ -149,8 +150,9 @@ def main():
     report["tries"].append(t)
     base = os.path.join(a.out, "try")
     rig, rom, fixed = base + ".rig.glb", base + ".rom.ron", base + ".glb"
+    hint = ["--hint", a.hint] if a.hint else []
     r = run([cr, "rig", mesh, rig, "--rom", rom, "--json", base + ".rig.json", "--sheet", base + ".skeleton.png",
-             "--blend", str(BLENDS[0])], timeout=900)
+             "--blend", str(BLENDS[0])] + hint, timeout=900)
     t["rig"] = {"code": r["code"], "secs": r["secs"]}
     if r["code"] != 0 or not os.path.exists(rig):
         t["rig"]["error"] = tail(r["err"] or r["out"])
@@ -165,7 +167,7 @@ def main():
     candidates = []
     for b in BLENDS[1:]:
         c = f"{base}.band{b}.glb"
-        if run([cr, "rig", mesh, c, "--blend", str(b)], timeout=900)["code"] == 0:
+        if run([cr, "rig", mesh, c, "--blend", str(b)] + hint, timeout=900)["code"] == 0:
             candidates.append(c)
     print(f"{name}: {t['body']}, {len(info['bones'])} bones ({', '.join(f'{k} {v}' for k, v in t['limbs'].items())})"
           + ("; turned to face forward" if t["turned_half_a_turn"] else ""))

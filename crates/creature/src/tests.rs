@@ -106,3 +106,52 @@ fn weights_keep_a_leg_to_itself() {
         }
     }
 }
+
+/// A robe to the ground with a head on top: nothing to stand on.
+#[test]
+fn a_legless_body_has_a_spine_from_the_ground_up() {
+    let (mut v, mut f) = cuboid([-0.2, 0.0, -0.15], [0.2, 1.0, 0.15], 0);
+    let (v2, f2) = cuboid([-0.07, 0.95, -0.07], [0.07, 1.3, 0.07], 8);
+    v.extend(v2);
+    f.extend(f2);
+    let body = Body::build(&v, &f, 96);
+    let an = Anatomy::read(&body);
+    assert_eq!(an.kind, Kind::Legless);
+    assert!(an.upright);
+    let sk = Skeleton::fit(&body, &an);
+    let trunk: Vec<_> = sk.bones.iter().filter(|b| b.trunk).collect();
+    assert!(trunk.len() >= 3, "{} trunk bones", trunk.len());
+    let (lo, hi) = (trunk.iter().map(|b| b.head[1]).fold(f64::INFINITY, f64::min), trunk.iter().map(|b| b.tail[1]).fold(0.0, f64::max));
+    assert!(lo < 0.35 && hi > 0.7, "the spine runs from {lo} to {hi}");
+}
+
+/// Knees where another rig has them.
+#[test]
+fn a_hint_moves_the_knees() {
+    let (v, f) = box_dog();
+    let body = Body::build(&v, &f, 96);
+    let an = Anatomy::read(&body);
+    let leg = an.limbs.iter().position(|l| l.name == "leg_front.L").unwrap();
+    let l = &an.limbs[leg];
+    let own = l.length - l.emerge;
+    // a hint with joints at 30% and 60% of the way down that leg
+    let at = |f: f64| l.at(l.emerge + own * f).0;
+    // (on both front legs: the other side's are these mirrored)
+    let mut hint: Vec<crate::skeleton::Bone> = vec![];
+    for &f in &[0.3, 0.6] {
+        for side in [1.0, -1.0] {
+            let p = at(f);
+            let q = at(f + 0.1);
+            hint.push(crate::skeleton::Bone { name: "j".into(), parent: None, head: [side * p[0], p[1], p[2]], tail: [side * q[0], q[1], q[2]], limb: None, trunk: false, index: 0, radius: 0.0 });
+        }
+    }
+    let sk = Skeleton::fit_with(&body, &an, Some(&hint));
+    let heads: Vec<f64> = sk.bones.iter().filter(|b| b.limb == Some(leg)).map(|b| b.head[1]).collect();
+    for want in [at(0.3)[1], at(0.6)[1]] {
+        assert!(heads.iter().any(|h| (h - want).abs() < 0.03), "no joint at height {want}: {heads:?}");
+    }
+    // the right leg gets the same joints as the left
+    let right = an.limbs.iter().position(|l| l.name == "leg_front.R").unwrap();
+    let n = |li: usize| sk.bones.iter().filter(|b| b.limb == Some(li)).count();
+    assert_eq!(n(leg), n(right));
+}
