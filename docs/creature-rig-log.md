@@ -94,3 +94,67 @@ joint; two smoothing passes along short edges.
 - Skull joint at the thinnest point of the neck: on a horse that put
   the joint low on the neck. Now at the bend where the line turns down
   into the head when there is one, else the thinnest point.
+
+### Judging two rigs alike (kept: this is the score)
+
+The old route judged a creature on motionforge's four-legged pose set
+when its gait step found four legs in the predicted skeleton, and on
+"every bone bent 45 degrees" when it didn't (5 of the 10 four-legged
+models, every other kind). Scores from different pose sets don't
+compare, so both rigs of a creature are now judged the same way:
+
+- `creature-rig check --rom` writes the body's range of motion on that
+  rig's own bones (the bones that lie along each limb, the topmost one
+  swings it), `weights check --poses` bends it through that and through
+  the rig's own clips;
+- `creature-rig check` scores the skeleton against the body;
+- **creature score = bend score x skeleton score / 100**; the gate is no
+  failing finding in either.
+
+Why the skeleton score has to be in it: the bend check gave 99 to a
+cloaked figure whose seven bones bend almost nothing, and 0 failing
+findings to rigs with no bone in the tail or the neck.
+
+- Dropped: judging without the shoulder. The first fitted skeleton
+  started each leg where it leaves the body, so "leg forward" turned the
+  leg at the elbow; the predicted rigs have bones inside the shoulder and
+  were turned there. That made ours look better than it was (20 of 25
+  passing). With a shoulder or hip bone half way between the spine and
+  the surface, and the check counting a rig's bones inside the body as
+  the limb's, both are swung from the top.
+
+### The whole route against the old one, 29 models (first full run)
+
+`tools/creature_route.py` (clean, `creature-rig rig` at bands 1.6, 1.0
+and 2.5, walk and trot for a four-legged body, `weights fix` choosing
+per region among the bands, the model's weights for this skeleton and
+its own repairs, both checks, rfcheck) against the old route's best of
+three seeds, judged alike:
+
+| | Old route | New route |
+| --- | --- | --- |
+| Creature score, mean | 52.8 | 69.4 |
+| Bend score, mean | 66.5 | 74.8 |
+| Skeleton score, mean | 80.4 | 93.5 |
+| Failing bend findings | 58 | 29 |
+| Failing skeleton findings | 43 | 12 |
+| No failing finding at all | 1 | 12 |
+| Peak memory | 1.6 GB | 1.5 GB |
+
+Higher on 23 of 29. Lower on six: a squat four-legged beast (82.5 to
+67.9: its old rig has no walk or trot and is judged without them; ours
+fails two findings in its trot), a hunched two-legged one whose head
+our reading missed, and four within two points. What the fix picks,
+region by region, is mostly its own `optimize` and the model's weights
+on our skeleton; the three bands are the starting point more than the
+answer.
+
+- What our own check found wrong with our own rigs: last bones of claws
+  and rags reported outside the body (the check gave a last bone 0.6 of
+  its parent's length along the parent, not along itself; now it reads
+  it as weightforge does and ends it where it leaves the body), and
+  half the four-legged rigs got no walk: motionforge's gait wants a
+  joint within a fifth of the height of the ground at each foot and
+  both legs of a pair on one bone. Now: a foot joint where the leg
+  comes within a tenth of the height of the ground, and a pair hangs
+  from the spine bone nearest the middle of its two bases.
