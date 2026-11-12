@@ -40,10 +40,45 @@ pub fn read_rig(g: &Glb) -> anyhow::Result<Vec<Bone>> {
     let mut tail = head.clone();
     let mut len = vec![0.0; n];
     let kids = |j: usize| (0..n).filter(|&k| parent[k] == Some(j) && geom::norm(geom::sub(head[k], head[j])) > 1e-9).collect::<Vec<_>>();
+    // Blender's convention (a bone runs along its joint's local +Y): held
+    // when four in five joints with one child point their +Y at it. Then a
+    // leaf runs along its own +Y, as weightforge reads it.
+    let yaxis: Vec<V3> = joints
+        .iter()
+        .map(|&nd| {
+            let y = geom::cols(&worlds[nd])[1];
+            let l = geom::norm(y);
+            if l > 0.0 {
+                geom::scale(y, 1.0 / l)
+            } else {
+                [0.0, 1.0, 0.0]
+            }
+        })
+        .collect();
+    let (mut agree, mut total) = (0, 0);
+    for j in 0..n {
+        let ch = kids(j);
+        if ch.len() == 1 {
+            let d = geom::sub(head[ch[0]], head[j]);
+            total += 1;
+            if geom::dot(geom::scale(d, 1.0 / geom::norm(d)), yaxis[j]) > 0.98 {
+                agree += 1;
+            }
+        }
+    }
+    let y_convention = total > 0 && agree * 10 >= total * 8;
     for j in 0..n {
         let ch = kids(j);
         if ch.is_empty() {
             continue;
+        }
+        if y_convention {
+            let l = ch.iter().map(|&k| geom::dot(geom::sub(head[k], head[j]), yaxis[j])).fold(0.0, f64::max);
+            if l > 1e-9 {
+                tail[j] = geom::add(head[j], geom::scale(yaxis[j], l));
+                len[j] = l;
+                continue;
+            }
         }
         let dir = match parent[j] {
             Some(p) if geom::norm(geom::sub(head[j], head[p])) > 1e-9 => geom::scale(geom::sub(head[j], head[p]), 1.0 / geom::norm(geom::sub(head[j], head[p]))),
@@ -61,8 +96,9 @@ pub fn read_rig(g: &Glb) -> anyhow::Result<Vec<Bone>> {
         let plen = parent[j].map(|p| len[p]).unwrap_or(0.0);
         let l = if plen > 1e-9 { 0.6 * plen } else { 0.05 };
         let dir = match parent[j] {
+            _ if y_convention => yaxis[j],
             Some(p) if geom::norm(geom::sub(head[j], head[p])) > 1e-9 => geom::scale(geom::sub(head[j], head[p]), 1.0 / geom::norm(geom::sub(head[j], head[p]))),
-            _ => [0.0, 1.0, 0.0],
+            _ => yaxis[j],
         };
         tail[j] = geom::add(head[j], geom::scale(dir, l));
     }
@@ -117,6 +153,22 @@ fn needed(r: Role) -> usize {
 pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
     let size = body.size;
     let nb = bones.len();
+    // A file stores no bone ends. A last bone's length is a guess (0.6 of
+    // its parent's): it is taken to end where it leaves the body, if it
+    // runs inside for a while first.
+    for b in 0..nb {
+        if bones.iter().any(|c| c.parent == Some(b)) {
+            continue;
+        }
+        let (h, t) = (bones[b].head, bones[b].tail);
+        let steps = 12;
+        let inside = |k: usize| body.solid.nearest_inside(geom::add(h, geom::scale(geom::sub(t, h), k as f64 / steps as f64)), 1).is_some();
+        if let Some(out) = (1..=steps).find(|&k| !inside(k)) {
+            if out >= 4 {
+                bones[b].tail = geom::add(h, geom::scale(geom::sub(t, h), (out - 1) as f64 / steps as f64));
+            }
+        }
+    }
     let reach = |r: f64| (1.5 * r).max(0.04 * size);
     // --- which part each bone lies along: the limb (or the spine) most of
     // its length runs beside

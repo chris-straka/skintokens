@@ -65,6 +65,14 @@ fn its_own_skeleton_passes_the_check_and_one_without_a_tail_does_not() {
         assert_eq!(n(".L"), n(".R"));
         assert!(n(".L") >= 3);
     }
+    // a pair of legs hangs from one bone, and each leg ends in a foot whose
+    // joint is near the ground (what a gait needs to plant it)
+    for stem in ["leg_front", "leg_hind"] {
+        let first = |side: &str| sk.bones.iter().find(|b| b.name.contains(stem) && b.name.ends_with(side) && b.index == 0).unwrap();
+        assert_eq!(first(".L").parent, first(".R").parent, "{stem}");
+        let last = sk.bones.iter().filter(|b| b.name.contains(stem) && b.name.ends_with(".L")).max_by_key(|b| b.index).unwrap();
+        assert!(last.head[1] < 0.2, "{stem}'s foot joint is {} up", last.head[1]);
+    }
     // the same skeleton with the tail's bones taken out
     let tail = an.limbs.iter().position(|l| l.role == Role::Tail).unwrap();
     let keep: Vec<usize> = (0..sk.bones.len()).filter(|&b| sk.bones[b].limb != Some(tail)).collect();

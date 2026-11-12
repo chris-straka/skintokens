@@ -118,8 +118,18 @@ fn limb_joints(l: &Limb, body: &Body, kind: Kind) -> Vec<f64> {
     match l.role {
         Role::Leg => {
             let most = if kind == Kind::FourLegged || kind == Kind::ManyLimbed { 3 } else { 2 };
+            // the foot: a joint where the leg comes within a tenth of the
+            // body's height of the ground (an ankle, a pastern), so the last
+            // bone is the foot and stands on the ground
+            let (ground, height) = (body.lo[1], body.hi[1] - body.lo[1]);
+            let n = 40;
+            let foot = (0..=n)
+                .map(|k| 0.78 + 0.15 * k as f64 / n as f64)
+                .find(|&f| l.at(l.emerge + own * f).0[1] <= ground + 0.1 * height)
+                .unwrap_or(0.93);
             let mut v = upper();
-            v.extend(bends(l, 2, most, &[0.45, 0.8, 0.25]));
+            v.extend(bends(l, 1, most, &[0.45, 0.25]).into_iter().filter(|&f| f <= foot - 0.12));
+            v.push(foot);
             v
         }
         Role::Arm => {
@@ -296,16 +306,27 @@ impl Skeleton {
                 }
             }
         }
+        // each limb hangs from the spine bone its base is nearest to; a
+        // left and its right from the same one (nearest to the middle of
+        // their two bases)
+        let mut hang: Vec<usize> = vec![0; an.limbs.len()];
         for (li, l) in an.limbs.iter().enumerate() {
-            let own = l.length - l.emerge;
-            // hangs from the spine bone its base is nearest to
-            let base = l.base();
-            let parent = (0..=n_spine)
+            let mut base = l.base();
+            for (lj, m) in an.limbs.iter().enumerate() {
+                if lj != li && stem_and_side(m).0 == stem_and_side(l).0 && m.side != l.side && m.side != Side::Centre && l.side != Side::Centre {
+                    base = geom::scale(geom::add(l.base(), m.base()), 0.5);
+                }
+            }
+            hang[li] = (0..=n_spine)
                 .min_by(|&a, &b| {
                     let d = |k: usize| seg_dist(base, bones[k].head, bones[k].tail);
-                    d(a).partial_cmp(&d(b)).unwrap()
+                    d(a).partial_cmp(&d(b)).unwrap().then(a.cmp(&b))
                 })
                 .unwrap();
+        }
+        for (li, l) in an.limbs.iter().enumerate() {
+            let own = l.length - l.emerge;
+            let parent = hang[li];
             let (stem, side) = stem_and_side(l);
             let f = &fracs[li];
             let mut prev = parent;
