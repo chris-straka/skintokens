@@ -158,3 +158,40 @@ answer.
   both legs of a pair on one bone. Now: a foot joint where the leg
   comes within a tenth of the height of the ground, and a pair hangs
   from the spine bone nearest the middle of its two bases.
+
+### After the first full run (same day)
+
+Judged alike on the final poses, old route against new, 29 models:
+creature score 52.8 to 70.6, skeleton 81.0 to 97.4, failing skeleton
+findings 39 to 10, no failing finding at all 1 to 9; failing bend
+findings 53 to 45. Higher on 23, lower on 6.
+
+- Kept: a foot joint where the leg comes within a tenth of the height of
+  the ground, and a pair of legs hung from one spine bone. motionforge's
+  gait then accepts 8 of the 10 four-legged rigs (5 before), and the
+  horse and both wolves pass with their walk and trot.
+- Kept: no bone shorter than 6% of the body's longest side. A squat
+  beast's hind legs had been cut into six 5 cm bones and scored 27.
+- Kept: the pose writer tells a hip or shoulder bone (inside the body)
+  from the upper leg. With the hip bone added, "knee" had been bending
+  the thigh a right angle; the two-legged scores before this fix were
+  on wrong poses, in both directions.
+- Kept: the check matches a bone to the nearest centre line in plain
+  distance (it had divided by the limb's thickness, so a thin limb's
+  bones went to the thick limb beside it), and reads a last bone as
+  weightforge does (along its own +Y, ended where it leaves the body).
+- Kept: a piece of body between two forks is trunk. On a hunched
+  two-legged monster the piece between the chest's fork and the hips'
+  was read as a 1 cm "neck", and everything below it counted as that
+  limb.
+- Dropped as a default: knees and elbows where the predicted rig has
+  its joints (`--hint`). All 29: creature score 68.7 with, 70.6
+  without; a human-shaped one 83.5 to 90.3 and a gorilla-like one 68.3
+  to 73.6, but a squat beast 68.6 to 41.7 and a wolf 85.3 to 63.2 (the
+  predicted joints sit off our centre line's bends and the trot tears).
+  It stays as an option.
+- Not solved: a figure whose two legs are one mass (roots). The volume
+  gives one limb or two that share cells, and one knee tears the other
+  leg: 10.7 where the predicted rig scores 74.9. So the route now makes
+  the predicted rig as well, judges both alike and keeps the better
+  (`creature_route.py`, step 5b; `--no-predicted` turns it off).
