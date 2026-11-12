@@ -121,8 +121,15 @@ def main():
     # 1. Clean mesh.
     mesh = os.path.join(a.out, "mesh.glb")
     if a.clean_mesh:
-        shutil.copyfile(a.clean_mesh, mesh)
+        if os.path.abspath(a.clean_mesh) != os.path.abspath(mesh):
+            shutil.copyfile(a.clean_mesh, mesh)
         report["steps"]["clean"] = {"ok": True, "given": os.path.abspath(a.clean_mesh)}
+        # called by tripo_rig.py after its own clean step: keep what that step reported
+        try:
+            with open(os.path.join(a.out, "report.json")) as f:
+                report["steps"]["clean"] = json.load(f)["steps"]["clean"]
+        except (OSError, ValueError, KeyError):
+            pass
     else:
         blender = find("blender", a.blender, "BLENDER", [], first=["/Applications/Blender.app/Contents/MacOS/Blender"])
         script = os.environ.get("TRIPO_TO_GLB") or os.path.join(sib, "motionforge/tools/tripo_to_glb.py")
