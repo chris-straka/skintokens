@@ -136,8 +136,9 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
             }
             for (li, l) in an.limbs.iter().enumerate() {
                 let (d, s) = line_dist(p, &l.line);
-                // only the limb's own length counts: its line starts in the trunk
-                if s < l.start {
+                // its line starts on the trunk's centre line: the first
+                // third of the way out is the trunk's
+                if s < 0.35 * l.emerge {
                     continue;
                 }
                 let r = l.at(s).1;

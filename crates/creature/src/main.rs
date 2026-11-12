@@ -24,7 +24,7 @@ const HELP: &str = "creature-rig: creature rigs from the body's own shape.
     creature-rig parts MESH.glb [--json OUT.json] [--sheet OUT.png] [--res 128]
     creature-rig check RIG.glb [--json OUT.json] [--rom OUT.ron] [--sheet OUT.png] [--res 128]
     creature-rig rig   MESH.glb OUT.glb [--rom OUT.ron] [--json OUT.json] [--sheet OUT.png]
-                       [--res 128] [--blend 0.6] [--turn no]
+                       [--res 128] [--blend 0.6] [--turn no] [--hint PREDICTED.glb]
 
 parts  finds the body's parts in its volume (the branches of the solid:
        legs, neck, tail, wings) and writes them with their centre lines.
@@ -41,7 +41,9 @@ rig    lays a skeleton along those parts (hips and spine, a chain down
        (MESH's own rig, if it has one, is replaced). --rom writes this
        body's range of motion as a weightforge pose set. A body whose toes
        say it faces -Z is turned half a turn first, so a rig always faces
-       +Z (--turn no leaves it).";
+       +Z (--turn no leaves it). --hint: a rig of the same mesh from
+       `skintokens rig`; where its joints lie along a leg or an arm, the
+       knees and elbows are put there instead of at the line's bends.";
 
 /// Every mesh of the file as one triangle soup in world space (glTF: +Y up).
 fn load_mesh(path: &Path) -> Result<(Vec<V3>, Vec<[u32; 3]>)> {
@@ -268,7 +270,22 @@ fn cmd_rig(a: &Args) -> Result<()> {
         body = parts::Body::build(&verts, &tris, res);
         an = roles::Anatomy::read(&body);
     }
-    let sk = skeleton::Skeleton::fit(&body, &an);
+    // --hint: another rig of this mesh (the model's), for where knees and elbows go
+    let hint = match a.flags.get("hint") {
+        Some(p) => {
+            let mut bones = check::read_rig(&Glb::read(Path::new(p))?)?;
+            if turned {
+                // the hint was made on the mesh as given
+                for b in bones.iter_mut() {
+                    b.head = [-b.head[0], b.head[1], -b.head[2]];
+                    b.tail = [-b.tail[0], b.tail[1], -b.tail[2]];
+                }
+            }
+            Some(bones)
+        }
+        None => None,
+    };
+    let sk = skeleton::Skeleton::fit_with(&body, &an, hint.as_deref());
     let skin = weights::skin(&body, &sk, &verts, &tris, blend);
     // bones follow Blender's convention: local +Y along the bone, roll 0
     let worlds: Vec<skintokens::geom::M4> = sk

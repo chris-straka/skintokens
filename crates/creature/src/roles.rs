@@ -376,6 +376,21 @@ impl Anatomy {
         }
         // minor branches that got a chain only stay if nothing else claimed them
         limbs.retain(|l| l.role != Role::Extra || l.length >= EXTRA_LENGTH * size);
+        // A body with no legs is its own trunk all the way down: the lower
+        // body of a floating figure, a robe, a fish's tail end. The
+        // thickest unnamed limb on the midline, if it is body-thick, is
+        // trunk, and the spine runs through it.
+        if !limbs.iter().any(|l| l.role == Role::Leg) {
+            let root_radius = body.parts.iter().filter(|p| p.parent.is_none()).map(|p| p.radius.iter().cloned().fold(0.0, f64::max)).fold(0.0, f64::max);
+            let mean_radius = |l: &Limb| l.radius.iter().sum::<f64>() / l.radius.len().max(1) as f64;
+            let vol = |l: &Limb| l.parts.iter().map(|&p| t.volume[p]).max().unwrap_or(0);
+            let body_like = (0..limbs.len())
+                .filter(|&i| (limbs[i].role == Role::Extra || limbs[i].role == Role::Tail) && limbs[i].side == Side::Centre && mean_radius(&limbs[i]) >= 0.4 * root_radius && vol(&limbs[i]) as f64 >= 0.1 * t.total as f64)
+                .max_by_key(|&i| vol(&limbs[i]));
+            if let Some(i) = body_like {
+                limbs.remove(i);
+            }
+        }
 
         let count = |r: Role| limbs.iter().filter(|l| l.role == r).count();
         let kind = if count(Role::Wing) >= 2 {

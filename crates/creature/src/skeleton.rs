@@ -104,8 +104,11 @@ fn limb_joints(l: &Limb, body: &Body, kind: Kind) -> Vec<f64> {
     // A leg or an arm swings from the shoulder or the hip, inside the
     // body: an upper bone from half way in to where the limb comes out,
     // when there is that much body to cross.
+    // (The limb's line starts on the trunk's own centre line, so "half way
+    // in" is half way between the spine and the surface: about where a
+    // shoulder or a hip joint is.)
     let upper = || -> Vec<f64> {
-        let inside = l.emerge - l.start;
+        let inside = l.emerge;
         if inside >= 0.06 * size && own > 0.0 {
             vec![-0.5 * inside / own, 0.0]
         } else {
@@ -170,8 +173,73 @@ fn stem_and_side(l: &Limb) -> (String, &'static str) {
     (l.name.trim_end_matches(".L").trim_end_matches(".R").to_string(), side)
 }
 
+/// Where another rig of this body (the model's prediction) puts its
+/// joints along a leg or an arm, as fractions of the limb's length outside
+/// the body: the heads of that rig's bones that lie on the limb's centre
+/// line, at least two of them, well apart. The model has seen where knees
+/// and hocks are; the centre line knows where the inside of the body is.
+fn hinted(l: &Limb, body: &Body, hint: &[Bone], most: usize) -> Option<Vec<f64>> {
+    let own = l.length - l.emerge;
+    if own <= 0.0 {
+        return None;
+    }
+    let mut at: Vec<f64> = vec![];
+    for b in hint {
+        // nearest point of the limb's line to this joint
+        let (mut best, mut s_best, mut s) = (f64::INFINITY, 0.0, 0.0);
+        for k in 1..l.line.len() {
+            let (p, q) = (l.line[k - 1], l.line[k]);
+            let pq = geom::sub(q, p);
+            let len = geom::norm(pq);
+            let t = if len > 0.0 { (geom::dot(geom::sub(b.head, p), pq) / (len * len)).clamp(0.0, 1.0) } else { 0.0 };
+            let d = geom::norm(geom::sub(b.head, geom::add(p, geom::scale(pq, t))));
+            if d < best {
+                best = d;
+                s_best = s + t * len;
+            }
+            s += len;
+        }
+        let r = l.at(s_best).1;
+        let f = (s_best - l.emerge) / own;
+        if best <= (1.5 * r).max(0.04 * body.size) && (0.12..=0.9).contains(&f) {
+            at.push(f);
+        }
+    }
+    at.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let mut out: Vec<f64> = vec![];
+    for f in at {
+        if out.last().is_none_or(|&g| f - g >= 0.14) {
+            out.push(f);
+        }
+    }
+    if out.len() < 2 {
+        return None;
+    }
+    while out.len() > most {
+        // drop the joint nearest to a neighbour
+        let k = (0..out.len()).min_by(|&a, &b| {
+            let gap = |i: usize| (if i > 0 { out[i] - out[i - 1] } else { out[i] }).min(if i + 1 < out.len() { out[i + 1] - out[i] } else { 1.0 - out[i] });
+            gap(a).partial_cmp(&gap(b)).unwrap()
+        });
+        out.remove(k.unwrap());
+    }
+    Some(out)
+}
+
 impl Skeleton {
+    /// `hint`: another rig's bones (see `hinted`), used for where a leg's
+    /// or an arm's joints go along it.
+    pub fn fit_with(body: &Body, an: &Anatomy, hint: Option<&[Bone]>) -> Skeleton {
+        let mut sk = Self::fit_inner(body, an, hint);
+        sk.bones.iter_mut().for_each(|b| b.trunk = b.limb.is_none());
+        sk
+    }
+
     pub fn fit(body: &Body, an: &Anatomy) -> Skeleton {
+        Self::fit_with(body, an, None)
+    }
+
+    fn fit_inner(body: &Body, an: &Anatomy, hint: Option<&[Bone]>) -> Skeleton {
         let mut bones: Vec<Bone> = vec![];
         let thick = |p: V3| {
             let c = body.solid.nearest_inside(p, 4).unwrap_or(body.seed);
@@ -197,6 +265,20 @@ impl Skeleton {
         }
         // --- limbs: joint fractions, the same on a left and its right
         let mut fracs: Vec<Vec<f64>> = an.limbs.iter().map(|l| limb_joints(l, body, an.kind)).collect();
+        if let Some(h) = hint {
+            for (li, l) in an.limbs.iter().enumerate() {
+                if l.role != Role::Leg && l.role != Role::Arm {
+                    continue;
+                }
+                let most = if l.role == Role::Leg && (an.kind == Kind::FourLegged || an.kind == Kind::ManyLimbed) { 3 } else { 2 };
+                if let Some(mid) = hinted(l, body, h, most) {
+                    // keep what comes before the limb is out of the body (the shoulder or hip)
+                    let mut v: Vec<f64> = fracs[li].iter().copied().filter(|&f| f <= 0.0).collect();
+                    v.extend(mid);
+                    fracs[li] = v;
+                }
+            }
+        }
         for i in 0..an.limbs.len() {
             for j in i + 1..an.limbs.len() {
                 let (a, b) = (&an.limbs[i], &an.limbs[j]);
