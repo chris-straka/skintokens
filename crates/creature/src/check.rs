@@ -192,7 +192,10 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
     let mut limb_rows = vec![];
     for (li, l) in an.limbs.iter().enumerate() {
         let ids: Vec<usize> = (0..nb).filter(|&b| bones[b].limb == Some(li)).collect();
-        let cov = covered(&l.line, &l.radius, l.start, l.length, &ids);
+        // bones are asked for where the limb is out of the body; what a
+        // rig has inside it (a shoulder blade, a thigh in the haunch) counts
+        // as the limb's but is not demanded
+        let cov = covered(&l.line, &l.radius, l.emerge, l.length, &ids);
         let enough = ids.len() >= needed(l.role);
         let s = (cov / 0.8).min(1.0) * if enough { 1.0 } else { 0.5 };
         let weight = if l.role == Role::Extra { 0.3 } else { 1.0 };

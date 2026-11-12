@@ -65,8 +65,13 @@ pub struct Limb {
     pub line: Vec<V3>,
     pub radius: Vec<f64>,
     pub length: f64,
-    /// Arc length at which it has left the body it grows out of.
+    /// Arc length at which its own first piece begins: from here on the
+    /// line is the limb's, though still inside the body it grows out of
+    /// (a shoulder, a haunch).
     pub start: f64,
+    /// Arc length at which it has come out of that body: the body around
+    /// the line is no thicker than the limb.
+    pub emerge: f64,
 }
 
 impl Limb {
@@ -218,8 +223,8 @@ impl Anatomy {
                 let length = length(&line);
                 // it has left the body where the line passes the first piece of its own
                 let start = if line.len() > 1 { geom::norm(geom::sub(line[1], line[0])) } else { 0.0 };
-                let mut l = Limb { role: Role::Extra, side: Side::Centre, front: false, name: String::new(), parts, line, radius, length, start: start.min(0.5 * length) };
-                l.start = l.start.max(emerges(&l)).min(0.4 * length);
+                let mut l = Limb { role: Role::Extra, side: Side::Centre, front: false, name: String::new(), parts, line, radius, length, start: start.min(0.4 * length), emerge: 0.0 };
+                l.emerge = l.start.max(emerges(&l)).min(0.4 * length);
                 l
             })
             .collect();
@@ -277,11 +282,11 @@ impl Anatomy {
         if legs.len() >= 4 {
             let mut by_z = legs.clone();
             // (the toes are read after this, so front and hind are swapped below if it faces -Z)
-            by_z.sort_by(|&a, &b| limbs[a].at(limbs[a].start).0[2].partial_cmp(&limbs[b].at(limbs[b].start).0[2]).unwrap());
+            by_z.sort_by(|&a, &b| limbs[a].at(limbs[a].emerge).0[2].partial_cmp(&limbs[b].at(limbs[b].emerge).0[2]).unwrap());
             let mean = |ids: &[usize]| {
                 let mut c = [0.0; 3];
                 for &i in ids {
-                    c = geom::add(c, limbs[i].at(limbs[i].start).0);
+                    c = geom::add(c, limbs[i].at(limbs[i].emerge).0);
                 }
                 geom::scale(c, 1.0 / ids.len() as f64)
             };
@@ -291,7 +296,7 @@ impl Anatomy {
             if upright && legs.len() == 4 {
                 // standing up with its hands on the ground: the upper pair are arms
                 let mut by_y = legs.clone();
-                by_y.sort_by(|&a, &b| limbs[a].at(limbs[a].start).0[1].partial_cmp(&limbs[b].at(limbs[b].start).0[1]).unwrap());
+                by_y.sort_by(|&a, &b| limbs[a].at(limbs[a].emerge).0[1].partial_cmp(&limbs[b].at(limbs[b].emerge).0[1]).unwrap());
                 for &i in &by_y[2..] {
                     limbs[i].role = Role::Arm;
                 }
@@ -353,7 +358,7 @@ impl Anatomy {
         // arms: a left and a right limb high on a body that stands up
         if upright {
             for l in limbs.iter_mut() {
-                if l.role == Role::Extra && l.side != Side::Centre && l.at(l.start).0[1] > ground + 0.45 * height && l.length >= 0.2 * height {
+                if l.role == Role::Extra && l.side != Side::Centre && l.at(l.emerge).0[1] > ground + 0.45 * height && l.length >= 0.2 * height {
                     l.role = Role::Arm;
                 }
             }

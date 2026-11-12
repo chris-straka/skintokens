@@ -112,6 +112,47 @@ the same), `SKINTOKENS_VERBOSE=1` (stage timings), `SKINTOKENS_TRANSFER`
 the model's prediction in `<prefix>.ids.npy`/`.skin.npy` and reuse it, so
 transfers are compared on one prediction).
 
+## Creatures: `creature-rig` and `tools/creature_route.py`
+
+The model was trained on people and common animals and gives a shaggy
+beast, a moth or a cloaked giant a skeleton that misses a tail, has a
+chain for every strip of cloth, or pivots a leg in the wrong place.
+`creature-rig` (`crates/creature`, no model, half a second a mesh) reads
+the body itself:
+
+    creature-rig parts MESH.glb [--json P.json] [--sheet P.png]
+    creature-rig rig   MESH.glb OUT.glb [--rom ROM.ron] [--json R.json] [--sheet S.png] [--blend 1.6]
+    creature-rig check RIG.glb [--json C.json] [--rom ROM.ron] [--sheet S.png]
+
+- **parts**: the mesh as a solid on a 128-cell grid (holes and parts
+  pushed through each other tolerated), distance through the inside from
+  its deepest point, and the tree of that distance's shells: its long
+  branches are the limbs, each with a centre line inside the body. They
+  are named by where they start and end: legs, arms, neck and head,
+  tail, wings, and what kind of body it is (four-legged, two-legged,
+  winged, many-limbed, legless). Toes, ears, horns and fur get nothing.
+- **rig**: hips and spine along the trunk, a chain down every limb with
+  joints where its line turns (a shoulder or hip inside the body first),
+  the same joints left and right, bones named `DEF-<part>.<nnn>.<side>`;
+  weights from each bone's distance through the solid, shared across a
+  joint over a band `--blend` body thicknesses wide; the body's range of
+  motion as a weightforge pose set (`--rom`). A body the clean step left
+  facing -Z (read from its toes) is turned to face +Z.
+- **check**: the skeleton check for any rig of a creature, whoever made
+  it: every leg, arm, tail, wing and the neck and head has a chain of
+  bones, the bones lie inside the body, a left and its right match
+  (0 to 100, findings `S_NO_CHAIN`, `S_SHORT_CHAIN`, `S_OUTSIDE`,
+  `S_LOPSIDED`; exit 1 when one fails). `--rom` writes the same range of
+  motion on that rig's bones, so two rigs are bent the same way.
+
+`tools/creature_route.py MODEL.fbx OUT --name NAME` is the whole route
+(motionforge's `tripo_rig.py` for creatures): clean, `creature-rig rig`
+at three band widths, walk and trot for a four-legged body, weightforge's
+fix choosing per region among those widths and the model's own weights
+for this skeleton (`skintokens skin`), then the bend gate, the skeleton
+check and rfcheck. What was tried and what it scored:
+[docs/creature-rig-log.md](docs/creature-rig-log.md).
+
 ## How it is built
 
 - `crates/skintokens` (MIT): CLI, GLB I/O (`gltf` crate to read; edits on
@@ -125,6 +166,8 @@ transfers are compared on one prediction).
   so the built binary is GPL-3.0; callers only run it as a separate
   process.
 - `crates/skintokens-nn` (MIT): shared layers, attention, FPS.
+- `crates/creature` (MIT): `creature-rig`; uses the skintokens crate for
+  GLB I/O only (it links it, so its binary is GPL-3.0 as well).
 
 Upstream details kept on purpose (all verified against the Python run):
 the 54k-point cloud is surface samples only; the VAE embedder and rotary

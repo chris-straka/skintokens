@@ -56,12 +56,12 @@ fn bends(l: &Limb, want: usize, most: usize, defaults: &[f64]) -> Vec<f64> {
 
 fn bends_min(l: &Limb, most: usize, defaults: &[f64], min_turn: f64) -> Vec<f64> {
     let want = 0;
-    let own = l.length - l.start;
+    let own = l.length - l.emerge;
     if own <= 0.0 {
         return vec![];
     }
     let n = 48usize;
-    let pts: Vec<V3> = (0..=n).map(|k| l.at(l.start + own * k as f64 / n as f64).0).collect();
+    let pts: Vec<V3> = (0..=n).map(|k| l.at(l.emerge + own * k as f64 / n as f64).0).collect();
     let w = 5usize; // about a tenth of the limb each way
     let mut turn = vec![0.0f64; n + 1];
     for k in w..=n - w {
@@ -95,20 +95,32 @@ fn bends_min(l: &Limb, most: usize, defaults: &[f64], min_turn: f64) -> Vec<f64>
     out
 }
 
-/// Joint positions of one limb as fractions of its own length (0 = where
-/// it leaves the body), and the stem of its bones' names.
+/// Joint positions of one limb as fractions of its length outside the
+/// body (0 = where it comes out; negative = inside, toward the middle of
+/// the body).
 fn limb_joints(l: &Limb, body: &Body, kind: Kind) -> Vec<f64> {
-    let own = l.length - l.start;
+    let own = l.length - l.emerge;
     let size = body.size;
+    // A leg or an arm swings from the shoulder or the hip, inside the
+    // body: an upper bone from half way in to where the limb comes out,
+    // when there is that much body to cross.
+    let upper = || -> Vec<f64> {
+        let inside = l.emerge - l.start;
+        if inside >= 0.06 * size && own > 0.0 {
+            vec![-0.5 * inside / own, 0.0]
+        } else {
+            vec![0.0]
+        }
+    };
     match l.role {
         Role::Leg => {
             let most = if kind == Kind::FourLegged || kind == Kind::ManyLimbed { 3 } else { 2 };
-            let mut v = vec![0.0];
+            let mut v = upper();
             v.extend(bends(l, 2, most, &[0.45, 0.8, 0.25]));
             v
         }
         Role::Arm => {
-            let mut v = vec![0.0];
+            let mut v = upper();
             v.extend(bends(l, 2, 2, &[0.45, 0.82]));
             v
         }
@@ -126,7 +138,7 @@ fn limb_joints(l: &Limb, body: &Body, kind: Kind) -> Vec<f64> {
             let (mut best, mut at) = (f64::INFINITY, 0.5);
             for k in (n * 3 / 10)..=(3 * n / 4) {
                 let f = k as f64 / n as f64;
-                let r = l.at(l.start + own * f).1;
+                let r = l.at(l.emerge + own * f).1;
                 if r < best - 1e-9 {
                     best = r;
                     at = f;
@@ -203,7 +215,7 @@ impl Skeleton {
             }
         }
         for (li, l) in an.limbs.iter().enumerate() {
-            let own = l.length - l.start;
+            let own = l.length - l.emerge;
             // hangs from the spine bone its base is nearest to
             let base = l.base();
             let parent = (0..=n_spine)
@@ -216,8 +228,8 @@ impl Skeleton {
             let f = &fracs[li];
             let mut prev = parent;
             for (k, &fk) in f.iter().enumerate() {
-                let head = l.at(l.start + own * fk).0;
-                let tail = if k + 1 < f.len() { l.at(l.start + own * f[k + 1]).0 } else { l.tip() };
+                let head = l.at(l.emerge + own * fk).0;
+                let tail = if k + 1 < f.len() { l.at(l.emerge + own * f[k + 1]).0 } else { l.tip() };
                 let name = if l.role == Role::Head && k + 1 == f.len() {
                     "DEF-head".to_string()
                 } else if f.len() == 1 || (l.role == Role::Head && f.len() == 2) {

@@ -24,7 +24,7 @@ const HELP: &str = "creature-rig: creature rigs from the body's own shape.
     creature-rig parts MESH.glb [--json OUT.json] [--sheet OUT.png] [--res 128]
     creature-rig check RIG.glb [--json OUT.json] [--rom OUT.ron] [--sheet OUT.png] [--res 128]
     creature-rig rig   MESH.glb OUT.glb [--rom OUT.ron] [--json OUT.json] [--sheet OUT.png]
-                       [--res 128] [--blend 0.6]
+                       [--res 128] [--blend 0.6] [--turn no]
 
 parts  finds the body's parts in its volume (the branches of the solid:
        legs, neck, tail, wings) and writes them with their centre lines.
@@ -39,7 +39,9 @@ rig    lays a skeleton along those parts (hips and spine, a chain down
        every limb, the tail, the neck and head, the wings), weights the
        mesh to it by distance through the body, and writes the rigged GLB
        (MESH's own rig, if it has one, is replaced). --rom writes this
-       body's range of motion as a weightforge pose set.";
+       body's range of motion as a weightforge pose set. A body whose toes
+       say it faces -Z is turned half a turn first, so a rig always faces
+       +Z (--turn no leaves it).";
 
 /// Every mesh of the file as one triangle soup in world space (glTF: +Y up).
 fn load_mesh(path: &Path) -> Result<(Vec<V3>, Vec<[u32; 3]>)> {
@@ -193,14 +195,79 @@ fn cmd_check(a: &Args) -> Result<bool> {
     Ok(v.failing == 0)
 }
 
+/// Turns every mesh of the file half a turn about the vertical, in place
+/// (positions, normals and tangents: x and z negated), for a body the
+/// clean step left facing -Z. The file must not be rigged or carry node
+/// transforms that would turn with it (a cleaned mesh has neither).
+fn turn_half(g: &mut Glb) -> Result<()> {
+    let mut done = std::collections::HashSet::new();
+    let meshes = g.json["meshes"].as_array().cloned().unwrap_or_default();
+    for m in &meshes {
+        for p in m["primitives"].as_array().into_iter().flatten() {
+            for name in ["POSITION", "NORMAL", "TANGENT"] {
+                let Some(acc) = p["attributes"][name].as_u64() else { continue };
+                if !done.insert(acc) {
+                    continue;
+                }
+                let a = g.json["accessors"][acc as usize].clone();
+                if a["componentType"].as_u64() != Some(5126) || a.get("sparse").is_some() {
+                    bail!("{name} is not a plain float accessor");
+                }
+                let bv = &g.json["bufferViews"][a["bufferView"].as_u64().ok_or_else(|| anyhow!("accessor without a buffer view"))? as usize];
+                let comps = if a["type"] == "VEC4" { 4 } else { 3 };
+                let start = bv["byteOffset"].as_u64().unwrap_or(0) as usize + a["byteOffset"].as_u64().unwrap_or(0) as usize;
+                let stride = bv["byteStride"].as_u64().map(|s| s as usize).unwrap_or(4 * comps);
+                let count = a["count"].as_u64().unwrap_or(0) as usize;
+                for k in 0..count {
+                    for c in [0usize, 2] {
+                        let o = start + k * stride + 4 * c;
+                        let b = g.bin.get_mut(o..o + 4).ok_or_else(|| anyhow!("accessor out of range"))?;
+                        let v = -f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+                        b.copy_from_slice(&v.to_le_bytes());
+                    }
+                }
+                for c in [0usize, 2] {
+                    let (lo, hi) = (a["min"][c].as_f64(), a["max"][c].as_f64());
+                    if let (Some(lo), Some(hi)) = (lo, hi) {
+                        g.json["accessors"][acc as usize]["min"][c] = json!(-hi);
+                        g.json["accessors"][acc as usize]["max"][c] = json!(-lo);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn cmd_rig(a: &Args) -> Result<()> {
     let input = PathBuf::from(a.pos.first().ok_or_else(|| anyhow!("rig needs MESH.glb OUT.glb"))?);
     let output = PathBuf::from(a.pos.get(1).ok_or_else(|| anyhow!("rig needs MESH.glb OUT.glb"))?);
     let res: usize = a.flags.get("res").map(|s| s.parse()).transpose()?.unwrap_or(128);
     let blend: f64 = a.flags.get("blend").map(|s| s.parse()).transpose()?.unwrap_or(weights::BLEND);
-    let (verts, tris) = load_mesh(&input)?;
-    let body = parts::Body::build(&verts, &tris, res);
-    let an = roles::Anatomy::read(&body);
+    let src = Glb::read(&input)?;
+    let mut g = Glb { json: src.json.clone(), bin: src.bin.clone() };
+    skintokens::pipeline::strip_rig(&mut g);
+    let read = |g: &Glb| -> Result<(Vec<V3>, Vec<[u32; 3]>)> {
+        let mut verts = vec![];
+        let mut tris = vec![];
+        for p in g.parts(Frame::World)? {
+            let base = verts.len() as u32;
+            verts.extend_from_slice(&p.positions);
+            tris.extend(p.triangles.iter().map(|t| [t[0] + base, t[1] + base, t[2] + base]));
+        }
+        Ok((verts, tris))
+    };
+    let (mut verts, mut tris) = read(&g)?;
+    let mut body = parts::Body::build(&verts, &tris, res);
+    let mut an = roles::Anatomy::read(&body);
+    // a rig faces +Z: a body the clean step left facing -Z is turned round
+    let turned = an.forward < 0.0 && a.flags.get("turn").map(|s| s.as_str()) != Some("no");
+    if turned {
+        turn_half(&mut g)?;
+        (verts, tris) = read(&g)?;
+        body = parts::Body::build(&verts, &tris, res);
+        an = roles::Anatomy::read(&body);
+    }
     let sk = skeleton::Skeleton::fit(&body, &an);
     let skin = weights::skin(&body, &sk, &verts, &tris, blend);
     // bones follow Blender's convention: local +Y along the bone, roll 0
@@ -215,9 +282,6 @@ fn cmd_rig(a: &Args) -> Result<()> {
             skintokens::geom::from_rt(cols.map(skintokens::mesh::from_model), b.head)
         })
         .collect();
-    let src = Glb::read(&input)?;
-    let mut g = Glb { json: src.json.clone(), bin: src.bin.clone() };
-    skintokens::pipeline::strip_rig(&mut g);
     let gparts = g.parts(Frame::World)?;
     let names: Vec<String> = sk.bones.iter().map(|b| b.name.clone()).collect();
     let parents: Vec<i64> = sk.bones.iter().map(|b| b.parent.map(|p| p as i64).unwrap_or(-1)).collect();
@@ -232,6 +296,7 @@ fn cmd_rig(a: &Args) -> Result<()> {
         "kind": an.kind.name(),
         "upright": an.upright,
         "faces": if an.forward > 0.0 { "+z" } else { "-z" },
+        "turned_half_a_turn": turned,
         "limbs": an.limbs.iter().enumerate().map(|(i, l)| json!({
             "name": l.name,
             "role": format!("{:?}", l.role).to_lowercase(),

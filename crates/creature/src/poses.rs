@@ -104,7 +104,12 @@ pub fn rom(an: &Anatomy, sk: &Skeleton) -> String {
                 poses.push(("head_twist".into(), vec![(*c.last().unwrap(), "Twist(30.0)".into())]));
             }
             Role::Tail => {
-                for (what, d, total) in [("up", "Up", 60.0), ("down", "Down", 30.0), ("left", "Left", 60.0), ("right", "Right", 60.0)] {
+                // a tail that hangs straight down lifts backward, not "up"
+                let b = &sk.bones[c[0]];
+                let d = skintokens::geom::sub(b.tail, b.head);
+                let hangs = d[1].abs() > 0.85 * skintokens::geom::norm(d);
+                let lift: [(&str, &'static str, f64); 2] = if hangs { [("up", "Back", 60.0), ("down", "Forward", 30.0)] } else { [("up", "Up", 60.0), ("down", "Down", 30.0)] };
+                for (what, d, total) in lift.into_iter().chain([("left", "Left", 60.0), ("right", "Right", 60.0)]) {
                     poses.push((format!("{tag}_{what}"), shared(&c, d, total)));
                 }
             }
