@@ -166,45 +166,49 @@ impl Anatomy {
         let total: usize = (0..np).filter(|&p| body.parts[p].parent.is_none()).map(|p| volume[p]).sum();
         let t = Tree { body, reach, volume, total };
 
-        // trunk: the root, and any part that forks into two or more major branches
+        // trunk: the root, and every part on the way to a fork of two or
+        // more major branches (the fork itself, and what joins it to the
+        // trunk: a piece of body between the chest's fork and the hips' is
+        // body, however short). Every other major or long branch is a limb.
         let mut is_trunk = vec![false; np];
         let mut chains: Vec<Vec<usize>> = vec![];
         let mut todo: Vec<usize> = (0..np).filter(|&p| body.parts[p].parent.is_none()).collect();
         for &r in &todo {
             is_trunk[r] = true;
         }
+        // the parts from `c` on through single major children to a fork of
+        // two or more majors, if that is where it leads
+        let fork_path = |c: usize| -> Option<Vec<usize>> {
+            let mut path = vec![c];
+            let mut cur = c;
+            loop {
+                let majors: Vec<usize> = body.parts[cur].children.iter().copied().filter(|&k| t.major(k)).collect();
+                match majors.len() {
+                    0 => return None,
+                    1 => {
+                        cur = majors[0];
+                        path.push(cur);
+                    }
+                    _ => return Some(path),
+                }
+            }
+        };
         while let Some(p) = todo.pop() {
             for &c in &body.parts[p].children {
-                let majors = body.parts[c].children.iter().filter(|&&k| t.major(k)).count();
-                if majors >= 2 {
-                    is_trunk[c] = true;
-                    todo.push(c);
+                if is_trunk[c] {
+                    continue;
+                }
+                if let Some(path) = fork_path(c) {
+                    for q in path {
+                        if !is_trunk[q] {
+                            is_trunk[q] = true;
+                            todo.push(q);
+                        }
+                    }
                 } else if t.major(c) || t.reach[c] >= EXTRA_LENGTH * body.size {
                     chains.push(chain_from(&t, c));
                 }
             }
-        }
-        // a chain that ran into a fork of two majors further out stops there;
-        // what lies beyond is found from that trunk part
-        let mut k = 0;
-        while k < chains.len() {
-            let last = *chains[k].last().unwrap();
-            let majors: Vec<usize> = body.parts[last].children.iter().copied().filter(|&c| t.major(c)).collect();
-            if majors.len() >= 2 {
-                // only reachable when chain_from stopped at such a part
-                is_trunk[last] = true;
-                chains[k].pop();
-                for &c in &body.parts[last].children {
-                    if t.major(c) || t.reach[c] >= EXTRA_LENGTH * body.size {
-                        chains.push(chain_from(&t, c));
-                    }
-                }
-                if chains[k].is_empty() {
-                    chains.remove(k);
-                    continue;
-                }
-            }
-            k += 1;
         }
 
         let ground = body.lo[1];
