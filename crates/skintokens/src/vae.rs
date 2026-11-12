@@ -29,14 +29,20 @@ pub fn freq_embed(x: &Tensor, num_freqs: usize) -> Result<Tensor> {
         .collect();
     // Upstream casts the whole VAE to bf16 (`vae.to(torch.bfloat16)`),
     // which rounds these buffers too; inference uses the rounded values.
-    let f = Tensor::from_vec(f, num_freqs, dev)?.to_dtype(DType::BF16)?.to_dtype(DType::F32)?;
-    let ph = Tensor::from_vec(ph, num_freqs, dev)?.to_dtype(DType::BF16)?.to_dtype(DType::F32)?;
+    let f = Tensor::from_vec(f, num_freqs, dev)?
+        .to_dtype(DType::BF16)?
+        .to_dtype(DType::F32)?;
+    let ph = Tensor::from_vec(ph, num_freqs, dev)?
+        .to_dtype(DType::BF16)?
+        .to_dtype(DType::F32)?;
     let x = x.to_dtype(DType::F32)?;
     let mut shape = x.dims().to_vec();
     *shape.last_mut().unwrap() *= num_freqs;
     let xe = x.unsqueeze(D::Minus1)?;
     let e = xe.broadcast_mul(&f)?.reshape(shape.clone())?;
-    let p = (xe * (pi as f64 * 0.5))?.broadcast_add(&ph)?.reshape(shape)?;
+    let p = (xe * (pi as f64 * 0.5))?
+        .broadcast_add(&ph)?
+        .reshape(shape)?;
     let s = (e.sin()? + p.sin()?)?;
     let c = (e.cos()? + p.cos()?)?;
     Ok(Tensor::cat(&[x, s, c], D::Minus1)?.to_device(&out_dev)?)
@@ -65,7 +71,11 @@ impl Attn {
             to_k: Linear::load_auto(w, "to_k")?,
             to_v: Linear::load_auto(w, "to_v")?,
             to_out: Linear::load(w, "to_out.0", true)?,
-            norm_cross: if w.has("norm_cross.weight") { Some(LayerNorm::load(w, "norm_cross", 1e-5)?) } else { None },
+            norm_cross: if w.has("norm_cross.weight") {
+                Some(LayerNorm::load(w, "norm_cross", 1e-5)?)
+            } else {
+                None
+            },
             heads,
         })
     }
@@ -80,7 +90,8 @@ impl Attn {
                 let v = self.to_v.forward(x)?;
                 let d = c / h;
                 let qkv = Tensor::cat(&[q, k, v], D::Minus1)?.reshape((b, l, h, 3, d))?;
-                let p = |i| -> Result<Tensor> { Ok(qkv.narrow(3, i, 1)?.squeeze(3)?.transpose(1, 2)?) };
+                let p =
+                    |i| -> Result<Tensor> { Ok(qkv.narrow(3, i, 1)?.squeeze(3)?.transpose(1, 2)?) };
                 (p(0)?, p(1)?, p(2)?)
             }
             Some(e) => {
@@ -122,10 +133,26 @@ impl DitBlock {
         let selfa = w.has("attn1.to_q.weight");
         let cross = w.has("attn2.to_q.weight");
         Ok(Self {
-            norm1: if selfa { Some(LayerNorm::load(w, "norm1", 1e-5)?) } else { None },
-            attn1: if selfa { Some(Attn::load(&w.pp("attn1"), heads)?) } else { None },
-            norm2: if cross { Some(LayerNorm::load(w, "norm2", 1e-5)?) } else { None },
-            attn2: if cross { Some(Attn::load(&w.pp("attn2"), heads)?) } else { None },
+            norm1: if selfa {
+                Some(LayerNorm::load(w, "norm1", 1e-5)?)
+            } else {
+                None
+            },
+            attn1: if selfa {
+                Some(Attn::load(&w.pp("attn1"), heads)?)
+            } else {
+                None
+            },
+            norm2: if cross {
+                Some(LayerNorm::load(w, "norm2", 1e-5)?)
+            } else {
+                None
+            },
+            attn2: if cross {
+                Some(Attn::load(&w.pp("attn2"), heads)?)
+            } else {
+                None
+            },
             norm3: LayerNorm::load(w, "norm3", 1e-5)?,
             ff_in: Linear::load(w, "ff.net.0.proj", true)?,
             ff_out: Linear::load(w, "ff.net.2", true)?,
@@ -140,7 +167,9 @@ impl DitBlock {
         if let (Some(n), Some(a)) = (&self.norm2, &self.attn2) {
             x = (&x + a.forward(&n.forward(&x)?, enc)?)?;
         }
-        let f = self.ff_out.forward(&self.ff_in.forward(&self.norm3.forward(&x)?)?.gelu_erf()?)?;
+        let f = self
+            .ff_out
+            .forward(&self.ff_in.forward(&self.norm3.forward(&x)?)?.gelu_erf()?)?;
         Ok((x + f)?)
     }
 }
@@ -159,7 +188,12 @@ impl Fsq {
     /// indices (any count) -> (count, dim) latents. Indices outside the
     /// codebook wrap per level exactly as upstream's integer arithmetic does
     /// (it matters: upstream feeds the final EOS id through here).
-    pub fn indices_to_codes(&self, idx: &[i64], dev: &candle_core::Device, dtype: DType) -> Result<Tensor> {
+    pub fn indices_to_codes(
+        &self,
+        idx: &[i64],
+        dev: &candle_core::Device,
+        dtype: DType,
+    ) -> Result<Tensor> {
         let mut codes = Vec::with_capacity(idx.len() * self.levels.len());
         for &i in idx {
             let mut basis = 1i64;
@@ -195,20 +229,34 @@ pub struct SkinVae {
 
 impl SkinVae {
     /// `w` points at `vae.model` in the TokenRig checkpoint.
-    pub fn load(w: &Weights, heads: usize, enc_layers: usize, dec_layers: usize, levels: Vec<u32>, num_freqs: usize) -> Result<Self> {
+    pub fn load(
+        w: &Weights,
+        heads: usize,
+        enc_layers: usize,
+        dec_layers: usize,
+        levels: Vec<u32>,
+        num_freqs: usize,
+    ) -> Result<Self> {
         let ce = w.pp("cond_encoder");
         let de = w.pp("decoder");
         Ok(Self {
             cond_proj_in: Linear::load(&ce, "proj_in", true)?,
-            cond_blocks: (0..enc_layers + 1).map(|i| DitBlock::load(&ce.pp(format!("blocks.{i}")), heads)).collect::<Result<_>>()?,
+            cond_blocks: (0..enc_layers + 1)
+                .map(|i| DitBlock::load(&ce.pp(format!("blocks.{i}")), heads))
+                .collect::<Result<_>>()?,
             cond_norm_out: LayerNorm::load(&ce, "norm_out", 1e-5)?,
             cond_quant: Linear::load(w, "cond_quant", true)?,
             post_quant: Linear::load(w, "post_quant", true)?,
-            dec_blocks: (0..dec_layers + 1).map(|i| DitBlock::load(&de.pp(format!("blocks.{i}")), heads)).collect::<Result<_>>()?,
+            dec_blocks: (0..dec_layers + 1)
+                .map(|i| DitBlock::load(&de.pp(format!("blocks.{i}")), heads))
+                .collect::<Result<_>>()?,
             proj_query: Linear::load(&de, "proj_query", true)?,
             dec_norm_out: LayerNorm::load(&de, "norm_out", 1e-5)?,
             proj_out: Linear::load(&de, "proj_out", true)?,
-            fsq: Fsq { levels, project_out: Linear::load(w, "FSQ.project_out", true)? },
+            fsq: Fsq {
+                levels,
+                project_out: Linear::load(w, "FSQ.project_out", true)?,
+            },
             num_freqs,
             dtype: w.dtype,
         })
@@ -216,13 +264,22 @@ impl SkinVae {
 
     fn embed_points(&self, pts: &Tensor) -> Result<Tensor> {
         let pos = pts.narrow(D::Minus1, 0, 3)?;
-        let feat = pts.narrow(D::Minus1, 3, pts.dim(D::Minus1)? - 3)?.to_dtype(DType::F32)?;
-        Ok(Tensor::cat(&[freq_embed(&pos, self.num_freqs)?, feat], D::Minus1)?.to_dtype(self.dtype)?)
+        let feat = pts
+            .narrow(D::Minus1, 3, pts.dim(D::Minus1)? - 3)?
+            .to_dtype(DType::F32)?;
+        Ok(
+            Tensor::cat(&[freq_embed(&pos, self.num_freqs)?, feat], D::Minus1)?
+                .to_dtype(self.dtype)?,
+        )
     }
 
     /// Upstream `_sample_features`: `4 * n` random points, farthest point
     /// sampling to `n`. Returns indices into the cloud.
-    pub fn select_queries(points: &[[f32; 3]], n: usize, rng: &mut skintokens_nn::Rng) -> Vec<usize> {
+    pub fn select_queries(
+        points: &[[f32; 3]],
+        n: usize,
+        rng: &mut skintokens_nn::Rng,
+    ) -> Vec<usize> {
         let choice = rng.choice(points.len(), n * 4);
         let picked: Vec<[f32; 3]> = choice.iter().map(|&i| points[i]).collect();
         fps(&picked, 0.25).into_iter().map(|i| choice[i]).collect()
@@ -232,11 +289,18 @@ impl SkinVae {
     /// tokens. Returns (1, len(query), latent).
     pub fn encode_cond(&self, cond: &Tensor, query: &[usize]) -> Result<Tensor> {
         let cond = &cond.contiguous()?;
-        let idx = Tensor::from_vec(query.iter().map(|&i| i as u32).collect::<Vec<_>>(), query.len(), cond.device())?;
+        let idx = Tensor::from_vec(
+            query.iter().map(|&i| i as u32).collect::<Vec<_>>(),
+            query.len(),
+            cond.device(),
+        )?;
         let eq = self.embed_points(&cond.index_select(&idx, 0)?)?;
         trace("vae.embed_q", &eq);
         let q = self.cond_proj_in.forward(&eq)?.unsqueeze(0)?;
-        let kv = self.cond_proj_in.forward(&self.embed_points(cond)?)?.unsqueeze(0)?;
+        let kv = self
+            .cond_proj_in
+            .forward(&self.embed_points(cond)?)?
+            .unsqueeze(0)?;
         trace("vae.proj_in.0", &q.squeeze(0)?);
         trace("vae.proj_in.1", &kv.squeeze(0)?);
         let mut x = self.cond_blocks[0].forward(&q, Some(&kv))?;
@@ -251,7 +315,10 @@ impl SkinVae {
     /// Embedded decoder queries for a point cloud: (1, N, width). Shared by
     /// every joint.
     pub fn decoder_queries(&self, cond: &Tensor) -> Result<Tensor> {
-        Ok(self.proj_query.forward(&self.embed_points(cond)?)?.unsqueeze(0)?)
+        Ok(self
+            .proj_query
+            .forward(&self.embed_points(cond)?)?
+            .unsqueeze(0)?)
     }
 
     /// z: (b, tokens, latent) codes for b joints; cond_latents: (1, 384,
@@ -261,7 +328,9 @@ impl SkinVae {
         let b = z.dim(0)?;
         let cl = cond_latents.broadcast_as((b, cond_latents.dim(1)?, cond_latents.dim(2)?))?;
         trace("dec.z", &z.get(0)?);
-        let mut h = self.post_quant.forward(&Tensor::cat(&[z, &cl.contiguous()?], 1)?)?;
+        let mut h = self
+            .post_quant
+            .forward(&Tensor::cat(&[z, &cl.contiguous()?], 1)?)?;
         trace("dec.post_quant", &h.get(0)?);
         let (last, selfs) = self.dec_blocks.split_last().unwrap();
         for blk in selfs {
@@ -277,7 +346,10 @@ impl SkinVae {
         let mut st = 0;
         while st < n {
             let m = chunk.min(n - st);
-            let q = queries.narrow(1, st, m)?.broadcast_as((b, m, c))?.contiguous()?;
+            let q = queries
+                .narrow(1, st, m)?
+                .broadcast_as((b, m, c))?
+                .contiguous()?;
             let l = last.forward(&q, Some(&h))?;
             if st == 0 {
                 trace("dec.cross", &l.get(0)?.narrow(0, 0, 2000.min(m))?);
@@ -294,5 +366,8 @@ impl SkinVae {
 }
 
 fn decode_chunk() -> usize {
-    std::env::var("SKINTOKENS_DECODE_CHUNK").ok().and_then(|v| v.parse().ok()).unwrap_or(16384)
+    std::env::var("SKINTOKENS_DECODE_CHUNK")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(16384)
 }

@@ -39,7 +39,11 @@ impl Mesh {
             vertices.extend_from_slice(v);
             let mut seen = std::collections::HashSet::new();
             for t in f {
-                if t[0] == t[1] || t[1] == t[2] || t[0] == t[2] || t.iter().any(|&i| i as usize >= v.len()) {
+                if t[0] == t[1]
+                    || t[1] == t[2]
+                    || t[0] == t[2]
+                    || t.iter().any(|&i| i as usize >= v.len())
+                {
                     continue;
                 }
                 let mut k = *t;
@@ -49,7 +53,11 @@ impl Mesh {
                 }
             }
         }
-        Mesh { vertices, faces, offsets }
+        Mesh {
+            vertices,
+            faces,
+            offsets,
+        }
     }
 
     /// trimesh face normals (unit; zero for degenerate faces).
@@ -82,7 +90,11 @@ impl Mesh {
                 let a = geom::sub(p[(k + 1) % 3], p[k]);
                 let b = geom::sub(p[(k + 2) % 3], p[k]);
                 let (la, lb) = (geom::norm(a), geom::norm(b));
-                let ang = if la > 0.0 && lb > 0.0 { (geom::dot(a, b) / (la * lb)).clamp(-1.0, 1.0).acos() } else { 0.0 };
+                let ang = if la > 0.0 && lb > 0.0 {
+                    (geom::dot(a, b) / (la * lb)).clamp(-1.0, 1.0).acos()
+                } else {
+                    0.0
+                };
                 let v = &mut acc[f[k] as usize];
                 for d in 0..3 {
                     v[d] += n[d] * ang;
@@ -132,13 +144,26 @@ impl Normalize {
         let scale = (ext[0].max(ext[1]).max(ext[2]) / 2.0).max(1e-12);
         let k = (1.0 / scale) as f32;
         let t = center.map(|c| (k * (-c as f32)) as f64);
-        Normalize { center, scale, k: k as f64, t }
+        Normalize {
+            center,
+            scale,
+            k: k as f64,
+            t,
+        }
     }
     pub fn apply(&self, p: V3) -> V3 {
-        [p[0] * self.k + self.t[0], p[1] * self.k + self.t[1], p[2] * self.k + self.t[2]]
+        [
+            p[0] * self.k + self.t[0],
+            p[1] * self.k + self.t[1],
+            p[2] * self.k + self.t[2],
+        ]
     }
     pub fn invert(&self, p: V3) -> V3 {
-        [(p[0] - self.t[0]) / self.k, (p[1] - self.t[1]) / self.k, (p[2] - self.t[2]) / self.k]
+        [
+            (p[0] - self.t[0]) / self.k,
+            (p[1] - self.t[1]) / self.k,
+            (p[2] - self.t[2]) / self.k,
+        ]
     }
 }
 
@@ -149,13 +174,25 @@ pub const NUM_SAMPLES: usize = 54000;
 /// all 54000 points are area-weighted surface samples with face normals.
 /// Positions in the normalized frame. (`vnorm` is used only for meshes
 /// without area.)
-pub fn sample(vertices: &[V3], faces: &[[u32; 3]], vnorm: &[V3], fnorm: &[V3], rng: &mut Rng) -> Vec<[f32; 6]> {
+pub fn sample(
+    vertices: &[V3],
+    faces: &[[u32; 3]],
+    vnorm: &[V3],
+    fnorm: &[V3],
+    rng: &mut Rng,
+) -> Vec<[f32; 6]> {
     sample_with_faces(vertices, faces, vnorm, fnorm, rng).0
 }
 
 /// `sample`, also giving the face each sample lies on (`NO_FACE` for a
 /// mesh without area, whose samples are vertices). Same draws, same points.
-pub fn sample_with_faces(vertices: &[V3], faces: &[[u32; 3]], vnorm: &[V3], fnorm: &[V3], rng: &mut Rng) -> (Vec<[f32; 6]>, Vec<u32>) {
+pub fn sample_with_faces(
+    vertices: &[V3],
+    faces: &[[u32; 3]],
+    vnorm: &[V3],
+    fnorm: &[V3],
+    rng: &mut Rng,
+) -> (Vec<[f32; 6]>, Vec<u32>) {
     let mut out = Vec::with_capacity(NUM_SAMPLES);
     let mut on = Vec::with_capacity(NUM_SAMPLES);
     let rest = NUM_SAMPLES;
@@ -171,7 +208,14 @@ pub fn sample_with_faces(vertices: &[V3], faces: &[[u32; 3]], vnorm: &[V3], fnor
         while out.len() < NUM_SAMPLES {
             let i = rng.below(vertices.len());
             let (v, n) = (vertices[i], vnorm[i]);
-            out.push([v[0] as f32, v[1] as f32, v[2] as f32, n[0] as f32, n[1] as f32, n[2] as f32]);
+            out.push([
+                v[0] as f32,
+                v[1] as f32,
+                v[2] as f32,
+                n[0] as f32,
+                n[1] as f32,
+                n[2] as f32,
+            ]);
             on.push(NO_FACE);
         }
         return (out, on);
@@ -186,9 +230,22 @@ pub fn sample_with_faces(vertices: &[V3], faces: &[[u32; 3]], vnorm: &[V3], fnor
             r1 = (r1 - 1.0).abs();
             r2 = (r2 - 1.0).abs();
         }
-        let p = geom::add(a, geom::add(geom::scale(geom::sub(b, a), r1), geom::scale(geom::sub(c, a), r2)));
+        let p = geom::add(
+            a,
+            geom::add(
+                geom::scale(geom::sub(b, a), r1),
+                geom::scale(geom::sub(c, a), r2),
+            ),
+        );
         let n = fnorm[fi];
-        out.push([p[0] as f32, p[1] as f32, p[2] as f32, n[0] as f32, n[1] as f32, n[2] as f32]);
+        out.push([
+            p[0] as f32,
+            p[1] as f32,
+            p[2] as f32,
+            n[0] as f32,
+            n[1] as f32,
+            n[2] as f32,
+        ]);
         on.push(fi as u32);
     }
     (out, on)
@@ -200,7 +257,10 @@ pub const NO_FACE: u32 = u32::MAX;
 /// inverse distance over the 8 nearest samples, measured in a straight line
 /// (upstream's transfer; `--transfer straight`).
 pub fn transfer_skin(samples: &[[f32; 6]], skin: &[Vec<f32>], vertices: &[V3]) -> Vec<Vec<f32>> {
-    let pts: Vec<V3> = samples.iter().map(|s| [s[0] as f64, s[1] as f64, s[2] as f64]).collect();
+    let pts: Vec<V3> = samples
+        .iter()
+        .map(|s| [s[0] as f64, s[1] as f64, s[2] as f64])
+        .collect();
     let tree = KdTree::new(pts);
     let j = skin.first().map(|r| r.len()).unwrap_or(0);
     let k = 8.min(samples.len());
@@ -296,14 +356,20 @@ pub fn transfer(
     vertices: &[V3],
     faces: &[[u32; 3]],
 ) -> (Vec<Vec<f32>>, TransferStats) {
-    let mut st = TransferStats { vertices: vertices.len(), ..Default::default() };
+    let mut st = TransferStats {
+        vertices: vertices.len(),
+        ..Default::default()
+    };
     if method == Transfer::Straight || samples.is_empty() {
         return (transfer_skin(samples, skin, vertices), st);
     }
     let surf = Welded::new(vertices, faces);
     st.welded = surf.reps.len();
     st.pieces = surf.pieces;
-    let pts: Vec<V3> = samples.iter().map(|s| [s[0] as f64, s[1] as f64, s[2] as f64]).collect();
+    let pts: Vec<V3> = samples
+        .iter()
+        .map(|s| [s[0] as f64, s[1] as f64, s[2] as f64])
+        .collect();
     let tree = KdTree::new(pts.clone());
     let j = skin.first().map(|r| r.len()).unwrap_or(0);
     let blend = |nn: &[(f64, usize)]| -> Vec<f32> {
@@ -322,7 +388,10 @@ pub fn transfer(
     let picks: Vec<Option<Vec<(f64, usize)>>> = match method {
         Transfer::Straight => unreachable!(),
         Transfer::Facing => {
-            let piece_of_face: Vec<u32> = faces.iter().map(|f| surf.piece[surf.id[f[0] as usize] as usize]).collect();
+            let piece_of_face: Vec<u32> = faces
+                .iter()
+                .map(|f| surf.piece[surf.id[f[0] as usize] as usize])
+                .collect();
             par_map(surf.reps.len(), |w| {
                 if surf.faces_of[w].is_empty() {
                     return None;
@@ -338,7 +407,11 @@ pub fn transfer(
                         if f == NO_FACE {
                             return true;
                         }
-                        let sn = [samples[s][3] as f64, samples[s][4] as f64, samples[s][5] as f64];
+                        let sn = [
+                            samples[s][3] as f64,
+                            samples[s][4] as f64,
+                            samples[s][5] as f64,
+                        ];
                         piece_of_face[f as usize] == piece && (!has_n || geom::dot(sn, n) > 0.0)
                     })
                     .take(K)
@@ -365,7 +438,8 @@ pub fn transfer(
                     fill[f as usize] += 1;
                 }
             }
-            let on_face = |f: u32| &by_face[start[f as usize] as usize..start[f as usize + 1] as usize];
+            let on_face =
+                |f: u32| &by_face[start[f as usize] as usize..start[f as usize + 1] as usize];
             par_map_with(
                 surf.reps.len(),
                 || (vec![f64::INFINITY; surf.reps.len()], Vec::<u32>::new()),
@@ -471,7 +545,15 @@ impl Welded {
                 }
             })
             .collect();
-        Welded { id, reps, adj, faces_of, normals, piece, pieces: piece_id.len() }
+        Welded {
+            id,
+            reps,
+            adj,
+            faces_of,
+            normals,
+            piece,
+            pieces: piece_id.len(),
+        }
     }
 
     /// The K nearest samples to welded position `w` along the surface
@@ -503,7 +585,8 @@ impl Welded {
             if cand.len() >= K {
                 scratch.clear();
                 scratch.extend(cand.values());
-                let (_, kth, _) = scratch.select_nth_unstable_by(K - 1, |a, b| a.partial_cmp(b).unwrap());
+                let (_, kth, _) =
+                    scratch.select_nth_unstable_by(K - 1, |a, b| a.partial_cmp(b).unwrap());
                 if *kth <= dc {
                     break;
                 }
@@ -533,7 +616,11 @@ impl Welded {
             dist[t as usize] = f64::INFINITY;
         }
         touched.clear();
-        let mut out: Vec<(f64, usize)> = cand.into_iter().filter(|&(_, d)| d <= reach).map(|(s, d)| (d, s as usize)).collect();
+        let mut out: Vec<(f64, usize)> = cand
+            .into_iter()
+            .filter(|&(_, d)| d <= reach)
+            .map(|(s, d)| (d, s as usize))
+            .collect();
         out.sort_by(|a, b| a.partial_cmp(b).unwrap());
         out.truncate(K);
         out
@@ -554,7 +641,10 @@ pub fn weld(vertices: &[V3], eps: f64) -> (Vec<u32>, Vec<V3>) {
                 for dy in -1..=1 {
                     for dz in -1..=1 {
                         if let Some(list) = grid.get(&[c[0] + dx, c[1] + dy, c[2] + dz]) {
-                            if let Some(&w) = list.iter().find(|&&w| geom::dist2(reps[w as usize], v) <= eps * eps) {
+                            if let Some(&w) = list
+                                .iter()
+                                .find(|&&w| geom::dist2(reps[w as usize], v) <= eps * eps)
+                            {
                                 return w;
                             }
                         }
@@ -571,7 +661,10 @@ pub fn weld(vertices: &[V3], eps: f64) -> (Vec<u32>, Vec<V3>) {
 }
 
 fn threads() -> usize {
-    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(16)
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .min(16)
 }
 
 fn par_map<T: Send>(n: usize, f: impl Fn(usize) -> T + Sync) -> Vec<T> {
@@ -579,7 +672,11 @@ fn par_map<T: Send>(n: usize, f: impl Fn(usize) -> T + Sync) -> Vec<T> {
 }
 
 /// `(0..n).map(f)` on all cores, each thread with its own scratch from `init`.
-fn par_map_with<T: Send, S>(n: usize, init: impl Fn() -> S + Sync, f: impl Fn(&mut S, usize) -> T + Sync) -> Vec<T> {
+fn par_map_with<T: Send, S>(
+    n: usize,
+    init: impl Fn() -> S + Sync,
+    f: impl Fn(&mut S, usize) -> T + Sync,
+) -> Vec<T> {
     let t = threads().max(1);
     let chunk = n.div_ceil(t).max(1);
     let mut parts: Vec<Vec<T>> = Vec::new();
@@ -590,11 +687,16 @@ fn par_map_with<T: Send, S>(n: usize, init: impl Fn() -> S + Sync, f: impl Fn(&m
                 let (init, f) = (&init, &f);
                 sc.spawn(move || {
                     let mut s = init();
-                    (lo..(lo + chunk).min(n)).map(|i| f(&mut s, i)).collect::<Vec<T>>()
+                    (lo..(lo + chunk).min(n))
+                        .map(|i| f(&mut s, i))
+                        .collect::<Vec<T>>()
                 })
             })
             .collect();
-        parts = hs.into_iter().map(|h| h.join().expect("transfer thread panicked")).collect();
+        parts = hs
+            .into_iter()
+            .map(|h| h.join().expect("transfer thread panicked"))
+            .collect();
     });
     parts.into_iter().flatten().collect()
 }
@@ -608,14 +710,25 @@ pub fn top4(skin: &[Vec<f32>]) -> (Vec<[u16; 4]>, Vec<[f32; 4]>) {
     let mut ws = Vec::with_capacity(skin.len());
     for row in skin {
         let mut idx: Vec<usize> = (0..row.len()).collect();
-        idx.sort_by(|&a, &b| row[b].partial_cmp(&row[a]).unwrap_or(std::cmp::Ordering::Equal).then(a.cmp(&b)));
+        idx.sort_by(|&a, &b| {
+            row[b]
+                .partial_cmp(&row[a])
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.cmp(&b))
+        });
         let k = idx.len().min(4);
         let s: f32 = idx[..k].iter().map(|&i| row[i].max(0.0)).sum();
         let mut j4 = [0u16; 4];
         let mut w4 = [0f32; 4];
         for t in 0..k {
             j4[t] = idx[t] as u16;
-            w4[t] = if s > 0.0 { row[idx[t]].max(0.0) / s } else if t == 0 { 1.0 } else { 0.0 };
+            w4[t] = if s > 0.0 {
+                row[idx[t]].max(0.0) / s
+            } else if t == 0 {
+                1.0
+            } else {
+                0.0
+            };
         }
         // Blender export: drop <= 1e-4 (the top one always survives here), renormalize
         for t in 1..4 {
@@ -658,7 +771,9 @@ pub fn trim(parents: &[i64], has_skin: &[bool]) -> Vec<usize> {
     for &u in order.iter().rev() {
         sub[u] = has_skin[u] || sons[u].iter().any(|&v| sub[v]);
     }
-    let good: Vec<Vec<usize>> = (0..n).map(|u| sons[u].iter().copied().filter(|&v| sub[v]).collect()).collect();
+    let good: Vec<Vec<usize>> = (0..n)
+        .map(|u| sons[u].iter().copied().filter(|&v| sub[v]).collect())
+        .collect();
     let mut keep = vec![false; n];
     for &u in &order {
         if has_skin[u] {
@@ -702,7 +817,8 @@ pub fn dfs_order(parents: &[i64]) -> Vec<usize> {
 
 /// Parents after keeping only `kept` joints: nearest kept ancestor.
 pub fn reparent(parents: &[i64], kept: &[usize]) -> Vec<i64> {
-    let pos: std::collections::HashMap<usize, usize> = kept.iter().enumerate().map(|(i, &k)| (k, i)).collect();
+    let pos: std::collections::HashMap<usize, usize> =
+        kept.iter().enumerate().map(|(i, &k)| (k, i)).collect();
     kept.iter()
         .map(|&k| {
             let mut p = parents[k];
@@ -732,7 +848,14 @@ mod tests {
 
     /// An open tube along z around (cx, 0), split at a UV seam (the seam
     /// column is duplicated, as a generated mesh is), angle 0 facing +x.
-    fn tube(cx: f64, r: f64, h: f64, around: usize, rings: usize, base: u32) -> (Vec<V3>, Vec<[u32; 3]>) {
+    fn tube(
+        cx: f64,
+        r: f64,
+        h: f64,
+        around: usize,
+        rings: usize,
+        base: u32,
+    ) -> (Vec<V3>, Vec<[u32; 3]>) {
         let mut v = vec![];
         for i in 0..=rings {
             let z = h * i as f64 / rings as f64 - h / 2.0;
@@ -745,7 +868,12 @@ mod tests {
         let mut f = vec![];
         for i in 0..rings as u32 {
             for k in 0..around as u32 {
-                let (a, b, c, d) = (i * row + k, i * row + k + 1, (i + 1) * row + k + 1, (i + 1) * row + k);
+                let (a, b, c, d) = (
+                    i * row + k,
+                    i * row + k + 1,
+                    (i + 1) * row + k + 1,
+                    (i + 1) * row + k,
+                );
                 f.push([base + a, base + b, base + c]);
                 f.push([base + a, base + c, base + d]);
             }
@@ -761,18 +889,35 @@ mod tests {
         let (r, gap) = (0.1, 0.004);
         let (va, fa) = tube(-(r + gap / 2.0), r, 2.0, 32, 40, 0);
         let (vb, fb) = tube(r + gap / 2.0, r, 2.0, 32, 40, va.len() as u32);
-        let m = Mesh { vertices: [va.clone(), vb].concat(), faces: [fa.clone(), fb].concat(), offsets: vec![0, va.len()] };
+        let m = Mesh {
+            vertices: [va.clone(), vb].concat(),
+            faces: [fa.clone(), fb].concat(),
+            offsets: vec![0, va.len()],
+        };
         let fnorm = m.face_normals();
         let vnorm = m.vertex_normals(&fnorm);
-        let (samples, on) = sample_with_faces(&m.vertices, &m.faces, &vnorm, &fnorm, &mut Rng::new(7));
-        let skin: Vec<Vec<f32>> = on.iter().map(|&f| if (f as usize) < fa.len() { vec![1.0, 0.0] } else { vec![0.0, 1.0] }).collect();
+        let (samples, on) =
+            sample_with_faces(&m.vertices, &m.faces, &vnorm, &fnorm, &mut Rng::new(7));
+        let skin: Vec<Vec<f32>> = on
+            .iter()
+            .map(|&f| {
+                if (f as usize) < fa.len() {
+                    vec![1.0, 0.0]
+                } else {
+                    vec![0.0, 1.0]
+                }
+            })
+            .collect();
         let (w, st) = transfer(how, &samples, &on, &skin, &m.vertices, &m.faces);
         if how != Transfer::Straight {
             assert_eq!(st.pieces, 2);
             assert_eq!(st.welded, 2 * 41 * 32, "UV seam welded");
             assert_eq!(st.fallback, 0);
         }
-        w.iter().enumerate().map(|(i, row)| if i < va.len() { row[1] } else { row[0] }).fold(0.0, f32::max)
+        w.iter()
+            .enumerate()
+            .map(|(i, row)| if i < va.len() { row[1] } else { row[0] })
+            .fold(0.0, f32::max)
     }
 
     #[test]
@@ -780,10 +925,16 @@ mod tests {
         // upstream's straight-line copy mixes the tubes where they face
         // each other (this is the fault the surface copy is for)
         let straight = tube_bleed(Transfer::Straight);
-        assert!(straight > 0.2, "straight copy should bleed here, got {straight}");
+        assert!(
+            straight > 0.2,
+            "straight copy should bleed here, got {straight}"
+        );
         for how in [Transfer::Surface, Transfer::Facing] {
             let b = tube_bleed(how);
-            assert!(b < 1e-6, "{how:?}: a vertex took {b} of the other tube's bone");
+            assert!(
+                b < 1e-6,
+                "{how:?}: a vertex took {b} of the other tube's bone"
+            );
         }
     }
 
@@ -807,15 +958,34 @@ mod tests {
                 f.push([a, a + row + 1, a + 1]);
             }
         }
-        let m = Mesh { vertices: v, faces: f, offsets: vec![0] };
+        let m = Mesh {
+            vertices: v,
+            faces: f,
+            offsets: vec![0],
+        };
         let fnorm = m.face_normals();
         let vnorm = m.vertex_normals(&fnorm);
-        let (samples, on) = sample_with_faces(&m.vertices, &m.faces, &vnorm, &fnorm, &mut Rng::new(1));
+        let (samples, on) =
+            sample_with_faces(&m.vertices, &m.faces, &vnorm, &fnorm, &mut Rng::new(1));
         let skin: Vec<Vec<f32>> = samples.iter().map(|s| vec![s[0], 1.0 - s[0]]).collect();
         let a = transfer_skin(&samples, &skin, &m.vertices);
-        let (b, _) = transfer(Transfer::Surface, &samples, &on, &skin, &m.vertices, &m.faces);
-        let worst = a.iter().zip(&b).map(|(x, y)| (x[0] - y[0]).abs()).fold(0.0, f32::max);
-        assert!(worst < 2e-3, "flat sheet: surface differs from straight by {worst}");
+        let (b, _) = transfer(
+            Transfer::Surface,
+            &samples,
+            &on,
+            &skin,
+            &m.vertices,
+            &m.faces,
+        );
+        let worst = a
+            .iter()
+            .zip(&b)
+            .map(|(x, y)| (x[0] - y[0]).abs())
+            .fold(0.0, f32::max);
+        assert!(
+            worst < 2e-3,
+            "flat sheet: surface differs from straight by {worst}"
+        );
     }
 
     #[test]

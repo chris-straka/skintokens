@@ -27,7 +27,11 @@ impl Glb {
 
     pub fn from_bytes(b: &[u8]) -> Result<Self> {
         let u32at = |o: usize| -> Result<u32> {
-            Ok(u32::from_le_bytes(b.get(o..o + 4).ok_or_else(|| anyhow!("truncated"))?.try_into()?))
+            Ok(u32::from_le_bytes(
+                b.get(o..o + 4)
+                    .ok_or_else(|| anyhow!("truncated"))?
+                    .try_into()?,
+            ))
         };
         if b.len() < 12 || u32at(0)? != MAGIC {
             bail!("not a GLB (binary glTF)");
@@ -37,7 +41,9 @@ impl Glb {
         while off + 8 <= total {
             let len = u32at(off)? as usize;
             let typ = u32at(off + 4)?;
-            let data = b.get(off + 8..off + 8 + len).ok_or_else(|| anyhow!("truncated chunk"))?;
+            let data = b
+                .get(off + 8..off + 8 + len)
+                .ok_or_else(|| anyhow!("truncated chunk"))?;
             match typ {
                 CHUNK_JSON => js = Some(serde_json::from_slice::<Value>(data)?),
                 CHUNK_BIN => bin = data.to_vec(),
@@ -80,7 +86,8 @@ impl Glb {
         if let Some(d) = path.parent() {
             std::fs::create_dir_all(d).ok();
         }
-        std::fs::write(path, self.to_bytes()?).with_context(|| format!("writing {}", path.display()))
+        std::fs::write(path, self.to_bytes()?)
+            .with_context(|| format!("writing {}", path.display()))
     }
 
     /// Parsed view of the current JSON.
@@ -89,7 +96,8 @@ impl Glb {
         while j.len() % 4 != 0 {
             j.push(b' ');
         }
-        let g = gltf::Gltf::from_slice(&glb_bytes(&j, &self.bin)).map_err(|e| anyhow!("invalid glTF: {e}"))?;
+        let g = gltf::Gltf::from_slice(&glb_bytes(&j, &self.bin))
+            .map_err(|e| anyhow!("invalid glTF: {e}"))?;
         for b in g.document.buffers() {
             if let gltf::buffer::Source::Uri(u) = b.source() {
                 bail!("external buffer {u:?} is not supported (pack the file as a self-contained .glb)");
@@ -113,16 +121,28 @@ impl Glb {
         if let Some(m) = node["matrix"].as_array() {
             let f: Vec<f64> = m.iter().map(|v| v.as_f64().unwrap_or(0.0)).collect();
             if f.len() == 16 {
-                return [[f[0], f[1], f[2], f[3]], [f[4], f[5], f[6], f[7]], [f[8], f[9], f[10], f[11]], [f[12], f[13], f[14], f[15]]];
+                return [
+                    [f[0], f[1], f[2], f[3]],
+                    [f[4], f[5], f[6], f[7]],
+                    [f[8], f[9], f[10], f[11]],
+                    [f[12], f[13], f[14], f[15]],
+                ];
             }
         }
         let a = |k: &str, d: &[f64]| -> Vec<f64> {
-            node[k].as_array().map(|v| v.iter().map(|x| x.as_f64().unwrap_or(0.0)).collect()).unwrap_or_else(|| d.to_vec())
+            node[k]
+                .as_array()
+                .map(|v| v.iter().map(|x| x.as_f64().unwrap_or(0.0)).collect())
+                .unwrap_or_else(|| d.to_vec())
         };
         let t = a("translation", &[0.0, 0.0, 0.0]);
         let r = a("rotation", &[0.0, 0.0, 0.0, 1.0]);
         let s = a("scale", &[1.0, 1.0, 1.0]);
-        geom::from_trs([t[0], t[1], t[2]], [r[0], r[1], r[2], r[3]], [s[0], s[1], s[2]])
+        geom::from_trs(
+            [t[0], t[1], t[2]],
+            [r[0], r[1], r[2], r[3]],
+            [s[0], s[1], s[2]],
+        )
     }
 
     /// parent[i] of every node (None for roots).
@@ -146,7 +166,13 @@ impl Glb {
         let parents = self.parents();
         let n = self.nodes().len();
         let mut w: Vec<Option<M4>> = vec![None; n];
-        fn get(i: usize, g: &Glb, parents: &[Option<usize>], w: &mut Vec<Option<M4>>, depth: usize) -> M4 {
+        fn get(
+            i: usize,
+            g: &Glb,
+            parents: &[Option<usize>],
+            w: &mut Vec<Option<M4>>,
+            depth: usize,
+        ) -> M4 {
             if let Some(m) = w[i] {
                 return m;
             }
@@ -165,7 +191,12 @@ impl Glb {
     pub fn scene_nodes(&self) -> Vec<usize> {
         let si = self.json["scene"].as_u64().unwrap_or(0) as usize;
         let roots: Vec<usize> = match self.json["scenes"].get(si) {
-            Some(s) => s["nodes"].as_array().into_iter().flatten().filter_map(|v| v.as_u64().map(|x| x as usize)).collect(),
+            Some(s) => s["nodes"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.as_u64().map(|x| x as usize))
+                .collect(),
             None => return (0..self.nodes().len()).collect(),
         };
         let mut out = vec![];
@@ -177,7 +208,12 @@ impl Glb {
             }
             seen[i] = true;
             out.push(i);
-            let kids: Vec<usize> = self.nodes()[i]["children"].as_array().into_iter().flatten().filter_map(|v| v.as_u64().map(|x| x as usize)).collect();
+            let kids: Vec<usize> = self.nodes()[i]["children"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.as_u64().map(|x| x as usize))
+                .collect();
             stack.extend(kids.into_iter().rev());
         }
         out
@@ -186,21 +222,39 @@ impl Glb {
     // ---------------------------------------------------------- buffers
 
     /// Appends raw bytes as a new bufferView + accessor; returns the accessor index.
-    pub fn push_accessor(&mut self, bytes: &[u8], component: u32, kind: &str, count: usize, minmax: Option<(Vec<f64>, Vec<f64>)>, normalized: bool) -> usize {
+    pub fn push_accessor(
+        &mut self,
+        bytes: &[u8],
+        component: u32,
+        kind: &str,
+        count: usize,
+        minmax: Option<(Vec<f64>, Vec<f64>)>,
+        normalized: bool,
+    ) -> usize {
         while self.bin.len() % 4 != 0 {
             self.bin.push(0);
         }
         let offset = self.bin.len();
         self.bin.extend_from_slice(bytes);
-        if self.json["buffers"].as_array().map(|a| a.is_empty()).unwrap_or(true) {
+        if self.json["buffers"]
+            .as_array()
+            .map(|a| a.is_empty())
+            .unwrap_or(true)
+        {
             self.json["buffers"] = json!([{"byteLength": 0}]);
         }
         self.json["buffers"][0]["byteLength"] = json!(self.bin.len());
-        let views = self.json.as_object_mut().unwrap().entry("bufferViews").or_insert(json!([]));
+        let views = self
+            .json
+            .as_object_mut()
+            .unwrap()
+            .entry("bufferViews")
+            .or_insert(json!([]));
         let views = views.as_array_mut().unwrap();
         views.push(json!({"buffer": 0, "byteOffset": offset, "byteLength": bytes.len()}));
         let view = views.len() - 1;
-        let mut acc = json!({"bufferView": view, "componentType": component, "count": count, "type": kind});
+        let mut acc =
+            json!({"bufferView": view, "componentType": component, "count": count, "type": kind});
         if normalized {
             acc["normalized"] = json!(true);
         }
@@ -208,7 +262,12 @@ impl Glb {
             acc["min"] = json!(mn);
             acc["max"] = json!(mx);
         }
-        let accs = self.json.as_object_mut().unwrap().entry("accessors").or_insert(json!([]));
+        let accs = self
+            .json
+            .as_object_mut()
+            .unwrap()
+            .entry("accessors")
+            .or_insert(json!([]));
         let accs = accs.as_array_mut().unwrap();
         accs.push(acc);
         accs.len() - 1
@@ -239,7 +298,14 @@ impl Glb {
                 }
             }
         }
-        let ja = self.push_accessor(&jb, if wide { 5123 } else { 5121 }, "VEC4", joints.len(), None, false);
+        let ja = self.push_accessor(
+            &jb,
+            if wide { 5123 } else { 5121 },
+            "VEC4",
+            joints.len(),
+            None,
+            false,
+        );
         let mut wb = Vec::with_capacity(weights.len() * 16);
         for w in weights {
             for v in w {
@@ -317,7 +383,9 @@ impl Glb {
                     continue;
                 }
                 let r = prim.reader(self.buffer());
-                let Some(pos) = r.read_positions() else { continue };
+                let Some(pos) = r.read_positions() else {
+                    continue;
+                };
                 let positions: Vec<V3> = pos
                     .map(|p| {
                         let p = [p[0] as f64, p[1] as f64, p[2] as f64];
@@ -334,7 +402,16 @@ impl Glb {
                 let triangles = idx.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
                 let joints = r.read_joints(0).map(|j| j.into_u16().collect());
                 let weights = r.read_weights(0).map(|w| w.into_f32().collect());
-                out.push(Part { node: ni, mesh: mesh.index(), prim: pi, positions, triangles, joints, weights, skin });
+                out.push(Part {
+                    node: ni,
+                    mesh: mesh.index(),
+                    prim: pi,
+                    positions,
+                    triangles,
+                    joints,
+                    weights,
+                    skin,
+                });
             }
         }
         if out.is_empty() {
@@ -369,11 +446,21 @@ impl Glb {
         if joints.is_empty() {
             bail!("skin has no joints");
         }
-        let ibm: Vec<[[f32; 4]; 4]> = match skin.reader(self.buffer()).read_inverse_bind_matrices() {
+        let ibm: Vec<[[f32; 4]; 4]> = match skin.reader(self.buffer()).read_inverse_bind_matrices()
+        {
             Some(m) => m.collect(),
-            None => vec![[[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]; joints.len()],
+            None => vec![
+                [
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0]
+                ];
+                joints.len()
+            ],
         };
-        let slot_of: std::collections::HashMap<usize, usize> = joints.iter().enumerate().map(|(k, &n)| (n, k)).collect();
+        let slot_of: std::collections::HashMap<usize, usize> =
+            joints.iter().enumerate().map(|(k, &n)| (n, k)).collect();
         let parents = self.parents();
         // nearest joint ancestor of each joint
         let joint_parent = |n: usize| -> Option<usize> {
@@ -386,17 +473,32 @@ impl Glb {
             }
             None
         };
-        let tops: Vec<usize> = joints.iter().copied().filter(|&n| joint_parent(n).is_none()).collect();
+        let tops: Vec<usize> = joints
+            .iter()
+            .copied()
+            .filter(|&n| joint_parent(n).is_none())
+            .collect();
         // depth-first through the node tree, children in order, collecting joints
         let mut order = vec![];
-        fn visit(g: &Glb, n: usize, slot_of: &std::collections::HashMap<usize, usize>, order: &mut Vec<usize>, depth: usize) {
+        fn visit(
+            g: &Glb,
+            n: usize,
+            slot_of: &std::collections::HashMap<usize, usize>,
+            order: &mut Vec<usize>,
+            depth: usize,
+        ) {
             if depth > 1000 {
                 return;
             }
             if slot_of.contains_key(&n) && !order.contains(&n) {
                 order.push(n);
             }
-            let kids: Vec<usize> = g.nodes()[n]["children"].as_array().into_iter().flatten().filter_map(|v| v.as_u64().map(|x| x as usize)).collect();
+            let kids: Vec<usize> = g.nodes()[n]["children"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.as_u64().map(|x| x as usize))
+                .collect();
             for k in kids {
                 visit(g, k, slot_of, order, depth + 1);
             }
@@ -404,18 +506,50 @@ impl Glb {
         for t in tops {
             visit(self, t, &slot_of, &mut order, 0);
         }
-        let pos_of: std::collections::HashMap<usize, usize> = order.iter().enumerate().map(|(i, &n)| (n, i)).collect();
-        let names = order.iter().map(|&n| self.nodes()[n]["name"].as_str().map(String::from).unwrap_or(format!("joint_{n}"))).collect();
-        let parents_out = order.iter().map(|&n| joint_parent(n).map(|p| pos_of[&p] as i64).unwrap_or(-1)).collect();
+        let pos_of: std::collections::HashMap<usize, usize> =
+            order.iter().enumerate().map(|(i, &n)| (n, i)).collect();
+        let names = order
+            .iter()
+            .map(|&n| {
+                self.nodes()[n]["name"]
+                    .as_str()
+                    .map(String::from)
+                    .unwrap_or(format!("joint_{n}"))
+            })
+            .collect();
+        let parents_out = order
+            .iter()
+            .map(|&n| joint_parent(n).map(|p| pos_of[&p] as i64).unwrap_or(-1))
+            .collect();
         let heads = order
             .iter()
             .map(|&n| {
                 let m = ibm[slot_of[&n]];
                 let m: M4 = [
-                    [m[0][0] as f64, m[0][1] as f64, m[0][2] as f64, m[0][3] as f64],
-                    [m[1][0] as f64, m[1][1] as f64, m[1][2] as f64, m[1][3] as f64],
-                    [m[2][0] as f64, m[2][1] as f64, m[2][2] as f64, m[2][3] as f64],
-                    [m[3][0] as f64, m[3][1] as f64, m[3][2] as f64, m[3][3] as f64],
+                    [
+                        m[0][0] as f64,
+                        m[0][1] as f64,
+                        m[0][2] as f64,
+                        m[0][3] as f64,
+                    ],
+                    [
+                        m[1][0] as f64,
+                        m[1][1] as f64,
+                        m[1][2] as f64,
+                        m[1][3] as f64,
+                    ],
+                    [
+                        m[2][0] as f64,
+                        m[2][1] as f64,
+                        m[2][2] as f64,
+                        m[2][3] as f64,
+                    ],
+                    [
+                        m[3][0] as f64,
+                        m[3][1] as f64,
+                        m[3][2] as f64,
+                        m[3][3] as f64,
+                    ],
                 ];
                 geom::translation(&geom::inverse(&m))
             })
@@ -423,10 +557,18 @@ impl Glb {
         let skin_slot: Vec<usize> = order.iter().map(|n| slot_of[n]).collect();
         let worlds = self.world_matrices();
         let root = order[0];
-        let ibm0: M4 = std::array::from_fn(|c| std::array::from_fn(|r| ibm[slot_of[&root]][c][r] as f64));
+        let ibm0: M4 =
+            std::array::from_fn(|c| std::array::from_fn(|r| ibm[slot_of[&root]][c][r] as f64));
         let bind = geom::mul(&worlds[root], &ibm0);
         let arm = parents[root].map(|p| worlds[p]).unwrap_or(geom::IDENTITY);
         let to_armature = geom::mul(&geom::inverse(&arm), &bind);
-        Ok(SkinInfo { nodes: order, skin_slot, names, parents: parents_out, heads, to_armature })
+        Ok(SkinInfo {
+            nodes: order,
+            skin_slot,
+            names,
+            parents: parents_out,
+            heads,
+            to_armature,
+        })
     }
 }

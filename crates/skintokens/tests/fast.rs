@@ -36,11 +36,28 @@ const HUMANOID: [(&str, i64, [f64; 3]); 22] = [
 ];
 
 const EXPECT: [(&str, &str); 22] = [
-    ("hips", "Hips"), ("spine", "Spine"), ("spine1", "Spine1"), ("chest", "Spine2"), ("neck", "Neck"), ("head", "Head"),
-    ("l_shoulder", "LeftShoulder"), ("l_arm", "LeftArm"), ("l_forearm", "LeftForeArm"), ("l_hand", "LeftHand"),
-    ("r_shoulder", "RightShoulder"), ("r_arm", "RightArm"), ("r_forearm", "RightForeArm"), ("r_hand", "RightHand"),
-    ("l_thigh", "LeftUpLeg"), ("l_shin", "LeftLeg"), ("l_foot", "LeftFoot"), ("l_toe", "LeftToeBase"),
-    ("r_thigh", "RightUpLeg"), ("r_shin", "RightLeg"), ("r_foot", "RightFoot"), ("r_toe", "RightToeBase"),
+    ("hips", "Hips"),
+    ("spine", "Spine"),
+    ("spine1", "Spine1"),
+    ("chest", "Spine2"),
+    ("neck", "Neck"),
+    ("head", "Head"),
+    ("l_shoulder", "LeftShoulder"),
+    ("l_arm", "LeftArm"),
+    ("l_forearm", "LeftForeArm"),
+    ("l_hand", "LeftHand"),
+    ("r_shoulder", "RightShoulder"),
+    ("r_arm", "RightArm"),
+    ("r_forearm", "RightForeArm"),
+    ("r_hand", "RightHand"),
+    ("l_thigh", "LeftUpLeg"),
+    ("l_shin", "LeftLeg"),
+    ("l_foot", "LeftFoot"),
+    ("l_toe", "LeftToeBase"),
+    ("r_thigh", "RightUpLeg"),
+    ("r_shin", "RightLeg"),
+    ("r_foot", "RightFoot"),
+    ("r_toe", "RightToeBase"),
 ];
 
 fn tmp(name: &str) -> PathBuf {
@@ -51,8 +68,10 @@ fn tmp(name: &str) -> PathBuf {
 
 /// One quad per joint around its head, fully weighted to that joint.
 fn humanoid_glb(mirror_z: bool, with_helper: bool) -> Glb {
-    let joints: Vec<(&str, i64, [f64; 3])> =
-        HUMANOID.iter().map(|&(n, p, h)| (n, p, if mirror_z { [-h[0], h[1], -h[2]] } else { h })).collect();
+    let joints: Vec<(&str, i64, [f64; 3])> = HUMANOID
+        .iter()
+        .map(|&(n, p, h)| (n, p, if mirror_z { [-h[0], h[1], -h[2]] } else { h }))
+        .collect();
     let (mut pos, mut idx, mut jo, mut we) = (vec![], vec![], vec![], vec![]);
     for (i, (_, _, h)) in joints.iter().enumerate() {
         let b = (pos.len() / 3) as u16;
@@ -63,34 +82,69 @@ fn humanoid_glb(mirror_z: bool, with_helper: bool) -> Glb {
         }
         idx.extend([b, b + 1, b + 2, b, b + 2, b + 3]);
     }
-    let mut g = Glb { json: json!({"asset": {"version": "2.0"}, "buffers": [{"byteLength": 0}]}), bin: vec![] };
+    let mut g = Glb {
+        json: json!({"asset": {"version": "2.0"}, "buffers": [{"byteLength": 0}]}),
+        bin: vec![],
+    };
     let f32b = |v: &[f32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
     let n = pos.len() / 3;
-    let (mn, mx) = (0..3).fold((vec![f64::MAX; 3], vec![f64::MIN; 3]), |(mut mn, mut mx), a| {
-        for k in 0..n {
-            mn[a] = mn[a].min(pos[k * 3 + a] as f64);
-            mx[a] = mx[a].max(pos[k * 3 + a] as f64);
-        }
-        (mn, mx)
-    });
+    let (mn, mx) = (0..3).fold(
+        (vec![f64::MAX; 3], vec![f64::MIN; 3]),
+        |(mut mn, mut mx), a| {
+            for k in 0..n {
+                mn[a] = mn[a].min(pos[k * 3 + a] as f64);
+                mx[a] = mx[a].max(pos[k * 3 + a] as f64);
+            }
+            (mn, mx)
+        },
+    );
     let pa = g.push_accessor(&f32b(&pos), 5126, "VEC3", n, Some((mn, mx)), false);
-    let ia = g.push_accessor(&idx.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>(), 5123, "SCALAR", idx.len(), None, false);
+    let ia = g.push_accessor(
+        &idx.iter()
+            .flat_map(|x| x.to_le_bytes())
+            .collect::<Vec<u8>>(),
+        5123,
+        "SCALAR",
+        idx.len(),
+        None,
+        false,
+    );
     let ja = g.push_accessor(&jo, 5121, "VEC4", n, None, false);
     let wa = g.push_accessor(&f32b(&we), 5126, "VEC4", n, None, false);
     let mut nodes = vec![json!({"name": "mesh", "mesh": 0, "skin": 0})];
     for (n, p, h) in &joints {
-        let base = if *p >= 0 { joints[*p as usize].2 } else { [0.0; 3] };
-        nodes.push(json!({"name": n, "translation": [h[0] - base[0], h[1] - base[1], h[2] - base[2]]}));
+        let base = if *p >= 0 {
+            joints[*p as usize].2
+        } else {
+            [0.0; 3]
+        };
+        nodes.push(
+            json!({"name": n, "translation": [h[0] - base[0], h[1] - base[1], h[2] - base[2]]}),
+        );
     }
     for (i, (_, p, _)) in joints.iter().enumerate() {
         if *p >= 0 {
-            let c = nodes[*p as usize + 1].as_object_mut().unwrap().entry("children").or_insert(json!([])).as_array_mut().unwrap().push(json!(i + 1));
+            let c = nodes[*p as usize + 1]
+                .as_object_mut()
+                .unwrap()
+                .entry("children")
+                .or_insert(json!([]))
+                .as_array_mut()
+                .unwrap()
+                .push(json!(i + 1));
             let _ = c;
         }
     }
     let mut ibm: Vec<[[f64; 4]; 4]> = joints
         .iter()
-        .map(|(_, _, h)| [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [-h[0], -h[1], -h[2], 1.0]])
+        .map(|(_, _, h)| {
+            [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [-h[0], -h[1], -h[2], 1.0],
+            ]
+        })
         .collect();
     let mut skin_joints: Vec<usize> = (1..=joints.len()).collect();
     if with_helper {
@@ -98,7 +152,14 @@ fn humanoid_glb(mirror_z: bool, with_helper: bool) -> Glb {
         let arm = 1 + 7;
         nodes.push(json!({"name": "helper", "translation": [0.0, 0.0, 0.0], "extras": {"helper_bone": {"driver": "l_arm", "share": 0.5}}}));
         let hi = nodes.len() - 1;
-        nodes[arm].as_object_mut().unwrap().entry("children").or_insert(json!([])).as_array_mut().unwrap().push(json!(hi));
+        nodes[arm]
+            .as_object_mut()
+            .unwrap()
+            .entry("children")
+            .or_insert(json!([]))
+            .as_array_mut()
+            .unwrap()
+            .push(json!(hi));
         skin_joints.push(hi);
         ibm.push(ibm[7]);
     }
@@ -119,8 +180,14 @@ fn glb_roundtrip_and_skeleton() {
     humanoid_glb(false, false).write(&p).unwrap();
     let g = Glb::read(&p).unwrap();
     let info = g.skin_info().unwrap();
-    assert_eq!(info.names, HUMANOID.iter().map(|x| x.0.to_string()).collect::<Vec<_>>());
-    assert_eq!(info.parents, HUMANOID.iter().map(|x| x.1).collect::<Vec<_>>());
+    assert_eq!(
+        info.names,
+        HUMANOID.iter().map(|x| x.0.to_string()).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        info.parents,
+        HUMANOID.iter().map(|x| x.1).collect::<Vec<_>>()
+    );
     for (h, e) in info.heads.iter().zip(HUMANOID.iter()) {
         for a in 0..3 {
             assert!((h[a] - e.2[a]).abs() < 1e-5);
@@ -133,7 +200,14 @@ fn glb_roundtrip_and_skeleton() {
 
 fn names_and_heads(g: &Glb) -> (Vec<String>, Vec<Option<usize>>, Vec<[f64; 3]>) {
     let i = g.skin_info().unwrap();
-    (i.names, i.parents.iter().map(|&p| if p < 0 { None } else { Some(p as usize) }).collect(), i.heads)
+    (
+        i.names,
+        i.parents
+            .iter()
+            .map(|&p| if p < 0 { None } else { Some(p as usize) })
+            .collect(),
+        i.heads,
+    )
 }
 
 #[test]
@@ -158,21 +232,33 @@ fn naming_facing_minus_z_keeps_character_left() {
 #[test]
 fn naming_rejects_non_humanoid() {
     let n: Vec<String> = ["a", "b", "c"].iter().map(|s| s.to_string()).collect();
-    let (_, missing) = name_humanoid(&n, &[None, Some(0), Some(1)], &[[0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 2.0]]);
+    let (_, missing) = name_humanoid(
+        &n,
+        &[None, Some(0), Some(1)],
+        &[[0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 2.0]],
+    );
     assert!(!missing.is_empty());
 }
 
 #[test]
 fn helpers_found_by_extras_and_by_name() {
     let g = humanoid_glb(false, true);
-    let joints: Vec<usize> = g.json["skins"][0]["joints"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as usize).collect();
+    let joints: Vec<usize> = g.json["skins"][0]["joints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_u64().unwrap() as usize)
+        .collect();
     let h = pipeline::helper_joints(&g, &joints);
     assert_eq!(h.len(), 1);
     assert_eq!(h[joints.last().unwrap()], 8); // l_arm node
-    // by name: <driver>_twist.<side>
+                                              // by name: <driver>_twist.<side>
     let mut g = humanoid_glb(false, true);
     let hi = *joints.last().unwrap();
-    g.json["nodes"][hi].as_object_mut().unwrap().remove("extras");
+    g.json["nodes"][hi]
+        .as_object_mut()
+        .unwrap()
+        .remove("extras");
     g.json["nodes"][hi]["name"] = json!("DEF-l_arm_twist.L");
     g.json["nodes"][8]["name"] = json!("DEF-l_arm.L");
     assert_eq!(pipeline::helper_joints(&g, &joints).len(), 1);
@@ -201,7 +287,16 @@ fn bin() -> PathBuf {
 fn cli_usage_errors_write_no_report() {
     let d = tmp("cli");
     let rep = d.join("r.json");
-    let out = Command::new(bin()).args(["rig", d.join("missing.glb").to_str().unwrap(), d.join("o.glb").to_str().unwrap(), "--report"]).arg(&rep).output().unwrap();
+    let out = Command::new(bin())
+        .args([
+            "rig",
+            d.join("missing.glb").to_str().unwrap(),
+            d.join("o.glb").to_str().unwrap(),
+            "--report",
+        ])
+        .arg(&rep)
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(2));
     assert!(!rep.exists());
     // skin needs a rigged GLB
@@ -210,10 +305,22 @@ fn cli_usage_errors_write_no_report() {
     g.json["nodes"][0].as_object_mut().unwrap().remove("skin");
     let p = d.join("unrigged.glb");
     g.write(&p).unwrap();
-    let out = Command::new(bin()).args(["skin", p.to_str().unwrap(), d.join("o.glb").to_str().unwrap(), "--report"]).arg(&rep).output().unwrap();
+    let out = Command::new(bin())
+        .args([
+            "skin",
+            p.to_str().unwrap(),
+            d.join("o.glb").to_str().unwrap(),
+            "--report",
+        ])
+        .arg(&rep)
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(2));
     assert!(!rep.exists());
-    let out = Command::new(bin()).args(["rig", "a.glb", "b.glb", "--class", "dragon"]).output().unwrap();
+    let out = Command::new(bin())
+        .args(["rig", "a.glb", "b.glb", "--class", "dragon"])
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(2));
 }
 
@@ -223,8 +330,22 @@ fn cli_joints_writes_doc() {
     let p = d.join("a.glb");
     humanoid_glb(false, false).write(&p).unwrap();
     let o = d.join("j.json");
-    let out = Command::new(bin()).args(["joints", p.to_str().unwrap(), o.to_str().unwrap(), "--subject", "t"]).output().unwrap();
-    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new(bin())
+        .args([
+            "joints",
+            p.to_str().unwrap(),
+            o.to_str().unwrap(),
+            "--subject",
+            "t",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let doc: Value = serde_json::from_str(&std::fs::read_to_string(&o).unwrap()).unwrap();
     assert_eq!(doc["subject"], "t");
     assert_eq!(doc["joints"].as_array().unwrap().len(), 22);

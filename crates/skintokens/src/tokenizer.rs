@@ -53,7 +53,11 @@ pub fn tokenize(joints: &[[f64; 3]], parents: &[i64], cls: u32) -> Vec<u32> {
     let mut t = vec![BOS, cls];
     for i in 0..joints.len() {
         let branch = i != 0 && parents[i] != i as i64 - 1;
-        let p = if i == 0 { 0 } else { parents[i].max(0) as usize };
+        let p = if i == 0 {
+            0
+        } else {
+            parents[i].max(0) as usize
+        };
         if branch {
             t.push(BRANCH);
             t.extend(joints[p].iter().map(|&v| discretize(v)));
@@ -75,9 +79,20 @@ enum State {
     Joint,
 }
 
-fn walk(ids: &[u32], mut on_joint3: impl FnMut()) -> State {
+fn walk(ids: &[u32], on_joint3: impl FnMut()) -> State {
+    walk_tokens(ids, on_joint3, |_, _| {})
+}
+
+/// The grammar's state after `ids`. `on_joint3` runs on the third
+/// coordinate of every position, `on_token(state before, id)` on every token.
+fn walk_tokens(
+    ids: &[u32],
+    mut on_joint3: impl FnMut(),
+    mut on_token: impl FnMut(State, u32),
+) -> State {
     let mut s = State::Bos;
     for &id in ids {
+        on_token(s, id);
         s = match s {
             State::Bos => State::ClsPartJoint,
             State::ClsPartJoint => {
@@ -127,8 +142,56 @@ pub fn next_possible(ids: &[u32]) -> Vec<u32> {
         State::ClsPartJoint => classes().chain(parts()).chain(joints()).collect(),
         State::PartJoint => parts().chain(joints()).chain([EOS]).collect(),
         State::Joint2 | State::Joint3 | State::Joint => joints().collect(),
+        // Upstream's state machine can't tell a branch's parent triple from
+        // a joint, so it lets the skeleton end (or branch again) between a
+        // branch's parent and its joint; `detokenize` then has half a
+        // branch ("truncated branch", seen on a cloaked figure after 24
+        // minutes of generation). Only the joint may follow.
+        State::BranchPartJoint if branch_open(ids) => joints().collect(),
         State::BranchPartJoint => joints().chain(parts()).chain([BRANCH, EOS]).collect(),
     }
+}
+
+/// Whether the sequence stops between a branch's parent position and the
+/// joint that hangs there.
+fn branch_open(ids: &[u32]) -> bool {
+    let (mut pending, mut open) = (false, false);
+    walk_tokens(
+        ids,
+        || {},
+        |before, id| {
+            if id == BRANCH && before == State::BranchPartJoint {
+                pending = true;
+            }
+            if before == State::Joint3 {
+                open = pending;
+                pending = false;
+            }
+        },
+    );
+    open
+}
+
+/// Joints fully written so far (three coordinates each; a branch's parent
+/// position is not a joint).
+pub fn joints_written(ids: &[u32]) -> usize {
+    let (mut pending, mut n) = (false, 0usize);
+    walk_tokens(
+        ids,
+        || {},
+        |before, id| {
+            if id == BRANCH && before == State::BranchPartJoint {
+                pending = true;
+            }
+            if before == State::Joint3 {
+                if !pending {
+                    n += 1;
+                }
+                pending = false;
+            }
+        },
+    );
+    n
 }
 
 /// Number of joints in a token sequence (upstream `bones_in_sequence`,
@@ -211,7 +274,8 @@ pub fn detokenize(ids: &[u32]) -> anyhow::Result<Skeleton> {
         bail!("skeleton tokens do not end with eos");
     }
     let ids = &ids[1..end - 1];
-    let un = |s: &[u32]| -> [f32; 3] { [undiscretize(s[0]), undiscretize(s[1]), undiscretize(s[2])] };
+    let un =
+        |s: &[u32]| -> [f32; 3] { [undiscretize(s[0]), undiscretize(s[1]), undiscretize(s[2])] };
     let mut joints: Vec<[f32; 3]> = vec![];
     let mut pj: Vec<[f32; 3]> = vec![];
     let mut i = 0;
@@ -233,7 +297,11 @@ pub fn detokenize(ids: &[u32]) -> anyhow::Result<Skeleton> {
                 }
                 let cur = un(&ids[i..i + 3]);
                 joints.push(cur);
-                pj.push(if pj.is_empty() { cur } else { last.ok_or_else(|| anyhow::anyhow!("joint without parent"))? });
+                pj.push(if pj.is_empty() {
+                    cur
+                } else {
+                    last.ok_or_else(|| anyhow::anyhow!("joint without parent"))?
+                });
                 i += 3;
             }
             last = Some(*joints.last().unwrap());
@@ -265,7 +333,11 @@ pub fn detokenize(ids: &[u32]) -> anyhow::Result<Skeleton> {
         parents.push(if best.0 < 999999.0 { best.1 } else { -1 });
     }
     let names = (0..joints.len()).map(|i| format!("bone_{i}")).collect();
-    Ok(Skeleton { joints, parents, names })
+    Ok(Skeleton {
+        joints,
+        parents,
+        names,
+    })
 }
 
 #[cfg(test)]
@@ -274,7 +346,12 @@ mod tests {
 
     #[test]
     fn roundtrip_with_branch() {
-        let j = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.5], [0.3, 0.0, 0.2], [0.5, 0.0, 0.2]];
+        let j = [
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.5],
+            [0.3, 0.0, 0.2],
+            [0.5, 0.0, 0.2],
+        ];
         let p = [-1, 0, 0, 2];
         let t = tokenize(&j, &p, CLS_ARTICULATION);
         assert_eq!(t[0], BOS);
@@ -294,5 +371,38 @@ mod tests {
         assert_eq!(next_possible(&[BOS, CLS_ARTICULATION]).len(), 3 + 256 + 1);
         assert!(next_possible(&[BOS, CLS_ARTICULATION, 1, 2, 3]).contains(&BRANCH));
         assert!(!next_possible(&[BOS, CLS_ARTICULATION, 1, 2]).contains(&EOS));
+    }
+
+    #[test]
+    fn a_branch_is_finished_before_the_skeleton_ends() {
+        // bos, class, joint, branch, parent position: the joint must follow
+        let open = [BOS, CLS_ARTICULATION, 1, 2, 3, BRANCH, 1, 2, 3];
+        let next = next_possible(&open);
+        assert!(!next.contains(&EOS) && !next.contains(&BRANCH) && !next.contains(&PART_BODY));
+        assert_eq!(next.len(), NUM_DISCRETE as usize);
+        // once it has, the skeleton may end, and what was written reads back
+        let mut done = open.to_vec();
+        done.extend([4, 5, 6]);
+        assert!(next_possible(&done).contains(&EOS));
+        assert!(next_possible(&done).contains(&BRANCH));
+        done.push(EOS);
+        assert_eq!(detokenize(&done).unwrap().parents, vec![-1, 0]);
+        assert_eq!(joints_written(&open), 1);
+        assert_eq!(joints_written(&done), 2);
+        // every prefix of a real skeleton stays inside the grammar
+        let j = [
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.5],
+            [0.3, 0.0, 0.2],
+            [0.5, 0.0, 0.2],
+            [-0.3, 0.0, 0.2],
+        ];
+        let t = tokenize(&j, &[-1, 0, 0, 2, 0], CLS_ARTICULATION);
+        for k in 1..t.len() {
+            assert!(
+                next_possible(&t[..k]).contains(&t[k]),
+                "token {k} of a valid skeleton refused"
+            );
+        }
     }
 }

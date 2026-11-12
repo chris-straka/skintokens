@@ -27,14 +27,21 @@ pub fn fourier_embed(x: &Tensor, num_freqs: usize, include_pi: bool) -> Result<T
     let out_dev = x.device().clone();
     let x = x.to_device(&candle_core::Device::Cpu)?;
     let dev = &candle_core::Device::Cpu;
-    let pi = if include_pi { std::f32::consts::PI } else { 1.0 };
+    let pi = if include_pi {
+        std::f32::consts::PI
+    } else {
+        1.0
+    };
     let f: Vec<f32> = (0..num_freqs).map(|i| 2f32.powi(i as i32) * pi).collect();
     let f = Tensor::from_vec(f, num_freqs, dev)?;
     let x = x.to_dtype(DType::F32)?;
     let dims = x.dims().to_vec();
     let mut e_shape = dims.clone();
     *e_shape.last_mut().unwrap() *= num_freqs;
-    let e = x.unsqueeze(candle_core::D::Minus1)?.broadcast_mul(&f)?.reshape(e_shape)?;
+    let e = x
+        .unsqueeze(candle_core::D::Minus1)?
+        .broadcast_mul(&f)?
+        .reshape(e_shape)?;
     Ok(Tensor::cat(&[x, e.sin()?, e.cos()?], candle_core::D::Minus1)?.to_device(&out_dev)?)
 }
 
@@ -45,7 +52,10 @@ struct Mlp {
 
 impl Mlp {
     fn load(w: &Weights) -> Result<Self> {
-        Ok(Self { c_fc: Linear::load(w, "c_fc", true)?, c_proj: Linear::load(w, "c_proj", true)? })
+        Ok(Self {
+            c_fc: Linear::load(w, "c_fc", true)?,
+            c_proj: Linear::load(w, "c_proj", true)?,
+        })
     }
     fn forward(&self, x: &Tensor) -> Result<Tensor> {
         self.c_proj.forward(&self.c_fc.forward(x)?.gelu_erf()?)
@@ -92,8 +102,15 @@ impl ResidualAttentionBlock {
         let qkv = self.c_qkv.forward(&self.ln_1.forward(x)?)?;
         let d = c / self.heads;
         let qkv = qkv.reshape((b, l, self.heads, 3, d))?;
-        let pick = |i: usize| -> Result<Tensor> { Ok(qkv.narrow(3, i, 1)?.squeeze(3)?.transpose(1, 2)?) };
-        let o = attention(&pick(0)?, &pick(1)?, &pick(2)?, 1.0 / (d as f32).sqrt(), false)?;
+        let pick =
+            |i: usize| -> Result<Tensor> { Ok(qkv.narrow(3, i, 1)?.squeeze(3)?.transpose(1, 2)?) };
+        let o = attention(
+            &pick(0)?,
+            &pick(1)?,
+            &pick(2)?,
+            1.0 / (d as f32).sqrt(),
+            false,
+        )?;
         let x = (x + self.c_proj.forward(&merge(&o)?)?)?;
         Ok((&x + self.mlp.forward(&self.ln_2.forward(&x)?)?)?)
     }
@@ -156,16 +173,29 @@ pub struct ShapeEncoder {
 
 impl ShapeEncoder {
     /// `w` points at `mesh_encoder.encoder` in the TokenRig checkpoint.
-    pub fn load(w: &Weights, heads: usize, layers: usize, num_freqs: usize, include_pi: bool, token_num: usize) -> Result<Self> {
+    pub fn load(
+        w: &Weights,
+        heads: usize,
+        layers: usize,
+        num_freqs: usize,
+        include_pi: bool,
+        token_num: usize,
+    ) -> Result<Self> {
         let input_proj = Linear::load(w, "input_proj", true)?;
         let width = input_proj.out_dim();
         Ok(Self {
             input_proj,
             cross: ResidualCrossAttentionBlock::load(&w.pp("cross_attn"), heads)?,
             blocks: (0..layers)
-                .map(|i| ResidualAttentionBlock::load(&w.pp(format!("self_attn.resblocks.{i}")), heads))
+                .map(|i| {
+                    ResidualAttentionBlock::load(&w.pp(format!("self_attn.resblocks.{i}")), heads)
+                })
                 .collect::<Result<_>>()?,
-            ln_post: if w.has("ln_post.weight") { Some(LayerNorm::load(w, "ln_post", 1e-5)?) } else { None },
+            ln_post: if w.has("ln_post.weight") {
+                Some(LayerNorm::load(w, "ln_post", 1e-5)?)
+            } else {
+                None
+            },
             num_freqs,
             include_pi,
             token_num,
@@ -190,7 +220,8 @@ impl ShapeEncoder {
 
     fn embed(&self, pc: &Tensor, feats: &Tensor, dtype: DType) -> Result<Tensor> {
         let e = fourier_embed(pc, self.num_freqs, self.include_pi)?;
-        let x = Tensor::cat(&[e, feats.to_dtype(DType::F32)?], candle_core::D::Minus1)?.to_dtype(dtype)?;
+        let x = Tensor::cat(&[e, feats.to_dtype(DType::F32)?], candle_core::D::Minus1)?
+            .to_dtype(dtype)?;
         self.input_proj.forward(&x)
     }
 
@@ -202,8 +233,18 @@ impl ShapeEncoder {
         let dtype = self.input_proj.dtype();
         let data = self.embed(pc, feats, dtype)?.unsqueeze(0)?;
         trace("enc.input_proj.0", &data.squeeze(0)?);
-        let idx = Tensor::from_vec(query.iter().map(|&i| i as u32).collect::<Vec<_>>(), query.len(), pc.device())?;
-        let q = self.embed(&pc.index_select(&idx, 0)?, &feats.index_select(&idx, 0)?, dtype)?.unsqueeze(0)?;
+        let idx = Tensor::from_vec(
+            query.iter().map(|&i| i as u32).collect::<Vec<_>>(),
+            query.len(),
+            pc.device(),
+        )?;
+        let q = self
+            .embed(
+                &pc.index_select(&idx, 0)?,
+                &feats.index_select(&idx, 0)?,
+                dtype,
+            )?
+            .unsqueeze(0)?;
         trace("enc.input_proj.1", &q.squeeze(0)?);
         let mut x = self.cross.forward(&q, &data)?;
         trace("enc.cross.0", &x.squeeze(0)?);

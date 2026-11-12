@@ -32,7 +32,9 @@ impl Default for GenConfig {
     fn default() -> Self {
         let env = |k: &str| std::env::var(k).ok();
         GenConfig {
-            num_beams: env("SKINTOKENS_NUM_BEAMS").and_then(|v| v.parse().ok()).unwrap_or(10),
+            num_beams: env("SKINTOKENS_NUM_BEAMS")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(10),
             do_sample: env("SKINTOKENS_NO_SAMPLE").is_none(),
             top_k: 5,
             top_p: 0.95,
@@ -56,7 +58,17 @@ pub struct Grammar {
     /// Let the model write the last joint's last skin token before the LM
     /// eos (see `apply`). Off = upstream's behaviour, token for token.
     pub full_skin: bool,
+    /// New tokens the generation may write in all (None: no check). A
+    /// skeleton is followed by four skin tokens per joint, so one with too
+    /// many joints runs out of tokens before its skin is written and the
+    /// whole rig is lost (a cloaked figure: 1,534 tokens, no rig). With a
+    /// budget the skeleton has to end while its skin still fits.
+    pub budget: Option<usize>,
 }
+
+/// Most tokens one more joint can take: a branch, its parent position, the
+/// joint, and the joint's skin tokens.
+const JOINT_COST: usize = 1 + 3 + 3;
 
 impl Grammar {
     pub fn apply(&self, generated: &[u32], scores: &mut [f32]) {
@@ -83,6 +95,8 @@ impl Grammar {
             } else {
                 mask[self.eos_lm as usize] = ninf;
             }
+        } else if self.out_of_room(generated) {
+            mask[tokenizer::EOS as usize] = 0.0;
         } else {
             for t in tokenizer::next_possible(&seq) {
                 mask[t as usize] = 0.0;
@@ -91,6 +105,26 @@ impl Grammar {
         for (s, m) in scores.iter_mut().zip(mask) {
             *s += m;
         }
+    }
+}
+
+impl Grammar {
+    /// Whether the skeleton written so far (`generated`, no eos yet, at a
+    /// point where it may end) has to end now: one more joint and its skin
+    /// would not fit in the budget.
+    pub fn out_of_room(&self, generated: &[u32]) -> bool {
+        let Some(budget) = self.budget else {
+            return false;
+        };
+        let mut seq = self.init.clone();
+        seq.extend_from_slice(generated);
+        if !tokenizer::next_possible(&seq).contains(&tokenizer::EOS) {
+            return false;
+        }
+        let joints = tokenizer::joints_written(&seq);
+        // this skeleton's eos, every joint's skin, the LM eos
+        let rest = |j: usize| 1 + j * self.tokens_per_skin + 1;
+        generated.len() + JOINT_COST + rest(joints + 1) > budget
     }
 }
 
@@ -119,7 +153,9 @@ fn top_k(scores: &mut [f32], k: usize) {
         return;
     }
     let mut v: Vec<f32> = scores.to_vec();
-    v.select_nth_unstable_by(k - 1, |a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+    v.select_nth_unstable_by(k - 1, |a, b| {
+        b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal)
+    });
     let thr = v[k - 1];
     scores.iter_mut().for_each(|s| {
         if *s < thr {
@@ -132,7 +168,13 @@ fn top_p(scores: &mut [f32], p: f32, min_keep: usize) {
     if p >= 1.0 {
         return;
     }
-    let mut finite: Vec<(f32, usize)> = scores.iter().cloned().enumerate().filter(|(_, s)| s.is_finite()).map(|(i, s)| (s, i)).collect();
+    let mut finite: Vec<(f32, usize)> = scores
+        .iter()
+        .cloned()
+        .enumerate()
+        .filter(|(_, s)| s.is_finite())
+        .map(|(i, s)| (s, i))
+        .collect();
     // ascending; torch.sort is not stable but ties only reorder equal values
     finite.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(a.1.cmp(&b.1)));
     let m = finite.iter().map(|x| x.0).fold(f32::NEG_INFINITY, f32::max);
@@ -169,12 +211,18 @@ fn row(t: &Tensor, i: usize) -> Result<Vec<f32>> {
 pub fn greedy(model: &Qwen3, prompt: &Tensor, cfg: &GenConfig, g: &Grammar) -> Result<Vec<u32>> {
     let mut cache = model.new_cache();
     let mut logits = model.forward(prompt, &mut cache, false)?;
-    let max_new = cfg.max_new_tokens.unwrap_or(cfg.max_length.saturating_sub(prompt.dim(1)?));
+    let max_new = cfg
+        .max_new_tokens
+        .unwrap_or(cfg.max_length.saturating_sub(prompt.dim(1)?));
     let mut out = vec![];
     for _ in 0..max_new {
         let mut s = row(&logits, 0)?;
         process(cfg, g, &out, &mut s, 1);
-        let (t, _) = s.iter().enumerate().fold((0, f32::NEG_INFINITY), |a, (i, &v)| if v > a.1 { (i, v) } else { a });
+        let (t, _) =
+            s.iter().enumerate().fold(
+                (0, f32::NEG_INFINITY),
+                |a, (i, &v)| if v > a.1 { (i, v) } else { a },
+            );
         out.push(t as u32);
         if t as u32 == g.eos_lm {
             break;
@@ -188,7 +236,13 @@ pub fn greedy(model: &Qwen3, prompt: &Tensor, cfg: &GenConfig, g: &Grammar) -> R
 /// Beam search (sampling or not) exactly as transformers 5.18
 /// `_beam_search` for batch size 1, decoder-only, prompt given as
 /// embeddings (so the generated ids start empty).
-pub fn beam_search(model: &Qwen3, prompt: &Tensor, cfg: &GenConfig, g: &Grammar, rng: &mut Rng) -> Result<Vec<u32>> {
+pub fn beam_search(
+    model: &Qwen3,
+    prompt: &Tensor,
+    cfg: &GenConfig,
+    g: &Grammar,
+    rng: &mut Rng,
+) -> Result<Vec<u32>> {
     let nb = cfg.num_beams;
     let keep = 2 * nb; // max(2, 1 + n_eos) * num_beams with one eos id
     let max_length = match cfg.max_new_tokens {
@@ -235,17 +289,25 @@ pub fn beam_search(model: &Qwen3, prompt: &Tensor, cfg: &GenConfig, g: &Grammar,
                 .enumerate()
                 .map(|(i, &a)| {
                     let p = ((a - m) as f64).exp() as f32; // f32 softmax underflow -> zero probability
-                    let k = if p > 0.0 { (a - m) as f64 - rng.exponential().ln() } else { f64::NEG_INFINITY };
+                    let k = if p > 0.0 {
+                        (a - m) as f64 - rng.exponential().ln()
+                    } else {
+                        f64::NEG_INFINITY
+                    };
                     (k, i)
                 })
                 .collect();
-            keys.select_nth_unstable_by(keep - 1, |x, y| y.0.partial_cmp(&x.0).unwrap().then(x.1.cmp(&y.1)));
+            keys.select_nth_unstable_by(keep - 1, |x, y| {
+                y.0.partial_cmp(&x.0).unwrap().then(x.1.cmp(&y.1))
+            });
             keys.truncate(keep);
             keys.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap().then(x.1.cmp(&y.1)));
             keys.into_iter().map(|x| x.1).collect()
         } else {
             let mut idx: Vec<usize> = (0..acc.len()).collect();
-            idx.select_nth_unstable_by(keep - 1, |&x, &y| acc[y].partial_cmp(&acc[x]).unwrap().then(x.cmp(&y)));
+            idx.select_nth_unstable_by(keep - 1, |&x, &y| {
+                acc[y].partial_cmp(&acc[x]).unwrap().then(x.cmp(&y))
+            });
             idx.truncate(keep);
             idx.sort_by(|&x, &y| acc[y].partial_cmp(&acc[x]).unwrap().then(x.cmp(&y)));
             idx
@@ -261,15 +323,29 @@ pub fn beam_search(model: &Qwen3, prompt: &Tensor, cfg: &GenConfig, g: &Grammar,
             })
             .collect();
         // d. stopping criteria per candidate
-        let hits: Vec<bool> = cand_seq.iter().map(|s| *s.last().unwrap() == g.eos_lm || s.len() >= max_length).collect();
+        let hits: Vec<bool> = cand_seq
+            .iter()
+            .map(|s| *s.last().unwrap() == g.eos_lm || s.len() >= max_length)
+            .collect();
         // e. next running beams: best non-finished
-        let run_scores: Vec<f32> = cand_scores.iter().zip(&hits).map(|(&s, &h)| s + if h { -1e9 } else { 0.0 }).collect();
+        let run_scores: Vec<f32> = cand_scores
+            .iter()
+            .zip(&hits)
+            .map(|(&s, &h)| s + if h { -1e9 } else { 0.0 })
+            .collect();
         let mut order: Vec<usize> = (0..keep).collect();
-        order.sort_by(|&x, &y| run_scores[y].partial_cmp(&run_scores[x]).unwrap_or(std::cmp::Ordering::Equal).then(x.cmp(&y)));
+        order.sort_by(|&x, &y| {
+            run_scores[y]
+                .partial_cmp(&run_scores[x])
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(x.cmp(&y))
+        });
         let next: Vec<usize> = order[..nb].to_vec();
         // f. finished pool
         let denom = ((cur_len + 1) as f32).powf(lp);
-        let mut merged: Vec<(f32, Vec<u32>, bool)> = (0..nb).map(|b| (finished_scores[b], finished[b].clone(), is_finished[b])).collect();
+        let mut merged: Vec<(f32, Vec<u32>, bool)> = (0..nb)
+            .map(|b| (finished_scores[b], finished[b].clone(), is_finished[b]))
+            .collect();
         for k in 0..keep {
             let just = hits[k] && k < nb;
             let mut s = cand_scores[k] / denom;
@@ -282,7 +358,13 @@ pub fn beam_search(model: &Qwen3, prompt: &Tensor, cfg: &GenConfig, g: &Grammar,
             merged.push((s, cand_seq[k].clone(), just));
         }
         let mut morder: Vec<usize> = (0..merged.len()).collect();
-        morder.sort_by(|&x, &y| merged[y].0.partial_cmp(&merged[x].0).unwrap_or(std::cmp::Ordering::Equal).then(x.cmp(&y)));
+        morder.sort_by(|&x, &y| {
+            merged[y]
+                .0
+                .partial_cmp(&merged[x].0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(x.cmp(&y))
+        });
         let mut nf = Vec::with_capacity(nb);
         for &i in &morder[..nb] {
             nf.push(merged[i].clone());
@@ -298,8 +380,14 @@ pub fn beam_search(model: &Qwen3, prompt: &Tensor, cfg: &GenConfig, g: &Grammar,
 
         // early-stop heuristic (early_stopping=False)
         let best = running_scores[0] / (cur_len as f32).powf(lp);
-        let min_fin = finished_scores.iter().cloned().fold(f32::INFINITY, f32::min);
-        heuristic_unsatisfied = heuristic_unsatisfied && is_finished.iter().any(|&f| best > if f { min_fin } else { -1e9 });
+        let min_fin = finished_scores
+            .iter()
+            .cloned()
+            .fold(f32::INFINITY, f32::min);
+        heuristic_unsatisfied = heuristic_unsatisfied
+            && is_finished
+                .iter()
+                .any(|&f| best > if f { min_fin } else { -1e9 });
         let all_hit = hits.iter().all(|&h| h);
         if !heuristic_unsatisfied || all_hit {
             break;
@@ -307,12 +395,15 @@ pub fn beam_search(model: &Qwen3, prompt: &Tensor, cfg: &GenConfig, g: &Grammar,
         t_cpu += tc.elapsed().as_secs_f64();
         // next forward pass for the running beams
         let tk = std::time::Instant::now();
+        // the beams that go on keep their slots; the dropped beams' slots
+        // are reclaimed when the pool is full
+        let mut next_paths: Vec<Vec<usize>> = src.iter().map(|&s| paths[s].clone()).collect();
+        model.make_room(&mut cache, &mut next_paths, nb)?;
         let base = cache.used;
-        paths = src.iter().enumerate().map(|(bi, &s)| {
-            let mut p = paths[s].clone();
+        for (bi, p) in next_paths.iter_mut().enumerate() {
             p.push(base + bi);
-            p
-        }).collect();
+        }
+        paths = next_paths;
         t_cache += tk.elapsed().as_secs_f64();
         let tg = std::time::Instant::now();
         let last: Vec<u32> = running.iter().map(|s| *s.last().unwrap()).collect();
@@ -321,7 +412,65 @@ pub fn beam_search(model: &Qwen3, prompt: &Tensor, cfg: &GenConfig, g: &Grammar,
         t_gpu += tg.elapsed().as_secs_f64();
     }
     if prof {
-        eprintln!("  beam search: cpu {t_cpu:.1} s, cache reorder {t_cache:.1} s, forward+readback {t_gpu:.1} s, {cur_len} steps");
+        eprintln!(
+            "  beam search: cpu {t_cpu:.1} s, cache reorder {t_cache:.1} s, forward+readback {t_gpu:.1} s, {cur_len} steps; kv pool peak {} slots ({:.0} MB), {} compactions",
+            cache.peak_cap,
+            cache.pool_bytes(cache.peak_cap) as f64 / 1e6,
+            cache.compactions
+        );
     }
     Ok(finished.into_iter().next().unwrap_or_default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tokenizer::{BOS, BRANCH, CLS_ARTICULATION, EOS, VOCAB};
+
+    fn allowed(g: &Grammar, generated: &[u32]) -> Vec<u32> {
+        let mut s = vec![0f32; VOCAB as usize + 40];
+        g.apply(generated, &mut s);
+        (0..s.len() as u32)
+            .filter(|&t| s[t as usize].is_finite())
+            .collect()
+    }
+
+    /// A skeleton has to end while its skin still fits in the token
+    /// budget, and it ends between joints, never inside one.
+    #[test]
+    fn the_skeleton_ends_while_its_skin_fits() {
+        let eos_lm = VOCAB + 39;
+        let g = |budget| Grammar {
+            init: vec![BOS, CLS_ARTICULATION],
+            eos_lm,
+            tokens_per_skin: 4,
+            full_skin: false,
+            budget,
+        };
+        // 3 joints written: 9 tokens. One more joint may take 7, then eos
+        // (1), 4 joints' skin (16) and the LM eos (1): 34 in all.
+        let three = [10, 11, 12, 20, 21, 22, 30, 31, 32];
+        assert!(
+            allowed(&g(Some(34)), &three).len() > 1,
+            "a fourth joint fits in 34"
+        );
+        assert_eq!(
+            allowed(&g(Some(33)), &three),
+            vec![EOS],
+            "in 33 it doesn't: end here"
+        );
+        assert!(allowed(&g(None), &three).contains(&BRANCH));
+        // inside a joint or an open branch the skeleton can't end yet
+        let mid = [10, 11, 12, 20];
+        assert!(!allowed(&g(Some(10)), &mid).contains(&EOS));
+        let open = [10, 11, 12, BRANCH, 10, 11, 12];
+        assert!(!allowed(&g(Some(10)), &open).contains(&EOS));
+        // and what it wrote is then followed by skin for every joint
+        let mut done = three.to_vec();
+        done.push(EOS);
+        let skin_then_end: Vec<u32> = (0..11).map(|_| VOCAB + 1).collect();
+        done.extend(&skin_then_end);
+        assert_eq!(allowed(&g(Some(33)), &done), vec![eos_lm]);
+        assert!(done.len() + 1 <= 33);
+    }
 }

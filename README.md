@@ -12,8 +12,8 @@ It is:
   `skintokens-joints/1`, the unirig-joints/1 schema under a new name), and
 - genforge's default **rig stage** (`skintokens rig`).
 
-Rust (candle; Metal on Apple Silicon, CPU elsewhere, no CUDA), no Python at
-runtime: the official checkpoint is read directly and GLBs are read and
+Rust (candle; Metal on Apple Silicon, CUDA on an NVIDIA card with the `cuda`
+feature, CPU elsewhere), no Python at runtime: the official checkpoint is read directly and GLBs are read and
 written in pure Rust. It replaced the Python/PyTorch wrapper on
 2026-10-05 after matching it tensor for tensor; how parity was proven,
 with numbers and sheets: [docs/evaluation.md](docs/evaluation.md).
@@ -24,6 +24,7 @@ github.com/chris-straka/skintokens.
 
     cargo build --release      # target/release/skintokens; bin/skintokens runs it
                                # Linux: add --no-default-features (CPU; Metal is macOS-only)
+                               # NVIDIA: --no-default-features --features cuda (below)
     ./fetch-weights.sh         # once: official grpo_1400.ckpt (1.1 GB, pinned, checksummed)
     bin/skintokens doctor
 
@@ -84,7 +85,27 @@ per `skin` on a 13.6k-vert hero mesh, ~3.7 GB peak; the Python wrapper took
 wrapper was not reproducible); different seeds vary like the original
 (raw weightforge 48.9-51.5 on that hero over four seeds).
 
-Environment: `SKINTOKENS_DEVICE=cpu|metal` (default Metal if present),
+**CUDA.** `cargo build --release --no-default-features --features cuda`
+needs a CUDA toolkit at build time (`nvcc`; `CUDA_ROOT` names it) and its
+libraries at run time (`LD_LIBRARY_PATH=$CUDA_ROOT/lib`). nvcc 12.8 refuses
+gcc 15: point it at a gcc it accepts with
+`NVCC_PREPEND_FLAGS="-ccbin /path/to/g++"`. On an RTX 2060 SUPER (8 GB) a
+`rig` of an 18,000-triangle creature takes 26 s (ten minutes on that
+machine's CPU), 1.6 GB of memory and 5.5 GB of the card, and gives the same
+skeleton as the CPU, joint for joint.
+
+**A skeleton that doesn't end.** Generation has 1,534 tokens (2,048 less
+the prompt), and a skeleton is followed by four skin tokens per joint. On a
+shape the model can't read (a cloaked figure in rags: a chain for every
+strip) the skeleton used to run to the limit, so no skin was written and
+there was no rig; and the beam cache, one slot per beam per step, doubled
+its way past 12 GB on the way. Now (`--report`'s
+`skeleton_cut_at_token_limit`): the skeleton has to end while its skin
+still fits (146 joints at most), the cache reclaims dropped beams' slots
+(0.6 GB whatever the length; `cargo test` holds it there), and a branch
+can't be left half written. That figure rigs in 84 s at 1.6 GB.
+
+Environment: `SKINTOKENS_DEVICE=cpu|metal|cuda` (default: the GPU the build has),
 `SKINTOKENS_DTYPE=bf16` (default f32; bf16 peaks at 2.4 GB, is a little faster, scores
 the same), `SKINTOKENS_VERBOSE=1` (stage timings), `SKINTOKENS_TRANSFER`
 (see `--transfer`), `SKINTOKENS_PRED_CACHE=<prefix>` (developer hook: keep

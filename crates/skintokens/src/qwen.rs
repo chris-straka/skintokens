@@ -19,7 +19,14 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Config { layers: 28, heads: 16, kv_heads: 8, head_dim: 128, rope_theta: 1_000_000.0, eps: 1e-6 }
+        Config {
+            layers: 28,
+            heads: 16,
+            kv_heads: 8,
+            head_dim: 128,
+            rope_theta: 1_000_000.0,
+            eps: 1e-6,
+        }
     }
 }
 
@@ -67,9 +74,18 @@ impl Cache {
 
     /// Keeps batch rows `idx` (beam reordering).
     pub fn select(&mut self, idx: &[usize]) -> Result<()> {
-        let dev = self.kv.iter().flatten().next().map(|(k, _)| k.device().clone());
+        let dev = self
+            .kv
+            .iter()
+            .flatten()
+            .next()
+            .map(|(k, _)| k.device().clone());
         let Some(dev) = dev else { return Ok(()) };
-        let t = Tensor::from_vec(idx.iter().map(|&i| i as u32).collect::<Vec<_>>(), idx.len(), &dev)?;
+        let t = Tensor::from_vec(
+            idx.iter().map(|&i| i as u32).collect::<Vec<_>>(),
+            idx.len(),
+            &dev,
+        )?;
         for e in self.kv.iter_mut().flatten() {
             *e = (e.0.index_select(&t, 0)?, e.1.index_select(&t, 0)?);
         }
@@ -112,12 +128,21 @@ impl Qwen3 {
             .collect::<Result<_>>()?;
         let embed = m.get("embed_tokens.weight")?;
         // Qwen3-0.6B ties the head to the embeddings (the checkpoint stores both, equal).
-        let lm_head = if w.has("lm_head.weight") { Linear::load(w, "lm_head", false)? } else { Linear::new(&embed, None)? };
+        let lm_head = if w.has("lm_head.weight") {
+            Linear::load(w, "lm_head", false)?
+        } else {
+            Linear::new(&embed, None)?
+        };
         let half = cfg.head_dim / 2;
         // Upstream casts the transformer to bf16, which rounds the rotary
         // `inv_freq` buffer as well; inference uses the rounded values.
-        let inv_freq: Vec<f32> = (0..half).map(|i| (1.0 / cfg.rope_theta.powf(2.0 * i as f64 / cfg.head_dim as f64)) as f32).collect();
-        let inv_freq = Tensor::from_vec(inv_freq, half, &candle_core::Device::Cpu)?.to_dtype(DType::BF16)?.to_dtype(DType::F32)?.to_vec1()?;
+        let inv_freq: Vec<f32> = (0..half)
+            .map(|i| (1.0 / cfg.rope_theta.powf(2.0 * i as f64 / cfg.head_dim as f64)) as f32)
+            .collect();
+        let inv_freq = Tensor::from_vec(inv_freq, half, &candle_core::Device::Cpu)?
+            .to_dtype(DType::BF16)?
+            .to_dtype(DType::F32)?
+            .to_vec1()?;
         Ok(Self {
             norm: RmsNorm::load(&m, "norm", cfg.eps)?,
             layers,
@@ -139,7 +164,10 @@ impl Qwen3 {
     }
 
     pub fn new_cache(&self) -> Cache {
-        Cache { kv: vec![None; self.cfg.layers], len: 0 }
+        Cache {
+            kv: vec![None; self.cfg.layers],
+            len: 0,
+        }
     }
 
     /// Token ids -> embeddings (B, L, hidden).
@@ -148,7 +176,10 @@ impl Qwen3 {
         let l = ids[0].len();
         let flat: Vec<u32> = ids.iter().flatten().copied().collect();
         let t = Tensor::from_vec(flat, b * l, &self.device)?;
-        Ok(self.embed.index_select(&t, 0)?.reshape((b, l, self.hidden()))?)
+        Ok(self
+            .embed
+            .index_select(&t, 0)?
+            .reshape((b, l, self.hidden()))?)
     }
 
     fn rope(&self, start: usize, len: usize) -> Result<(Tensor, Tensor)> {
@@ -188,9 +219,14 @@ impl Qwen3 {
             let hn = ly.input_norm.forward(&x)?;
             let q = ly.q.forward(&hn)?.reshape((b, l, h, d))?;
             let k = ly.k.forward(&hn)?.reshape((b, l, hk, d))?;
-            let v = ly.v.forward(&hn)?.reshape((b, l, hk, d))?.transpose(1, 2)?.contiguous()?;
+            let v =
+                ly.v.forward(&hn)?
+                    .reshape((b, l, hk, d))?
+                    .transpose(1, 2)?
+                    .contiguous()?;
             let q = Self::apply_rope(&ly.q_norm.forward(&q)?.transpose(1, 2)?, &cos, &sin)?;
-            let k = Self::apply_rope(&ly.k_norm.forward(&k)?.transpose(1, 2)?, &cos, &sin)?.contiguous()?;
+            let k = Self::apply_rope(&ly.k_norm.forward(&k)?.transpose(1, 2)?, &cos, &sin)?
+                .contiguous()?;
             let (k, v) = match cache.kv[i].take() {
                 Some((pk, pv)) => (Tensor::cat(&[&pk, &k], 2)?, Tensor::cat(&[&pv, &v], 2)?),
                 None => (k, v),
@@ -200,12 +236,17 @@ impl Qwen3 {
             let o = o.transpose(1, 2)?.reshape((b, l, h * d))?;
             x = (x + ly.o.forward(&o)?)?;
             let hn = ly.post_norm.forward(&x)?;
-            let m = ly.down.forward(&(ly.gate.forward(&hn)?.silu()? * ly.up.forward(&hn)?)?)?;
+            let m = ly
+                .down
+                .forward(&(ly.gate.forward(&hn)?.silu()? * ly.up.forward(&hn)?)?)?;
             x = (x + m)?;
         }
         cache.len += l;
         let x = if all { x } else { x.narrow(1, l - 1, 1)? };
-        let logits = self.lm_head.forward(&self.norm.forward(&x)?)?.to_dtype(DType::F32)?;
+        let logits = self
+            .lm_head
+            .forward(&self.norm.forward(&x)?)?
+            .to_dtype(DType::F32)?;
         if all {
             Ok(logits)
         } else {
@@ -218,6 +259,15 @@ impl Qwen3 {
 /// kept once, every generated token gets a slot in a pool written in place,
 /// and each beam attends to the prompt plus the slots on its own path (a
 /// mask), so reordering beams is bookkeeping on the host.
+///
+/// Every step takes one slot per beam, and a slot whose beam was dropped is
+/// never read again. `make_room` reclaims those before the pool grows, so
+/// the pool holds the slots the running beams still use (about one per
+/// generated token once the beams share their past) and not one per beam
+/// per step: a 1,500-token generation on 10 beams stays near 2,560 slots
+/// (0.6 GB for the real model, 229 KB a slot) where it used to double its
+/// way to 20,480 (4.7 GB, 7 GB while copying, more on a GPU that frees
+/// late).
 pub struct BeamCache {
     /// per layer: prompt K^T (Hkv, D, P) and V (Hkv, P, D)
     prompt: Vec<(Tensor, Tensor)>,
@@ -225,7 +275,24 @@ pub struct BeamCache {
     pool: Vec<(Tensor, Tensor)>,
     pub cap: usize,
     pub used: usize,
+    /// Decoding steps taken (the next token's position after the prompt).
+    pub steps: usize,
     pub prompt_len: usize,
+    /// Largest `cap` this cache has had.
+    pub peak_cap: usize,
+    /// Times dropped beams' slots were reclaimed.
+    pub compactions: usize,
+}
+
+impl BeamCache {
+    /// Bytes the pool holds at capacity `cap` (f32).
+    pub fn pool_bytes(&self, cap: usize) -> usize {
+        self.pool
+            .iter()
+            .map(|(k, _)| k.dims()[0] * k.dims()[1] * 2 * 4)
+            .sum::<usize>()
+            * cap
+    }
 }
 
 impl Qwen3 {
@@ -234,32 +301,106 @@ impl Qwen3 {
         let mut prompt = vec![];
         let mut pool = vec![];
         for e in &c.kv {
-            let (k, v) = e.as_ref().ok_or_else(|| anyhow::anyhow!("cache not prefilled"))?;
+            let (k, v) = e
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("cache not prefilled"))?;
             let k = k.squeeze(0)?; // (Hkv, P, D)
             let v = v.squeeze(0)?.contiguous()?;
             prompt.push((k.t()?.contiguous()?, v));
             pool.push(self.empty_pool(cap)?);
         }
-        Ok(BeamCache { prompt, pool, cap, used: 0, prompt_len: c.len })
+        Ok(BeamCache {
+            prompt,
+            pool,
+            cap,
+            used: 0,
+            steps: 0,
+            prompt_len: c.len,
+            peak_cap: cap,
+            compactions: 0,
+        })
     }
 
     fn empty_pool(&self, cap: usize) -> Result<(Tensor, Tensor)> {
         let (hk, d) = (self.cfg.kv_heads, self.cfg.head_dim);
-        Ok((Tensor::zeros((hk, d, cap), self.dtype, &self.device)?, Tensor::zeros((hk, cap, d), self.dtype, &self.device)?))
+        Ok((
+            Tensor::zeros((hk, d, cap), self.dtype, &self.device)?,
+            Tensor::zeros((hk, cap, d), self.dtype, &self.device)?,
+        ))
+    }
+
+    /// Makes room for `b` more slots. `paths` are the pool slots of the
+    /// beams that go on (everything else in the pool is dead): when the
+    /// pool is full they are moved to the front, in order, and `paths` is
+    /// renumbered; the pool only grows (doubling) when the live slots alone
+    /// fill three quarters of it. Attention is unchanged: a beam still sees
+    /// exactly its own slots.
+    pub fn make_room(
+        &self,
+        cache: &mut BeamCache,
+        paths: &mut [Vec<usize>],
+        b: usize,
+    ) -> Result<()> {
+        // SKINTOKENS_NO_RECLAIM: the cache as it was (it only grows), to
+        // measure what reclaiming saves.
+        if cache.used + b <= cache.cap || std::env::var("SKINTOKENS_NO_RECLAIM").is_ok() {
+            return Ok(());
+        }
+        let mut live: Vec<usize> = paths.iter().flatten().copied().collect();
+        live.sort_unstable();
+        live.dedup();
+        let mut cap = cache.cap.max(b);
+        while (live.len() + b) * 4 > cap * 3 {
+            cap *= 2;
+        }
+        let idx = Tensor::from_vec(
+            live.iter().map(|&i| i as u32).collect::<Vec<_>>(),
+            live.len(),
+            &self.device,
+        )?;
+        for p in cache.pool.iter_mut() {
+            let (zk, zv) = self.empty_pool(cap)?;
+            if !live.is_empty() {
+                zk.slice_set(&p.0.index_select(&idx, 2)?.contiguous()?, 2, 0)?;
+                zv.slice_set(&p.1.index_select(&idx, 1)?.contiguous()?, 1, 0)?;
+            }
+            *p = (zk, zv);
+        }
+        self.device.synchronize()?;
+        let mut new_slot = vec![usize::MAX; cache.used];
+        for (k, &s) in live.iter().enumerate() {
+            new_slot[s] = k;
+        }
+        for p in paths.iter_mut() {
+            p.iter_mut().for_each(|s| *s = new_slot[*s]);
+        }
+        cache.used = live.len();
+        cache.cap = cap;
+        cache.peak_cap = cache.peak_cap.max(cap);
+        cache.compactions += 1;
+        Ok(())
     }
 
     /// One decoding step for B beams. `ids`: each beam's newest token;
     /// `paths`: each beam's pool slots in order, the last being the slot for
-    /// this token (= cache.used + b). Returns logits (B, vocab) f32.
-    pub fn beam_step(&self, ids: &[u32], paths: &[Vec<usize>], cache: &mut BeamCache) -> Result<Tensor> {
+    /// this token (= cache.used + b). Call `make_room` first. Returns
+    /// logits (B, vocab) f32.
+    pub fn beam_step(
+        &self,
+        ids: &[u32],
+        paths: &[Vec<usize>],
+        cache: &mut BeamCache,
+    ) -> Result<Tensor> {
         let b = ids.len();
         if cache.used + b > cache.cap {
+            // no room made: grow without reclaiming anything
             let grow = cache.cap.max(b);
             for p in cache.pool.iter_mut() {
                 let (zk, zv) = self.empty_pool(grow)?;
                 *p = (Tensor::cat(&[&p.0, &zk], 2)?, Tensor::cat(&[&p.1, &zv], 1)?);
             }
             cache.cap += grow;
+            cache.peak_cap = cache.peak_cap.max(cache.cap);
         }
         let (h, hk, d) = (self.cfg.heads, self.cfg.kv_heads, self.cfg.head_dim);
         let g = h / hk;
@@ -278,8 +419,10 @@ impl Qwen3 {
             .broadcast_as((b, g, pl + cap))?
             .reshape((1, b * g, pl + cap))?
             .to_dtype(DType::F32)?;
-        let (cos, sin) = self.rope(pl + cache.used / b.max(1), 1)?;
-        let mut x = self.embed_ids(&ids.iter().map(|&t| vec![t]).collect::<Vec<_>>())?.to_dtype(self.dtype)?;
+        let (cos, sin) = self.rope(pl + cache.steps, 1)?;
+        let mut x = self
+            .embed_ids(&ids.iter().map(|&t| vec![t]).collect::<Vec<_>>())?
+            .to_dtype(self.dtype)?;
         let scale = 1.0 / (d as f64).sqrt();
         for (i, ly) in self.layers.iter().enumerate() {
             let hn = ly.input_norm.forward(&x)?;
@@ -288,25 +431,195 @@ impl Qwen3 {
             let v = ly.v.forward(&hn)?.reshape((b, hk, d))?;
             let q = Self::apply_rope(&ly.q_norm.forward(&q)?.transpose(1, 2)?, &cos, &sin)?; // (b, h, 1, d)
             let k = Self::apply_rope(&ly.k_norm.forward(&k)?.transpose(1, 2)?, &cos, &sin)?; // (b, hk, 1, d)
-            // write this step's keys/values into slots used..used+b
+                                                                                             // write this step's keys/values into slots used..used+b
             let (pk, pv) = &cache.pool[i];
-            pk.slice_set(&k.squeeze(2)?.permute((1, 2, 0))?.contiguous()?, 2, cache.used)?; // (hk, d, b)
+            pk.slice_set(
+                &k.squeeze(2)?.permute((1, 2, 0))?.contiguous()?,
+                2,
+                cache.used,
+            )?; // (hk, d, b)
             pv.slice_set(&v.transpose(0, 1)?.contiguous()?, 1, cache.used)?; // (hk, b, d)
-            // queries grouped by kv head: (hk, b*g, d)
-            let qg = q.squeeze(2)?.reshape((b, hk, g, d))?.permute((1, 0, 2, 3))?.reshape((hk, b * g, d))?.contiguous()?;
+                                                                             // queries grouped by kv head: (hk, b*g, d)
+            let qg = q
+                .squeeze(2)?
+                .reshape((b, hk, g, d))?
+                .permute((1, 0, 2, 3))?
+                .reshape((hk, b * g, d))?
+                .contiguous()?;
             let (kpt, vp) = &cache.prompt[i];
             let sp = qg.matmul(kpt)?;
             let sg = qg.matmul(pk)?;
-            let s = (Tensor::cat(&[&sp, &sg], 2)?.to_dtype(DType::F32)? * scale)?.broadcast_add(&mask)?;
+            let s = (Tensor::cat(&[&sp, &sg], 2)?.to_dtype(DType::F32)? * scale)?
+                .broadcast_add(&mask)?;
             let p = candle_nn::ops::softmax_last_dim(&s)?.to_dtype(self.dtype)?;
-            let o = (p.narrow(2, 0, pl)?.contiguous()?.matmul(vp)? + p.narrow(2, pl, cap)?.contiguous()?.matmul(pv)?)?;
-            let o = o.reshape((hk, b, g, d))?.permute((1, 0, 2, 3))?.reshape((b, 1, h * d))?;
+            let o = (p.narrow(2, 0, pl)?.contiguous()?.matmul(vp)?
+                + p.narrow(2, pl, cap)?.contiguous()?.matmul(pv)?)?;
+            let o = o
+                .reshape((hk, b, g, d))?
+                .permute((1, 0, 2, 3))?
+                .reshape((b, 1, h * d))?;
             x = (x + ly.o.forward(&o)?)?;
             let hn = ly.post_norm.forward(&x)?;
-            let m = ly.down.forward(&(ly.gate.forward(&hn)?.silu()? * ly.up.forward(&hn)?)?)?;
+            let m = ly
+                .down
+                .forward(&(ly.gate.forward(&hn)?.silu()? * ly.up.forward(&hn)?)?)?;
             x = (x + m)?;
         }
         cache.used += b;
-        Ok(self.lm_head.forward(&self.norm.forward(&x)?)?.to_dtype(DType::F32)?.squeeze(1)?)
+        cache.steps += 1;
+        Ok(self
+            .lm_head
+            .forward(&self.norm.forward(&x)?)?
+            .to_dtype(DType::F32)?
+            .squeeze(1)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use skintokens_nn::Rng;
+    use std::collections::HashMap;
+
+    const VOCAB: usize = 40;
+    const HIDDEN: usize = 32;
+
+    /// A two-layer model with random weights (the real one's layout).
+    fn tiny() -> Qwen3 {
+        let cfg = Config {
+            layers: 2,
+            heads: 4,
+            kv_heads: 2,
+            head_dim: 8,
+            rope_theta: 1_000_000.0,
+            eps: 1e-6,
+        };
+        let mut rng = Rng::new(11);
+        let mut map = HashMap::new();
+        let mut put = |name: String, shape: &[usize], scale: f64, rng: &mut Rng| {
+            let n: usize = shape.iter().product();
+            let v: Vec<f32> = (0..n).map(|_| (rng.normal() * scale) as f32).collect();
+            map.insert(name, Tensor::from_vec(v, shape, &Device::Cpu).unwrap());
+        };
+        let (q, kv, inter) = (cfg.heads * cfg.head_dim, cfg.kv_heads * cfg.head_dim, 64);
+        for i in 0..cfg.layers {
+            let l = format!("model.layers.{i}");
+            for (n, shape) in [
+                ("self_attn.q_proj", [q, HIDDEN]),
+                ("self_attn.k_proj", [kv, HIDDEN]),
+                ("self_attn.v_proj", [kv, HIDDEN]),
+                ("self_attn.o_proj", [HIDDEN, q]),
+                ("mlp.gate_proj", [inter, HIDDEN]),
+                ("mlp.up_proj", [inter, HIDDEN]),
+                ("mlp.down_proj", [HIDDEN, inter]),
+            ] {
+                put(format!("{l}.{n}.weight"), &shape, 0.2, &mut rng);
+            }
+            for (n, len) in [
+                ("input_layernorm", HIDDEN),
+                ("post_attention_layernorm", HIDDEN),
+                ("self_attn.q_norm", cfg.head_dim),
+                ("self_attn.k_norm", cfg.head_dim),
+            ] {
+                put(format!("{l}.{n}.weight"), &[len], 1.0, &mut rng);
+            }
+        }
+        put(
+            "model.embed_tokens.weight".into(),
+            &[VOCAB, HIDDEN],
+            1.0,
+            &mut rng,
+        );
+        put("model.norm.weight".into(), &[HIDDEN], 1.0, &mut rng);
+        Qwen3::load(&Weights::from_map(map, DType::F32, &Device::Cpu), cfg).unwrap()
+    }
+
+    /// Beam search's use of the cache for `steps` steps on `nb` beams: each
+    /// step every new beam continues a randomly chosen old one (so, as in a
+    /// real search, the beams soon share their past) and writes a random
+    /// token. Returns each step's logits and the cache.
+    fn drive(
+        m: &Qwen3,
+        cap: usize,
+        steps: usize,
+        nb: usize,
+        keep_logits: bool,
+    ) -> (Vec<Vec<Vec<f32>>>, BeamCache) {
+        let mut rng = Rng::new(5);
+        let prompt: Vec<f32> = (0..6 * HIDDEN).map(|_| rng.normal() as f32).collect();
+        let prompt = Tensor::from_vec(prompt, (1, 6, HIDDEN), &Device::Cpu).unwrap();
+        let mut c = m.new_cache();
+        m.forward(&prompt, &mut c, false).unwrap();
+        let mut cache = m.beam_cache(&c, cap).unwrap();
+        let mut paths: Vec<Vec<usize>> = vec![vec![]; nb];
+        let mut out = vec![];
+        for _ in 0..steps {
+            let src: Vec<usize> = (0..nb).map(|_| rng.below(nb)).collect();
+            let mut next: Vec<Vec<usize>> = src.iter().map(|&s| paths[s].clone()).collect();
+            m.make_room(&mut cache, &mut next, nb).unwrap();
+            let base = cache.used;
+            for (bi, p) in next.iter_mut().enumerate() {
+                p.push(base + bi);
+            }
+            paths = next;
+            let ids: Vec<u32> = (0..nb).map(|_| rng.below(VOCAB) as u32).collect();
+            let logits = m.beam_step(&ids, &paths, &mut cache).unwrap();
+            if keep_logits {
+                out.push(logits.to_vec2::<f32>().unwrap());
+            }
+        }
+        (out, cache)
+    }
+
+    #[test]
+    fn reclaiming_dropped_beams_changes_no_logit() {
+        let m = tiny();
+        // a pool that never fills, against one that is reclaimed many times
+        let (big, cb) = drive(&m, 4096, 300, 4, true);
+        let (small, cs) = drive(&m, 16, 300, 4, true);
+        assert_eq!(cb.compactions, 0);
+        assert!(
+            cs.compactions > 10,
+            "the small pool should have been reclaimed, got {}",
+            cs.compactions
+        );
+        let worst = big
+            .iter()
+            .flatten()
+            .flatten()
+            .zip(small.iter().flatten().flatten())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0f32, f32::max);
+        assert!(worst < 1e-4, "logits moved by {worst}");
+    }
+
+    /// The memory bound. A skeleton that runs to the length limit (2048
+    /// tokens less the 514 of the prompt: 1,534 steps) on 10 beams took
+    /// 15,340 slots and doubled the pool to 20,480 (4.7 GB on the real
+    /// model, plus the copy while doubling): a cloaked figure's rig was
+    /// stopped at 14 GB. Reclaimed, the pool never leaves its first 2,560
+    /// slots (0.6 GB).
+    #[test]
+    fn a_full_length_generation_stays_in_the_first_pool() {
+        let m = tiny();
+        let (nb, steps) = (10, 1534);
+        let (_, c) = drive(&m, nb * 256, steps, nb, false);
+        assert_eq!(c.steps, steps);
+        assert_eq!(
+            c.peak_cap,
+            nb * 256,
+            "the pool grew to {} slots",
+            c.peak_cap
+        );
+        // the real model: 28 layers, 8 key/value heads of 128, f32
+        let real_slot = 28 * 2 * 8 * 128 * 4;
+        assert!(
+            c.peak_cap * real_slot < 600_000_000,
+            "over 0.6 GB on the real model"
+        );
+        assert!(
+            steps * nb > 4 * c.peak_cap,
+            "the unreclaimed pool would have been four times larger"
+        );
     }
 }

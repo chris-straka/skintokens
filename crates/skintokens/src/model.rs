@@ -35,13 +35,18 @@ pub struct Output {
     pub skeleton: tokenizer::Skeleton,
     /// (N, J) weights for the sampled points, upstream's `skin_pred`.
     pub skin: Vec<Vec<f32>>,
+    /// The skeleton was ended by the token budget, not by the model: it
+    /// may be missing parts.
+    pub at_limit: bool,
 }
 
 impl TokenRig {
     pub fn load(ckpt: &Path, device: &Device, dtype: DType) -> Result<Self> {
         let w = Weights::load_ckpt(ckpt, dtype, device)?;
-        let encoder = ShapeEncoder::load(&w.pp("mesh_encoder.encoder"), 8, 8, 8, false, 512).context("shape encoder")?;
-        let vae = SkinVae::load(&w.pp("vae.model"), 12, 2, 10, vec![8, 8, 8, 8, 8], 8).context("skin VAE")?;
+        let encoder = ShapeEncoder::load(&w.pp("mesh_encoder.encoder"), 8, 8, 8, false, 512)
+            .context("shape encoder")?;
+        let vae = SkinVae::load(&w.pp("vae.model"), 12, 2, 10, vec![8, 8, 8, 8, 8], 8)
+            .context("skin VAE")?;
         let llm = Qwen3::load(&w.pp("transformer"), Config::default()).context("Qwen3")?;
         let vocab = llm.vocab();
         let expect = tokenizer::VOCAB as usize + vae.fsq.codebook_size() + 1;
@@ -83,29 +88,51 @@ impl TokenRig {
     /// Decodes skin for `ids` (prompt + generated): (N, J) per sampled point.
     /// `None` when the token count does not cover every joint (upstream
     /// then has no skin either).
-    pub fn decode(&self, ids: &[u32], cond: &Tensor, cond_latents: &Tensor) -> Result<Option<(tokenizer::Skeleton, Vec<Vec<f32>>)>> {
-        let w = ids.iter().position(|&t| t == tokenizer::EOS).context("no skeleton eos in the generated tokens")?;
+    pub fn decode(
+        &self,
+        ids: &[u32],
+        cond: &Tensor,
+        cond_latents: &Tensor,
+    ) -> Result<Option<(tokenizer::Skeleton, Vec<Vec<f32>>)>> {
+        let w = ids
+            .iter()
+            .position(|&t| t == tokenizer::EOS)
+            .context("no skeleton eos in the generated tokens")?;
         let sk = tokenizer::detokenize(&ids[..=w])?;
         let j = sk.joints.len();
         let skin_ids = &ids[w + 1..];
         if skin_ids.len() < j * TOKENS_PER_SKIN {
             return Ok(None);
         }
-        let idx: Vec<i64> = skin_ids[..j * TOKENS_PER_SKIN].iter().map(|&t| t as i64 - tokenizer::VOCAB as i64).collect();
+        let idx: Vec<i64> = skin_ids[..j * TOKENS_PER_SKIN]
+            .iter()
+            .map(|&t| t as i64 - tokenizer::VOCAB as i64)
+            .collect();
         let queries = self.vae.decoder_queries(cond)?;
         let n = cond.dim(0)?;
         let mut cols: Vec<Tensor> = Vec::with_capacity(j);
         let batch = decode_batch(&self.device);
         let mut s = 0;
-        let jmax = std::env::var("SKINTOKENS_PARITY_JOINTS").ok().and_then(|v| v.parse().ok()).unwrap_or(j);
+        let jmax = std::env::var("SKINTOKENS_PARITY_JOINTS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(j);
         while s < j.min(jmax) {
             let b = batch.min(j.min(jmax) - s);
-            let z = self.vae.fsq.indices_to_codes(&idx[s * TOKENS_PER_SKIN..(s + b) * TOKENS_PER_SKIN], &self.device, self.dtype)?;
+            let z = self.vae.fsq.indices_to_codes(
+                &idx[s * TOKENS_PER_SKIN..(s + b) * TOKENS_PER_SKIN],
+                &self.device,
+                self.dtype,
+            )?;
             let z = z.reshape((b, TOKENS_PER_SKIN, ()))?;
             // Pull each batch back to the host: candle queues Metal work
             // without waiting, and 28 joints' (N, 3072) temporaries in
             // flight exhaust memory (seen: garbage weights, 60x slower).
-            cols.push(self.vae.decode(&z, cond_latents, &queries)?.to_device(&Device::Cpu)?);
+            cols.push(
+                self.vae
+                    .decode(&z, cond_latents, &queries)?
+                    .to_device(&Device::Cpu)?,
+            );
             self.device.synchronize()?;
             s += b;
         }
@@ -117,7 +144,13 @@ impl TokenRig {
 
     /// Full run on one normalized cloud. `start` = prompt tokens (class head,
     /// or a whole skeleton for skin-only).
-    pub fn run(&self, pts: &[[f32; 6]], start: &[u32], cfg: &GenConfig, seed: u64) -> Result<Output> {
+    pub fn run(
+        &self,
+        pts: &[[f32; 6]],
+        start: &[u32],
+        cfg: &GenConfig,
+        seed: u64,
+    ) -> Result<Output> {
         let t = std::time::Instant::now();
         let lap = |what: &str| {
             if std::env::var("SKINTOKENS_VERBOSE").is_ok() {
@@ -133,7 +166,16 @@ impl TokenRig {
         let (_, mc) = self.mesh_cond(&cond, &eq)?;
         let prompt = self.prompt(&mc, start)?;
         lap("encoders");
-        let g = Grammar { init: start.to_vec(), eos_lm: self.eos_lm, tokens_per_skin: TOKENS_PER_SKIN, full_skin: full_skin() };
+        let budget = cfg
+            .max_new_tokens
+            .unwrap_or(cfg.max_length.saturating_sub(prompt.dim(1)?));
+        let g = Grammar {
+            init: start.to_vec(),
+            eos_lm: self.eos_lm,
+            tokens_per_skin: TOKENS_PER_SKIN,
+            full_skin: full_skin(),
+            budget: Some(budget),
+        };
         let gen = if cfg.num_beams == 1 && !cfg.do_sample {
             generate::greedy(&self.llm, &prompt, cfg, &g)?
         } else {
@@ -142,10 +184,24 @@ impl TokenRig {
         let mut ids = start.to_vec();
         ids.extend(gen);
         lap(&format!("generated {} tokens", ids.len()));
+        if let Ok(p) = std::env::var("SKINTOKENS_DUMP_IDS") {
+            let t: Vec<i64> = ids.iter().map(|&x| x as i64).collect();
+            let _ = Tensor::from_vec(t.clone(), t.len(), &Device::Cpu).and_then(|t| t.write_npy(p));
+        }
+        // the skeleton ended because its skin would not have fitted otherwise
+        let at_limit = match ids.iter().position(|&t| t == tokenizer::EOS) {
+            Some(w) if w >= start.len() => g.out_of_room(&ids[start.len()..w]),
+            _ => false,
+        };
         let dec = self.decode(&ids, &cond, &cond_latents)?;
         lap("decoded skin");
         match dec {
-            Some((skeleton, skin)) => Ok(Output { ids, skeleton, skin }),
+            Some((skeleton, skin)) => Ok(Output {
+                ids,
+                skeleton,
+                skin,
+                at_limit,
+            }),
             None => bail!("the model did not produce skin tokens for every joint"),
         }
     }
@@ -154,7 +210,14 @@ impl TokenRig {
 /// Joints decoded per batch: each one holds a (N, 3072) feed-forward
 /// activation, so keep it small.
 fn decode_batch(dev: &Device) -> usize {
-    std::env::var("SKINTOKENS_DECODE_BATCH").ok().and_then(|v| v.parse().ok()).unwrap_or(if dev.is_metal() { 2 } else { 1 })
+    std::env::var("SKINTOKENS_DECODE_BATCH")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(if dev.is_metal() || dev.is_cuda() {
+            2
+        } else {
+            1
+        })
 }
 
 /// Whether the last joint's last skin token is generated (SKINTOKENS_FULL_SKIN
