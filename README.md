@@ -146,11 +146,21 @@ the body itself:
   motion on that rig's bones, so two rigs are bent the same way.
 
 `tools/creature_route.py MODEL.fbx OUT --name NAME` is the whole route
-(motionforge's `tripo_rig.py` for creatures): clean, `creature-rig rig`
-at three band widths, walk and trot for a four-legged body, weightforge's
-fix choosing per region among those widths and the model's own weights
-for this skeleton (`skintokens skin`), then the bend gate, the skeleton
-check and rfcheck. What was tried and what it scored:
+(motionforge's `tripo_rig.py` calls it for a creature): clean,
+`creature-rig rig` at three band widths, walk and trot for a four-legged
+body, weightforge's fix choosing per region among those widths and the
+model's own weights for this skeleton (`skintokens skin`), then the bend
+gate, the skeleton check and rfcheck. It also makes the model's own rig
+(`skintokens rig`, three seeds), judges it the same way, and keeps it
+instead where it is the better one, so a creature is never rigged worse
+than by the model alone.
+
+On 29 generated creatures (four-legged, two-legged, winged, cloaked, a
+hand, a fish), judged alike (the body's range of motion on each rig's own
+bones and its clips, times the skeleton check): 52.8 for the model's rig
+alone (best of three seeds), 72.6 for this route; rigs with no failing
+finding in either check 1 and 10; failing skeleton findings 39 and 10.
+What was tried and what it scored:
 [docs/creature-rig-log.md](docs/creature-rig-log.md).
 
 ## How it is built
