@@ -5,7 +5,8 @@ same inputs, same outputs, a different rig.
 
     python3 tools/creature_route.py MODEL.fbx OUT_DIR [--name NAME]
         [--class monster|hero|npc] [--tris N] [--height M] [--convention +x|...|none]
-        [--seed N] [--no-ml] [--no-clips] [--hint PREDICTED.glb] [--fix-args "..."] [--keep-tries]
+        [--seed N] [--no-ml] [--no-clips] [--no-predicted] [--hint PREDICTED.glb]
+        [--fix-args "..."] [--keep-tries]
 
 Steps, each a tool of its own:
 
@@ -22,6 +23,9 @@ Steps, each a tool of its own:
    unless `--no-ml`) and its own repairs; `weights check` is the gate.
 5. `creature-rig check`: the skeleton check (every limb has a chain,
    bones inside the body, sides match).
+   The model's own rig of the same mesh (`skintokens rig`) is judged the
+   same way and kept instead when it is the better of the two
+   (`report.json`: `picked`), unless `--no-predicted`.
 6. `rfcheck`: the export contract and the class's budget.
 
 OUT_DIR gets `<name>.glb`, `<name>.sheet.png` (before and after the fix,
@@ -93,6 +97,7 @@ def main():
     ap.add_argument("--seed", type=int, default=1, help="for the model's weights (the only step with chance in it)")
     ap.add_argument("--no-ml", action="store_true", help="don't offer the model's weights to the fix")
     ap.add_argument("--no-clips", action="store_true")
+    ap.add_argument("--no-predicted", action="store_true", help="don't also try the model's own rig (step 5b)")
     ap.add_argument("--hint", default="", help="a rig of this model from `skintokens rig`: knees and elbows go where its joints are")
     ap.add_argument("--no-fix", action="store_true")
     ap.add_argument("--fix-args", default="")
@@ -236,8 +241,83 @@ def main():
     except (OSError, ValueError, KeyError):
         t["skeleton"] = {"score": 0.0, "pass": False, "fails": ["skeleton check did not run: " + tail(r["err"], 120)]}
 
+    # 5b. The model's own rig of the same mesh, judged the same way (the
+    # body's range of motion on its bones, the skeleton check): it is kept
+    # instead when it is the better one, so a creature is never rigged
+    # worse than by the model alone.
+    def skeleton_of(glb, out_json, rom_out=None, sheet=None):
+        cmd = [cr, "check", glb, "--json", out_json]
+        if rom_out:
+            cmd += ["--rom", rom_out]
+        if sheet:
+            cmd += ["--sheet", sheet]
+        r = run(cmd)
+        try:
+            with open(out_json) as f:
+                s = json.load(f)
+            return {"score": s["score"], "pass": s["pass"],
+                    "fails": [f"{x['code']} {x['part']}: {x['detail']}" for x in s["findings"] if x["severity"] == "fail"]}
+        except (OSError, ValueError, KeyError):
+            return {"score": 0.0, "pass": False, "fails": ["skeleton check did not run: " + tail(r["err"], 120)]}
+
+    def rank(x):
+        """Passes both checks first, then the creature score (bend x skeleton)."""
+        return (bool(x["pass"] and x["skeleton"]["pass"]), x["score"] * x["skeleton"]["score"] / 100.0)
+
+    picked = {"glb": fixed, "rom": rom, "sheet": base + ".sheet.png", "skeleton_png": base + ".skeleton.png", "which": "body"}
+    sk = None
+    if not a.no_predicted:
+        for p in [a.skintokens, os.environ.get("SKINTOKENS_BIN"), shutil.which("skintokens"), os.path.join(repo, "target/release/skintokens")]:
+            if p and os.path.exists(p):
+                sk = p
+                break
+    if sk:
+        pb = base + ".pred"
+        p = {"rigged": False}
+        t["predicted"] = p
+        # our rigged file as the input: it is the same mesh, already turned to face forward
+        r = run([sk, "rig", rig, pb + ".rig.glb", "--report", pb + ".skintokens.json", "--class", "quadruped",
+                 "--seed", str(a.seed)], timeout=3600)
+        ok = r["code"] == 0 and os.path.exists(pb + ".rig.glb")
+        if ok:
+            r = run([mf, "standardize", "--input", pb + ".rig.glb", "--output", pb + ".std.glb", "--class", "quadruped",
+                     "--report", pb + ".standardize.json"])
+            ok = r["code"] == 0 and os.path.exists(pb + ".std.glb")
+        if not ok:
+            p["error"] = tail(r["err"] or r["out"])
+        else:
+            p["rigged"] = True
+            pposed = pb + ".std.glb"
+            if info["kind"] == "four-legged" and not a.no_clips:
+                r = run([mf, "creature-profile", "--rig", pposed, "--output", pb + ".creature.json", "--clean-glb",
+                         pb + ".clean.glb", "--report", pb + ".profile.json", "--name", name])
+                if r["code"] == 0:
+                    r = run([mf, "creature-gait", "--creature", pb + ".creature.json", "--glb-in", pb + ".clean.glb",
+                             "--glb-out", pb + ".moving.glb", "--rom", pb + ".gait_rom.ron"])
+                    if r["code"] == 0 and os.path.exists(pb + ".moving.glb"):
+                        pposed = pb + ".moving.glb"
+            p["clips"] = pposed.endswith(".moving.glb")
+            skeleton_of(pposed, pb + ".skeleton.json", rom_out=pb + ".rom.ron")
+            praw = check(wf, pposed, pb + ".rom.ron")
+            if a.no_fix or praw["pass"]:
+                shutil.copyfile(pposed, pb + ".glb")
+            else:
+                run([wf, "fix", pposed, "--out", pb + ".glb", "--sheet", pb + ".sheet.png", "--poses", pb + ".rom.ron"]
+                    + shlex.split(a.fix_args), timeout=a.fix_timeout)
+                if not os.path.exists(pb + ".glb"):
+                    shutil.copyfile(pposed, pb + ".glb")
+            pfinal = check(wf, pb + ".glb", pb + ".rom.ron")
+            p.update(raw=praw["score"], score=pfinal["score"], fails=pfinal["fails"])
+            p["pass"] = pfinal["pass"]
+            p["skeleton"] = skeleton_of(pb + ".glb", pb + ".skeleton.json", sheet=pb + ".skeleton.png")
+            if rank(p) > rank(t):
+                picked = {"glb": pb + ".glb", "rom": pb + ".rom.ron", "sheet": pb + ".sheet.png",
+                          "skeleton_png": pb + ".skeleton.png", "which": "predicted"}
+    t["picked"] = picked["which"]
+    best = t["predicted"] if picked["which"] == "predicted" else t
+
     # 6. Contract.
-    r = run([rf, "--json", "--class", a.klass, fixed])
+    r = run([rf, "--json", "--class", a.klass, picked["glb"]])
     t["contract"] = r["code"] == 0
     try:
         d = json.loads(r["out"])
@@ -247,25 +327,30 @@ def main():
     except ValueError:
         t["rfcheck"] = [tail(r["out"], 120)]
 
-    shutil.copyfile(fixed, os.path.join(a.out, name + ".glb"))
-    shutil.copyfile(rom, os.path.join(a.out, name + ".rom.ron"))
-    shutil.copyfile(base + ".skeleton.png", os.path.join(a.out, name + ".skeleton.png"))
+    shutil.copyfile(picked["glb"], os.path.join(a.out, name + ".glb"))
+    shutil.copyfile(picked["rom"], os.path.join(a.out, name + ".rom.ron"))
+    if os.path.exists(picked["skeleton_png"]):
+        shutil.copyfile(picked["skeleton_png"], os.path.join(a.out, name + ".skeleton.png"))
     sheet = os.path.join(a.out, name + ".sheet.png")
-    if os.path.exists(base + ".sheet.png"):
-        shutil.copyfile(base + ".sheet.png", sheet)
+    if os.path.exists(picked["sheet"]):
+        shutil.copyfile(picked["sheet"], sheet)
     else:
-        run([wf, "sheet", fixed, "--out", sheet, "--poses", rom])
+        run([wf, "sheet", picked["glb"], "--out", sheet, "--poses", picked["rom"]])
     report["best_seed"] = a.seed
-    report["ok"] = bool(t["pass"] and t["skeleton"]["pass"] and t["contract"])
+    report["ok"] = bool(best["pass"] and best["skeleton"]["pass"] and t["contract"])
     save()
     if not a.keep_tries:
         for f in os.listdir(a.out):
             if f.startswith("try.") and f.endswith(".glb"):
                 os.remove(os.path.join(a.out, f))
-    why = t["fails"][:4] + t["skeleton"]["fails"][:3] + ([] if t["contract"] else t["rfcheck"][:3])
-    print(f"{name}: bend {raw['score']} -> {t['score']} ({'passes' if t['pass'] else str(len(t['fails'])) + ' failing'}), "
-          f"skeleton {t['skeleton']['score']}, contract {'clean' if t['contract'] else 'broken'}"
-          f"{', with clips' if t['clips'] else ''}: "
+    why = best["fails"][:4] + best["skeleton"]["fails"][:3] + ([] if t["contract"] else t["rfcheck"][:3])
+    other = ""
+    if t.get("predicted", {}).get("rigged"):
+        o = t["predicted"] if picked["which"] == "body" else t
+        other = f" [kept the {'body-read' if picked['which'] == 'body' else 'predicted'} rig; the other: bend {o['score']}, skeleton {o['skeleton']['score']}]"
+    print(f"{name}: bend {best['score']} ({'passes' if best['pass'] else str(len(best['fails'])) + ' failing'}), "
+          f"skeleton {best['skeleton']['score']}, contract {'clean' if t['contract'] else 'broken'}"
+          f"{', with clips' if best.get('clips') else ''}{other}: "
           f"{'PASSES' if report['ok'] else 'FAILS: ' + '; '.join(why)} -> {os.path.join(a.out, name + '.glb')}")
     return 0 if report["ok"] else 1
 
