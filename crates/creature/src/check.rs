@@ -111,6 +111,7 @@ pub fn read_rig(g: &Glb) -> anyhow::Result<Vec<Bone>> {
             limb: None,
             trunk: false,
             index: 0,
+            inside: false,
             radius: 0.0,
         })
         .collect())
@@ -181,10 +182,13 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
         let mut arc = vec![0.0f64; an.limbs.len() + 1];
         for &p in &pts {
             let mut best: Option<(f64, usize, f64)> = None;
+            // the nearest line among those the point is within reach of
+            // (nearest in plain distance: a bone on a thin limb's own centre
+            // line is that limb's, however thick the limb beside it)
             let (d, s) = line_dist(p, &an.spine);
             let r = roles::at(&an.spine, &an.spine_radius, s).1;
             if d <= reach(r) {
-                best = Some((d / reach(r), 0, s));
+                best = Some((d, 0, s));
             }
             for (li, l) in an.limbs.iter().enumerate() {
                 let (d, s) = line_dist(p, &l.line);
@@ -194,8 +198,8 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
                     continue;
                 }
                 let r = l.at(s).1;
-                if d <= reach(r) && best.is_none_or(|b| d / reach(r) < b.0) {
-                    best = Some((d / reach(r), li + 1, s));
+                if d <= reach(r) && best.is_none_or(|b| d < b.0) {
+                    best = Some((d, li + 1, s));
                 }
             }
             if let Some((_, w, s)) = best {
@@ -210,6 +214,7 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
                 b.trunk = true;
             } else {
                 b.limb = Some(w - 1);
+                b.inside = along[bi] < an.limbs[w - 1].emerge;
             }
         }
     }

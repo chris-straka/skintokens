@@ -134,20 +134,21 @@ fn a_hint_moves_the_knees() {
     let leg = an.limbs.iter().position(|l| l.name == "leg_front.L").unwrap();
     let l = &an.limbs[leg];
     let own = l.length - l.emerge;
-    // a hint with joints at 30% and 60% of the way down that leg
+    // a hint with joints at 30% and 55% of the way down that leg (legs this
+    // short have room for one of them between the hip and the foot: the knee)
     let at = |f: f64| l.at(l.emerge + own * f).0;
     // (on both front legs: the other side's are these mirrored)
     let mut hint: Vec<crate::skeleton::Bone> = vec![];
-    for &f in &[0.3, 0.6] {
+    for &f in &[0.3, 0.55] {
         for side in [1.0, -1.0] {
             let p = at(f);
             let q = at(f + 0.1);
-            hint.push(crate::skeleton::Bone { name: "j".into(), parent: None, head: [side * p[0], p[1], p[2]], tail: [side * q[0], q[1], q[2]], limb: None, trunk: false, index: 0, radius: 0.0 });
+            hint.push(crate::skeleton::Bone { name: "j".into(), parent: None, head: [side * p[0], p[1], p[2]], tail: [side * q[0], q[1], q[2]], limb: None, trunk: false, index: 0, inside: false, radius: 0.0 });
         }
     }
     let sk = Skeleton::fit_with(&body, &an, Some(&hint));
     let heads: Vec<f64> = sk.bones.iter().filter(|b| b.limb == Some(leg)).map(|b| b.head[1]).collect();
-    for want in [at(0.3)[1], at(0.6)[1]] {
+    for want in [at(0.3)[1]] {
         assert!(heads.iter().any(|h| (h - want).abs() < 0.03), "no joint at height {want}: {heads:?}");
     }
     // the right leg gets the same joints as the left

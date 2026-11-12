@@ -36,6 +36,17 @@ pub fn rom(an: &Anatomy, sk: &Skeleton) -> String {
         v.sort_by_key(|&b| sk.bones[b].index);
         v
     };
+    // the bones of a limb that are out of the body: the first is the upper
+    // leg or arm, the next the lower. (A shoulder or hip bone inside the
+    // body comes before them in the chain and is what swings the limb.)
+    let outer = |c: &[usize]| -> Vec<usize> {
+        let v: Vec<usize> = c.iter().copied().filter(|&b| !sk.bones[b].inside).collect();
+        if v.is_empty() {
+            c.to_vec()
+        } else {
+            v
+        }
+    };
     let level = !an.upright;
     let mut crouch: Vec<(usize, String)> = vec![];
     for (li, l) in an.limbs.iter().enumerate() {
@@ -51,45 +62,48 @@ pub fn rom(an: &Anatomy, sk: &Skeleton) -> String {
         };
         match l.role {
             Role::Leg if level => {
+                let o = outer(&c);
                 poses.push((format!("{tag}_forward"), vec![(c[0], bend("Forward", 35.0))]));
                 poses.push((format!("{tag}_back"), vec![(c[0], bend("Back", 35.0))]));
                 poses.push((format!("{tag}_out"), vec![(c[0], bend(out, 20.0))]));
-                if c.len() > 2 {
+                if o.len() > 2 {
                     let (a, b) = if l.front { ("Back", "Forward") } else { ("Forward", "Back") };
-                    poses.push((format!("{tag}_fold"), vec![(c[1], bend(a, 45.0)), (c[2], bend(b, 60.0))]));
-                    crouch.push((c[1], bend(a, 27.0)));
-                    crouch.push((c[2], bend(b, 36.0)));
-                } else if c.len() == 2 {
+                    poses.push((format!("{tag}_fold"), vec![(o[1], bend(a, 45.0)), (o[2], bend(b, 60.0))]));
+                    crouch.push((o[1], bend(a, 27.0)));
+                    crouch.push((o[2], bend(b, 36.0)));
+                } else if o.len() == 2 {
                     let a = if l.front { "Back" } else { "Forward" };
-                    poses.push((format!("{tag}_fold"), vec![(c[1], bend(a, 45.0))]));
-                    crouch.push((c[1], bend(a, 27.0)));
+                    poses.push((format!("{tag}_fold"), vec![(o[1], bend(a, 45.0))]));
+                    crouch.push((o[1], bend(a, 27.0)));
                 }
-                if c.len() > 3 {
-                    poses.push((format!("{tag}_paw"), vec![(c[c.len() - 2], bend("Forward", 30.0))]));
+                if o.len() > 3 {
+                    poses.push((format!("{tag}_paw"), vec![(o[o.len() - 2], bend("Forward", 30.0))]));
                 }
             }
             Role::Leg => {
+                let o = outer(&c);
                 poses.push((format!("{tag}_forward"), vec![(c[0], bend("Forward", 60.0))]));
                 poses.push((format!("{tag}_back"), vec![(c[0], bend("Back", 30.0))]));
                 poses.push((format!("{tag}_out"), vec![(c[0], bend(out, 35.0))]));
-                if c.len() > 1 {
-                    poses.push((format!("{tag}_knee"), vec![(c[1], bend("Back", 90.0))]));
-                    crouch.push((c[0], bend("Forward", 40.0)));
-                    crouch.push((c[1], bend("Back", 70.0)));
+                if o.len() > 1 {
+                    poses.push((format!("{tag}_knee"), vec![(o[1], bend("Back", 90.0))]));
+                    crouch.push((o[0], bend("Forward", 40.0)));
+                    crouch.push((o[1], bend("Back", 70.0)));
                 }
-                if c.len() > 2 {
-                    poses.push((format!("{tag}_foot"), vec![(c[c.len() - 1], bend("Up", 25.0))]));
+                if o.len() > 2 {
+                    poses.push((format!("{tag}_foot"), vec![(o[o.len() - 1], bend("Up", 25.0))]));
                 }
             }
             Role::Arm => {
+                let o = outer(&c);
                 poses.push((format!("{tag}_forward"), vec![(c[0], bend("Forward", 60.0))]));
                 poses.push((format!("{tag}_back"), vec![(c[0], bend("Back", 35.0))]));
                 poses.push((format!("{tag}_out"), vec![(c[0], bend(out, 50.0))]));
-                if c.len() > 1 {
-                    poses.push((format!("{tag}_elbow"), vec![(c[1], bend("Forward", 80.0))]));
+                if o.len() > 1 {
+                    poses.push((format!("{tag}_elbow"), vec![(o[1], bend("Forward", 80.0))]));
                 }
-                if c.len() > 2 {
-                    poses.push((format!("{tag}_hand"), vec![(c[c.len() - 1], bend("Forward", 40.0))]));
+                if o.len() > 2 {
+                    poses.push((format!("{tag}_hand"), vec![(o[o.len() - 1], bend("Forward", 40.0))]));
                 }
             }
             Role::Head => {

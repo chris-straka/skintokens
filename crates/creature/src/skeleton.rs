@@ -23,6 +23,9 @@ pub struct Bone {
     pub trunk: bool,
     /// Place in its chain, from the body outward (0 first).
     pub index: usize,
+    /// A limb's bone that lies inside the body the limb grows from (a
+    /// shoulder, a hip): it swings the limb, it is not the upper arm.
+    pub inside: bool,
     /// Thickness of the body at the head (inscribed radius).
     pub radius: f64,
 }
@@ -109,7 +112,7 @@ fn limb_joints(l: &Limb, body: &Body, kind: Kind) -> Vec<f64> {
     // shoulder or a hip joint is.)
     let upper = || -> Vec<f64> {
         let inside = l.emerge;
-        if inside >= 0.06 * size && own > 0.0 {
+        if inside >= 0.1 * size && own > 0.0 {
             vec![-0.5 * inside / own, 0.0]
         } else {
             vec![0.0]
@@ -270,11 +273,13 @@ impl Skeleton {
                 limb: None,
                 trunk: true,
                 index: k,
+                inside: false,
                 radius: thick(head),
             });
         }
         // --- limbs: joint fractions, the same on a left and its right
         let mut fracs: Vec<Vec<f64>> = an.limbs.iter().map(|l| limb_joints(l, body, an.kind)).collect();
+        let hinted_fracs = |fracs: &mut Vec<Vec<f64>>| {
         if let Some(h) = hint {
             for (li, l) in an.limbs.iter().enumerate() {
                 if l.role != Role::Leg && l.role != Role::Arm {
@@ -295,6 +300,30 @@ impl Skeleton {
                     fracs[li] = v;
                 }
             }
+        }
+        };
+        hinted_fracs(&mut fracs);
+        // no bone shorter than 6% of the body's longest side: a short leg
+        // gets fewer bones, not small ones. The first joint stays; so does a
+        // leg's foot joint (the joint before it goes instead).
+        for (li, l) in an.limbs.iter().enumerate() {
+            let own = l.length - l.emerge;
+            let min = 0.06 * body.size / own.max(1e-9);
+            let f = &fracs[li];
+            let mut kept: Vec<f64> = vec![f[0]];
+            for (k, &x) in f.iter().enumerate().skip(1) {
+                let last = *kept.last().unwrap();
+                if x - last >= min {
+                    kept.push(x);
+                } else if l.role == Role::Leg && k + 1 == f.len() && kept.len() > 1 {
+                    *kept.last_mut().unwrap() = x;
+                }
+            }
+            // the last bone, to the tip, has to be a bone too
+            while kept.len() > 1 && 1.0 - *kept.last().unwrap() < 0.5 * min {
+                kept.pop();
+            }
+            fracs[li] = kept;
         }
         for i in 0..an.limbs.len() {
             for j in i + 1..an.limbs.len() {
@@ -347,7 +376,7 @@ impl Skeleton {
                 } else {
                     format!("DEF-{stem}.{:03}{side}", k + 1)
                 };
-                bones.push(Bone { name, parent: Some(prev), head, tail, limb: Some(li), trunk: false, index: k, radius: thick(head) });
+                bones.push(Bone { name, parent: Some(prev), head, tail, limb: Some(li), trunk: false, index: k, inside: fk < -1e-9, radius: thick(head) });
                 prev = bones.len() - 1;
             }
         }
