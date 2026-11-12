@@ -5,7 +5,7 @@ same inputs, same outputs, a different rig.
 
     python3 tools/creature_route.py MODEL.fbx OUT_DIR [--name NAME]
         [--class monster|hero|npc] [--tris N] [--height M] [--convention +x|...|none]
-        [--seed N] [--no-ml] [--no-clips] [--no-predicted] [--hint PREDICTED.glb]
+        [--seed N] [--no-ml] [--no-clips] [--no-predicted] [--predicted-seeds 1,2,3] [--hint PREDICTED.glb]
         [--fix-args "..."] [--keep-tries]
 
 Steps, each a tool of its own:
@@ -23,9 +23,10 @@ Steps, each a tool of its own:
    unless `--no-ml`) and its own repairs; `weights check` is the gate.
 5. `creature-rig check`: the skeleton check (every limb has a chain,
    bones inside the body, sides match).
-   The model's own rig of the same mesh (`skintokens rig`) is judged the
-   same way and kept instead when it is the better of the two
-   (`report.json`: `picked`), unless `--no-predicted`.
+   The model's own rig of the same mesh (`skintokens rig`, three seeds:
+   `--predicted-seeds`) is judged the same way and the best of them kept
+   instead when it is better than ours (`report.json`: `picked`), unless
+   `--no-predicted`.
 6. `rfcheck`: the export contract and the class's budget.
 
 OUT_DIR gets `<name>.glb`, `<name>.sheet.png` (before and after the fix,
@@ -98,6 +99,7 @@ def main():
     ap.add_argument("--no-ml", action="store_true", help="don't offer the model's weights to the fix")
     ap.add_argument("--no-clips", action="store_true")
     ap.add_argument("--no-predicted", action="store_true", help="don't also try the model's own rig (step 5b)")
+    ap.add_argument("--predicted-seeds", default="1,2,3", help="seeds the model's own rig is tried on")
     ap.add_argument("--hint", default="", help="a rig of this model from `skintokens rig`: knees and elbows go where its joints are")
     ap.add_argument("--no-fix", action="store_true")
     ap.add_argument("--fix-args", default="")
@@ -277,20 +279,23 @@ def main():
                 sk = p
                 break
     if sk:
-        pb = base + ".pred"
-        p = {"rigged": False}
-        t["predicted"] = p
-        # our rigged file as the input: it is the same mesh, already turned to face forward
-        r = run([sk, "rig", rig, pb + ".rig.glb", "--report", pb + ".skintokens.json", "--class", "quadruped",
-                 "--seed", str(a.seed)], timeout=3600)
-        ok = r["code"] == 0 and os.path.exists(pb + ".rig.glb")
-        if ok:
-            r = run([mf, "standardize", "--input", pb + ".rig.glb", "--output", pb + ".std.glb", "--class", "quadruped",
-                     "--report", pb + ".standardize.json"])
-            ok = r["code"] == 0 and os.path.exists(pb + ".std.glb")
-        if not ok:
-            p["error"] = tail(r["err"] or r["out"])
-        else:
+        tries = []
+        t["predicted_tries"] = tries
+        for seed in [int(x) for x in a.predicted_seeds.split(",") if x]:
+            pb = f"{base}.pred{seed}"
+            p = {"seed": seed, "rigged": False}
+            tries.append(p)
+            # our rigged file as the input: it is the same mesh, already turned to face forward
+            r = run([sk, "rig", rig, pb + ".rig.glb", "--report", pb + ".skintokens.json", "--class", "quadruped",
+                     "--seed", str(seed)], timeout=3600)
+            ok = r["code"] == 0 and os.path.exists(pb + ".rig.glb")
+            if ok:
+                r = run([mf, "standardize", "--input", pb + ".rig.glb", "--output", pb + ".std.glb", "--class",
+                         "quadruped", "--report", pb + ".standardize.json"])
+                ok = r["code"] == 0 and os.path.exists(pb + ".std.glb")
+            if not ok:
+                p["error"] = tail(r["err"] or r["out"])
+                continue
             p["rigged"] = True
             pposed = pb + ".std.glb"
             if info["kind"] == "four-legged" and not a.no_clips:
@@ -315,9 +320,16 @@ def main():
             p.update(raw=praw["score"], score=pfinal["score"], fails=pfinal["fails"])
             p["pass"] = pfinal["pass"]
             p["skeleton"] = skeleton_of(pb + ".glb", pb + ".skeleton.json", sheet=pb + ".skeleton.png")
+            save()
+        good = [p for p in tries if p.get("rigged")]
+        if good:
+            p = max(good, key=lambda x: (rank(x), -x["seed"]))
+            t["predicted"] = p
+            pb = f"{base}.pred{p['seed']}"
             if rank(p) > rank(t):
                 picked = {"glb": pb + ".glb", "rom": pb + ".rom.ron", "sheet": pb + ".sheet.png",
                           "skeleton_png": pb + ".skeleton.png", "which": "predicted"}
+                report["best_seed"] = p["seed"]
     t["picked"] = picked["which"]
     best = t["predicted"] if picked["which"] == "predicted" else t
 
@@ -341,7 +353,7 @@ def main():
         shutil.copyfile(picked["sheet"], sheet)
     else:
         run([wf, "sheet", picked["glb"], "--out", sheet, "--poses", picked["rom"]])
-    report["best_seed"] = a.seed
+    report.setdefault("best_seed", a.seed)
     report["ok"] = bool(best["pass"] and best["skeleton"]["pass"] and t["contract"])
     save()
     if not a.keep_tries:
