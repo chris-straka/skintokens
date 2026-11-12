@@ -174,7 +174,9 @@ pub fn skin(body: &Body, sk: &Skeleton, verts: &[V3], tris: &[[u32; 3]], blend: 
         let v = t.map(|i| id[i as usize]);
         for k in 0..3 {
             let (x, y) = (v[k], v[(k + 1) % 3]);
-            if x != y {
+            // only along short edges: a long one joins places that have
+            // nothing to do with each other's bones
+            if x != y && geom::norm(geom::sub(reps[x as usize], reps[y as usize])) <= 4.0 * cell {
                 nbrs[x as usize].push(y);
                 nbrs[y as usize].push(x);
             }

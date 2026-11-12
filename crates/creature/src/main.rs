@@ -7,6 +7,8 @@ mod poses;
 mod roles;
 mod skeleton;
 mod solid;
+#[cfg(test)]
+mod tests;
 mod weights;
 
 use std::path::{Path, PathBuf};

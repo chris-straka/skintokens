@@ -304,7 +304,7 @@ impl Solid {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// A closed box from `lo` to `hi`, faces outward.
