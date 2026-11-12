@@ -48,7 +48,7 @@ environment error (no report). Inputs are never modified. One inference runs
 at a time per machine (a file lock in $SKINTOKENS_HOME).
 
 Environment: SKINTOKENS_HOME (default ~/.local/share/skintokens),
-SKINTOKENS_CKPT (path to grpo_1400.ckpt), SKINTOKENS_DEVICE=cpu|metal,
+SKINTOKENS_CKPT (path to grpo_1400.ckpt), SKINTOKENS_DEVICE=cpu|metal|cuda,
 SKINTOKENS_DTYPE=f32|bf16 (default f32), SKINTOKENS_TRANSFER (see --transfer).";
 
 /// Exit 2: nothing ran, no report.
@@ -84,7 +84,9 @@ impl Args {
                         Some(x) => x,
                         None => {
                             i += 1;
-                            v.get(i).cloned().ok_or_else(|| Usage(format!("--{k} needs a value")))?
+                            v.get(i)
+                                .cloned()
+                                .ok_or_else(|| Usage(format!("--{k} needs a value")))?
                         }
                     };
                     flags.push((k, val));
@@ -99,14 +101,21 @@ impl Args {
         Ok(Args { pos, flags })
     }
     fn get(&self, k: &str) -> Option<&str> {
-        self.flags.iter().rev().find(|(x, _)| x == k).map(|(_, v)| v.as_str())
+        self.flags
+            .iter()
+            .rev()
+            .find(|(x, _)| x == k)
+            .map(|(_, v)| v.as_str())
     }
 }
 
 fn home() -> PathBuf {
     std::env::var_os("SKINTOKENS_HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/share/skintokens"))
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+                .join(".local/share/skintokens")
+        })
 }
 
 /// The official checkpoint: $SKINTOKENS_CKPT, $SKINTOKENS_HOME/weights, or
@@ -117,12 +126,19 @@ fn find_ckpt() -> Vec<PathBuf> {
         c.push(PathBuf::from(p));
     }
     c.push(home().join("weights/grpo_1400.ckpt"));
-    let hf = std::env::var_os("HF_HUB_CACHE").map(PathBuf::from).unwrap_or_else(|| {
-        std::env::var_os("HF_HOME")
-            .map(|h| PathBuf::from(h).join("hub"))
-            .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".cache/huggingface/hub"))
-    });
-    c.push(hf.join(format!("models--VAST-AI--SkinTokens/snapshots/{HF_REV}/{CKPT_REL}")));
+    let hf = std::env::var_os("HF_HUB_CACHE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::var_os("HF_HOME")
+                .map(|h| PathBuf::from(h).join("hub"))
+                .unwrap_or_else(|| {
+                    PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+                        .join(".cache/huggingface/hub")
+                })
+        });
+    c.push(hf.join(format!(
+        "models--VAST-AI--SkinTokens/snapshots/{HF_REV}/{CKPT_REL}"
+    )));
     c
 }
 
@@ -149,13 +165,27 @@ fn load_model() -> Result<model::TokenRig, Usage> {
 fn lock() -> Result<std::fs::File, Usage> {
     let h = home();
     std::fs::create_dir_all(&h).map_err(|e| Usage(format!("{}: {e}", h.display())))?;
-    let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(h.join(".lock"))?;
+    let f = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(h.join(".lock"))?;
     f.lock()?;
     Ok(f)
 }
 
-fn write_report(path: &Path, outputs: &[&Path], stage: &str, ok: bool, details: Value, reason: Option<String>) -> Result<()> {
-    let dir = std::path::absolute(path)?.parent().map(Path::to_path_buf).unwrap_or_default();
+fn write_report(
+    path: &Path,
+    outputs: &[&Path],
+    stage: &str,
+    ok: bool,
+    details: Value,
+    reason: Option<String>,
+) -> Result<()> {
+    let dir = std::path::absolute(path)?
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
     std::fs::create_dir_all(&dir)?;
     let rel = |f: &Path| -> String {
         let a = std::path::absolute(f).unwrap_or(f.to_path_buf());
@@ -193,7 +223,10 @@ fn pathdiff(p: &Path, base: &Path) -> String {
 
 fn report_path(a: &Args, out: &Path) -> PathBuf {
     a.get("report").map(PathBuf::from).unwrap_or_else(|| {
-        std::path::absolute(out).ok().and_then(|p| p.parent().map(|d| d.join("result.json"))).unwrap_or_else(|| PathBuf::from("result.json"))
+        std::path::absolute(out)
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("result.json")))
+            .unwrap_or_else(|| PathBuf::from("result.json"))
     })
 }
 
@@ -206,13 +239,23 @@ fn read_input(p: &str) -> Result<glb::Glb, Usage> {
 }
 
 fn seed(a: &Args) -> Result<u64, Usage> {
-    a.get("seed").unwrap_or("0").parse::<u64>().map_err(|_| Usage("--seed must be a non-negative integer".into()))
+    a.get("seed")
+        .unwrap_or("0")
+        .parse::<u64>()
+        .map_err(|_| Usage("--seed must be a non-negative integer".into()))
 }
 
 fn transfer(a: &Args) -> Result<mesh::Transfer, Usage> {
     let env = std::env::var("SKINTOKENS_TRANSFER").ok();
-    let t = a.get("transfer").or(env.as_deref()).unwrap_or(mesh::Transfer::DEFAULT.name());
-    mesh::Transfer::parse(t).ok_or_else(|| Usage(format!("--transfer must be straight, facing or surface (got {t})")))
+    let t = a
+        .get("transfer")
+        .or(env.as_deref())
+        .unwrap_or(mesh::Transfer::DEFAULT.name());
+    mesh::Transfer::parse(t).ok_or_else(|| {
+        Usage(format!(
+            "--transfer must be straight, facing or surface (got {t})"
+        ))
+    })
 }
 
 fn base_details(seed: u64) -> Value {
@@ -229,10 +272,14 @@ fn merge(a: &mut Value, b: Value) {
 
 fn cmd_rig(v: &[String]) -> Result<u8, Usage> {
     let a = Args::parse(v, &["report", "class", "seed", "transfer"], &[])?;
-    let [inp, out] = &a.pos[..] else { return Err(Usage("rig needs IN.glb OUT.glb".into())) };
+    let [inp, out] = &a.pos[..] else {
+        return Err(Usage("rig needs IN.glb OUT.glb".into()));
+    };
     let cls = a.get("class").unwrap_or("humanoid");
     if !["humanoid", "quadruped", "custom"].contains(&cls) {
-        return Err(Usage(format!("--class must be humanoid, quadruped or custom (got {cls})")));
+        return Err(Usage(format!(
+            "--class must be humanoid, quadruped or custom (got {cls})"
+        )));
     }
     let seed = seed(&a)?;
     let how = transfer(&a)?;
@@ -244,9 +291,23 @@ fn cmd_rig(v: &[String]) -> Result<u8, Usage> {
     let model = load_model()?;
     let mut details = base_details(seed);
     details["class"] = json!(cls);
-    match pipeline::rig(&g, &model, &generate::GenConfig::default(), seed, cls == "humanoid", how) {
+    match pipeline::rig(
+        &g,
+        &model,
+        &generate::GenConfig::default(),
+        seed,
+        cls == "humanoid",
+        how,
+    ) {
         Err(e) => {
-            write_report(&report, &[], "rig", false, details, Some(format!("model run failed: {e:#}")))?;
+            write_report(
+                &report,
+                &[],
+                "rig",
+                false,
+                details,
+                Some(format!("model run failed: {e:#}")),
+            )?;
             Ok(1)
         }
         Ok(r) => {
@@ -254,13 +315,19 @@ fn cmd_rig(v: &[String]) -> Result<u8, Usage> {
             merge(&mut details, r.details);
             details["seconds"] = json!((t0.elapsed().as_secs_f64() * 10.0).round() / 10.0);
             if !r.missing.is_empty() {
-                let why = format!("skeleton is not a humanoid TokenRig could name (missing {})", r.missing.join(", "));
+                let why = format!(
+                    "skeleton is not a humanoid TokenRig could name (missing {})",
+                    r.missing.join(", ")
+                );
                 write_report(&report, &[], "rig", false, details, Some(why))?;
                 return Ok(1);
             }
             r.glb.write(&out)?;
             write_report(&report, &[&out], "rig", true, details.clone(), None)?;
-            println!("skintokens rig: ok ({joints} joints, {} s)", details["seconds"]);
+            println!(
+                "skintokens rig: ok ({joints} joints, {} s)",
+                details["seconds"]
+            );
             Ok(0)
         }
     }
@@ -268,7 +335,9 @@ fn cmd_rig(v: &[String]) -> Result<u8, Usage> {
 
 fn cmd_skin(v: &[String]) -> Result<u8, Usage> {
     let a = Args::parse(v, &["report", "seed", "transfer"], &[])?;
-    let [inp, out] = &a.pos[..] else { return Err(Usage("skin needs IN.glb OUT.glb".into())) };
+    let [inp, out] = &a.pos[..] else {
+        return Err(Usage("skin needs IN.glb OUT.glb".into()));
+    };
     let seed = seed(&a)?;
     let how = transfer(&a)?;
     let g = read_input(inp)?;
@@ -299,12 +368,18 @@ fn cmd_skin(v: &[String]) -> Result<u8, Usage> {
 
 fn cmd_joints(v: &[String]) -> Result<u8, Usage> {
     let a = Args::parse(v, &["subject"], &[])?;
-    let [inp, out] = &a.pos[..] else { return Err(Usage("joints needs IN.glb OUT.json".into())) };
+    let [inp, out] = &a.pos[..] else {
+        return Err(Usage("joints needs IN.glb OUT.json".into()));
+    };
     let g = read_input(inp)?;
     let src = std::path::absolute(inp)?.to_string_lossy().into_owned();
-    let doc = pipeline::joints_doc(&g, a.get("subject"), &src).map_err(|e| Usage(format!("{inp}: {e:#}")))?;
+    let doc = pipeline::joints_doc(&g, a.get("subject"), &src)
+        .map_err(|e| Usage(format!("{inp}: {e:#}")))?;
     std::fs::write(out, serde_json::to_string_pretty(&doc)? + "\n")?;
-    println!("skintokens joints: {} joints -> {out}", doc["joints"].as_array().map(|j| j.len()).unwrap_or(0));
+    println!(
+        "skintokens joints: {} joints -> {out}",
+        doc["joints"].as_array().map(|j| j.len()).unwrap_or(0)
+    );
     Ok(0)
 }
 
@@ -314,11 +389,18 @@ fn cmd_doctor() -> Result<u8, Usage> {
         Some(p) => println!("ok  weights {}", p.display()),
         None => {
             ok = false;
-            println!("MISSING weights grpo_1400.ckpt (looked in: {})", find_ckpt().iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "));
+            println!(
+                "MISSING weights grpo_1400.ckpt (looked in: {})",
+                find_ckpt()
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
         }
     }
     match skintokens_nn::pick_device() {
-        Ok(d) => println!("ok  device {}", if d.is_metal() { "metal (GPU)" } else { "cpu" }),
+        Ok(d) => println!("ok  device {}", skintokens_nn::device_name(&d)),
         Err(e) => {
             ok = false;
             println!("MISSING device ({e})");
@@ -360,11 +442,20 @@ fn run(args: &[String]) -> Result<u8, Usage> {
         // developer checks against the Python reference (parity/)
         "parity-net" => {
             let m = load_model()?;
-            parity::run(&m, Path::new(rest.first().ok_or_else(|| Usage("parity-net REFDIR [gen]".into()))?), rest.get(1).map(|s| s == "gen").unwrap_or(false))?;
+            parity::run(
+                &m,
+                Path::new(
+                    rest.first()
+                        .ok_or_else(|| Usage("parity-net REFDIR [gen]".into()))?,
+                ),
+                rest.get(1).map(|s| s == "gen").unwrap_or(false),
+            )?;
             Ok(0)
         }
         "parity-input" => {
-            let [inp, dir, mode] = rest else { return Err(Usage("parity-input IN.glb DIR rig|skin".into())) };
+            let [inp, dir, mode] = rest else {
+                return Err(Usage("parity-input IN.glb DIR rig|skin".into()));
+            };
             parity::dump_input(&read_input(inp)?, Path::new(dir), mode == "skin")?;
             Ok(0)
         }

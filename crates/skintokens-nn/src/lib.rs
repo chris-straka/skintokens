@@ -27,12 +27,20 @@ impl Weights {
     pub fn load_ckpt(path: &std::path::Path, dtype: DType, device: &Device) -> Result<Self> {
         let all = candle_core::pickle::read_all_with_key(path, Some("state_dict"))
             .with_context(|| format!("reading {}", path.display()))?;
-        let map = all.into_iter().map(|(k, v)| (k.replace("_orig_mod.", ""), v)).collect();
+        let map = all
+            .into_iter()
+            .map(|(k, v)| (k.replace("_orig_mod.", ""), v))
+            .collect();
         Ok(Self::from_map(map, dtype, device))
     }
 
     pub fn from_map(map: HashMap<String, Tensor>, dtype: DType, device: &Device) -> Self {
-        Self { map: Arc::new(map), prefix: String::new(), dtype, device: device.clone() }
+        Self {
+            map: Arc::new(map),
+            prefix: String::new(),
+            dtype,
+            device: device.clone(),
+        }
     }
 
     pub fn pp(&self, s: impl AsRef<str>) -> Self {
@@ -54,20 +62,36 @@ impl Weights {
     }
 
     pub fn names(&self) -> Vec<String> {
-        let p = if self.prefix.is_empty() { String::new() } else { format!("{}.", self.prefix) };
-        self.map.keys().filter(|k| k.starts_with(&p)).cloned().collect()
+        let p = if self.prefix.is_empty() {
+            String::new()
+        } else {
+            format!("{}.", self.prefix)
+        };
+        self.map
+            .keys()
+            .filter(|k| k.starts_with(&p))
+            .cloned()
+            .collect()
     }
 
     pub fn get(&self, name: &str) -> Result<Tensor> {
         let full = self.full(name);
-        let t = self.map.get(&full).ok_or_else(|| anyhow!("checkpoint has no tensor {full}"))?;
+        let t = self
+            .map
+            .get(&full)
+            .ok_or_else(|| anyhow!("checkpoint has no tensor {full}"))?;
         Ok(t.to_dtype(self.dtype)?.to_device(&self.device)?)
     }
 
     pub fn get_shape(&self, name: &str, shape: &[usize]) -> Result<Tensor> {
         let t = self.get(name)?;
         if t.dims() != shape {
-            return Err(anyhow!("{}: expected shape {:?}, got {:?}", self.full(name), shape, t.dims()));
+            return Err(anyhow!(
+                "{}: expected shape {:?}, got {:?}",
+                self.full(name),
+                shape,
+                t.dims()
+            ));
         }
         Ok(t)
     }
@@ -85,12 +109,18 @@ pub struct Linear {
 
 impl Linear {
     pub fn new(w: &Tensor, b: Option<Tensor>) -> Result<Self> {
-        Ok(Self { wt: w.t()?.contiguous()?, b })
+        Ok(Self {
+            wt: w.t()?.contiguous()?,
+            b,
+        })
     }
 
     pub fn load(w: &Weights, name: &str, bias: bool) -> Result<Self> {
         let ww = w.pp(name);
-        Self::new(&ww.get("weight")?, if bias { Some(ww.get("bias")?) } else { None })
+        Self::new(
+            &ww.get("weight")?,
+            if bias { Some(ww.get("bias")?) } else { None },
+        )
     }
 
     /// Bias if the checkpoint has one.
@@ -133,7 +163,11 @@ pub struct LayerNorm {
 impl LayerNorm {
     pub fn load(w: &Weights, name: &str, eps: f32) -> Result<Self> {
         let ww = w.pp(name);
-        Ok(Self { w: ww.get("weight")?.to_dtype(DType::F32)?, b: ww.get("bias")?.to_dtype(DType::F32)?, eps })
+        Ok(Self {
+            w: ww.get("weight")?.to_dtype(DType::F32)?,
+            b: ww.get("bias")?.to_dtype(DType::F32)?,
+            eps,
+        })
     }
 
     pub fn forward(&self, x: &Tensor) -> Result<Tensor> {
@@ -143,7 +177,9 @@ impl LayerNorm {
             let mean = x.mean_keepdim(D::Minus1)?;
             let xc = x.broadcast_sub(&mean)?;
             let var = xc.sqr()?.mean_keepdim(D::Minus1)?;
-            xc.broadcast_div(&(var + self.eps as f64)?.sqrt()?)?.broadcast_mul(&self.w)?.broadcast_add(&self.b)?
+            xc.broadcast_div(&(var + self.eps as f64)?.sqrt()?)?
+                .broadcast_mul(&self.w)?
+                .broadcast_add(&self.b)?
         } else {
             candle_nn::ops::layer_norm(&x, &self.w, &self.b, self.eps)?
         };
@@ -160,12 +196,16 @@ pub struct RmsNorm {
 
 impl RmsNorm {
     pub fn load(w: &Weights, name: &str, eps: f32) -> Result<Self> {
-        Ok(Self { w: w.pp(name).get("weight")?.to_dtype(DType::F32)?, eps })
+        Ok(Self {
+            w: w.pp(name).get("weight")?.to_dtype(DType::F32)?,
+            eps,
+        })
     }
 
     pub fn forward(&self, x: &Tensor) -> Result<Tensor> {
         let dt = x.dtype();
-        let y = candle_nn::ops::rms_norm(&x.to_dtype(DType::F32)?.contiguous()?, &self.w, self.eps)?;
+        let y =
+            candle_nn::ops::rms_norm(&x.to_dtype(DType::F32)?.contiguous()?, &self.w, self.eps)?;
         Ok(y.to_dtype(dt)?)
     }
 }
@@ -183,7 +223,11 @@ const CHUNK: usize = 4096;
 pub fn attention(q: &Tensor, k: &Tensor, v: &Tensor, scale: f32, causal: bool) -> Result<Tensor> {
     let (_, h, lq, d) = q.dims4()?;
     let hkv = k.dims4()?.1;
-    if q.device().is_metal() && use_sdpa() && matches!(d, 32 | 64 | 72 | 80 | 96 | 128 | 256) && (!causal || lq > 1) {
+    if q.device().is_metal()
+        && use_sdpa()
+        && matches!(d, 32 | 64 | 72 | 80 | 96 | 128 | 256)
+        && (!causal || lq > 1)
+    {
         let (q, k, v) = (q.contiguous()?, k.contiguous()?, v.contiguous()?);
         return Ok(candle_nn::ops::sdpa(&q, &k, &v, None, causal, scale, 1.0)?);
     }
@@ -191,7 +235,9 @@ pub fn attention(q: &Tensor, k: &Tensor, v: &Tensor, scale: f32, causal: bool) -
         let r = h / hkv;
         let rep = |t: &Tensor| -> Result<Tensor> {
             let (b, hk, l, dd) = t.dims4()?;
-            Ok(t.unsqueeze(2)?.expand((b, hk, r, l, dd))?.reshape((b, hk * r, l, dd))?)
+            Ok(t.unsqueeze(2)?
+                .expand((b, hk, r, l, dd))?
+                .reshape((b, hk * r, l, dd))?)
         };
         (rep(k)?, rep(v)?)
     } else {
@@ -213,7 +259,8 @@ pub fn attention(q: &Tensor, k: &Tensor, v: &Tensor, scale: f32, causal: bool) -
             let mask = Tensor::from_vec(mask, (n, lk), q.device())?.to_dtype(att.dtype())?;
             att = att.broadcast_add(&mask)?;
         }
-        let att = candle_nn::ops::softmax_last_dim(&att.to_dtype(DType::F32)?)?.to_dtype(v.dtype())?;
+        let att =
+            candle_nn::ops::softmax_last_dim(&att.to_dtype(DType::F32)?)?.to_dtype(v.dtype())?;
         outs.push(att.matmul(&v)?);
         s += n;
     }
@@ -259,12 +306,29 @@ pub fn to_points(t: &Tensor) -> Result<Vec<[f32; 3]>> {
     Ok(v.into_iter().map(|r| [r[0], r[1], r[2]]).collect())
 }
 
-/// Picks the best compute device: Metal unless SKINTOKENS_DEVICE=cpu.
+/// Picks the compute device: SKINTOKENS_DEVICE=cpu|metal|cuda, else the
+/// GPU this build has (Metal on a Mac, CUDA with the `cuda` feature), else
+/// the CPU.
 pub fn pick_device() -> Result<Device> {
     match std::env::var("SKINTOKENS_DEVICE").as_deref() {
         Ok("cpu") => Ok(Device::Cpu),
-        Ok("metal") | Ok("mps") | Ok("gpu") => Ok(Device::new_metal(0)?),
-        _ => Ok(Device::new_metal(0).unwrap_or(Device::Cpu)),
+        Ok("metal") | Ok("mps") => Ok(Device::new_metal(0)?),
+        Ok("cuda") => Ok(Device::new_cuda(0)?),
+        Ok("gpu") => Ok(Device::new_metal(0).or_else(|_| Device::new_cuda(0))?),
+        _ => Ok(Device::new_metal(0)
+            .or_else(|_| Device::new_cuda(0))
+            .unwrap_or(Device::Cpu)),
+    }
+}
+
+/// "metal (GPU)", "cuda (GPU)" or "cpu".
+pub fn device_name(d: &Device) -> &'static str {
+    if d.is_metal() {
+        "metal (GPU)"
+    } else if d.is_cuda() {
+        "cuda (GPU)"
+    } else {
+        "cpu"
     }
 }
 
@@ -348,5 +412,10 @@ pub fn trace(name: &str, t: &Tensor) {
 }
 
 pub fn trace_take() -> Vec<(String, Tensor)> {
-    TRACE.lock().unwrap().as_mut().map(std::mem::take).unwrap_or_default()
+    TRACE
+        .lock()
+        .unwrap()
+        .as_mut()
+        .map(std::mem::take)
+        .unwrap_or_default()
 }

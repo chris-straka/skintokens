@@ -13,6 +13,9 @@ path = "src/main.rs"
 [features]
 default = ["metal"]
 metal = ["candle-core/metal", "candle-nn/metal"]
+# NVIDIA GPUs (Linux): needs a CUDA toolkit to build (nvcc, CUDA_ROOT) and its
+# libraries to run. Build with --no-default-features --features cuda.
+cuda = ["candle-core/cuda", "candle-nn/cuda"]
 
 [dependencies]
 candle-core.workspace = true
