@@ -36,7 +36,8 @@ and the FSQ-CVAE skin decoder.
 ## Use
 
     skintokens rig    IN.glb OUT.glb [--report R.json] [--class humanoid|quadruped|custom] [--seed N]
-    skintokens skin   IN.glb OUT.glb [--report R.json] [--seed N]
+                      [--transfer straight|surface|facing]
+    skintokens skin   IN.glb OUT.glb [--report R.json] [--seed N] [--transfer ...]
     skintokens joints IN.glb OUT.json [--subject NAME]
     skintokens doctor
 
@@ -58,6 +59,15 @@ and the FSQ-CVAE skin decoder.
   model without them and gives them zero weight; weightforge's fix
   weights them.
 - **joints**: rigforge hints from any rigged GLB (no model run).
+- **--transfer**: how the weights the model predicts on 54,000 surface
+  points reach the vertices (each vertex blends its 8 nearest points).
+  `straight` (default, upstream's) measures through space; `surface`
+  walks over the mesh, welded across UV seams, so pieces that nearly touch
+  but aren't joined keep their own weights; `facing` keeps the straight
+  line but drops points on another piece or facing the other way.
+  `SKINTOKENS_TRANSFER` sets it when the flag isn't given. On generated
+  humans the choice barely matters (docs/evaluation.md, "Weights along
+  the surface"); `facing` scores worse and stays only for comparison.
 
 `R.json` is genforge's adapter contract: `{"ok", "outputs" (relative to
 R.json's folder), "tool": "skintokens", "version", "stage", "<stage>":
@@ -76,7 +86,10 @@ wrapper was not reproducible); different seeds vary like the original
 
 Environment: `SKINTOKENS_DEVICE=cpu|metal` (default Metal if present),
 `SKINTOKENS_DTYPE=bf16` (default f32; bf16 peaks at 2.4 GB, is a little faster, scores
-the same), `SKINTOKENS_VERBOSE=1` (stage timings).
+the same), `SKINTOKENS_VERBOSE=1` (stage timings), `SKINTOKENS_TRANSFER`
+(see `--transfer`), `SKINTOKENS_PRED_CACHE=<prefix>` (developer hook: keep
+the model's prediction in `<prefix>.ids.npy`/`.skin.npy` and reuse it, so
+transfers are compared on one prediction).
 
 ## How it is built
 
@@ -106,7 +119,9 @@ skin pass, unused by any caller).
 
 Fast tests, no model: GLB I/O, humanoid naming (both facings, rejects
 non-humanoids), helper-bone detection, joints doc, CLI exit codes,
-tokenizer round trip, k-d tree, trim, top-4 weights. Model-level parity
+tokenizer round trip, k-d tree, trim, top-4 weights, and the weight
+transfer (two tubes 4 mm apart, each on its own bone: the straight copy
+mixes them, the surface and facing copies must not). Model-level parity
 was checked against the Python reference with `skintokens parity-net`
 (see docs/evaluation.md); the real-model numbers are there too.
 
@@ -116,4 +131,7 @@ was checked against the Python reference with `skintokens parity-net`
 - `bin/skintokens` - shim to `target/release/skintokens`.
 - `fetch-weights.sh` - pinned checkpoint download.
 - `tools/joints_samples/` - a `skintokens-joints/1` sample rigforge's tests read.
+- `tools/transfer_bench.sh`, `tools/transfer_bench_summary.py` - the rig
+  route (rig, motionforge standardize, weightforge check/fix/check) over a
+  folder of meshes, one transfer at a time, and its table.
 - `docs/evaluation.md` - SkinTokens vs UniRig vs the game rig; Rust vs Python parity.

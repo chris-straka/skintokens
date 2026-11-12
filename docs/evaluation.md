@@ -214,3 +214,65 @@ stretch (helper bones in the standard humanoid skeleton, or a gate tolerance for
 
 Sheets: `~/Downloads/skintokens-eval/`. Raw files: the session scratch
 (not kept).
+
+## Weights along the surface (2026-11-12)
+
+Suspected: upstream's copy of the model's weights from its 54,000 sample
+points onto the vertices (`mesh::transfer_skin`, 8 nearest in a straight
+line) lets parts that nearly touch take each other's weights, and that
+was thought to cause what fails on generated humans: cloth following the
+wrong limb, a lopsided crotch, armpits. Tried: `--transfer surface` (8
+nearest along the surface: Dijkstra over the mesh welded across UV
+seams, then straight across the sample's face; nothing within 0.1 of
+the normalized frame falls back to straight) and `--transfer facing`
+(straight line, but only points on the vertex's own welded piece whose
+normal is within 90 degrees of the vertex's). The test
+`touching_tubes_keep_their_own_bone` shows the fault exists in principle:
+two tubes 4 mm apart, the straight copy gives a vertex 0.2+ of the other
+tube's bone, the other two give none.
+
+On four generated humans (Tripo, about 7,000 welded vertices each;
+character A a long coat, B a shirt with belt pouches, C fitted clothes,
+D a child), the motionforge tripo route (`tools/transfer_bench.sh`:
+rig, standardize, `weights check`, `weights fix`, `weights check`),
+seeds 1-3, one model prediction per seed shared by all three copies
+(`SKINTOKENS_PRED_CACHE`). Raw check score, straight / surface / facing:
+
+| | seed 1 | seed 2 | seed 3 |
+|---|---|---|---|
+| A | 53.5 / 53.2 / 48.5 | 55.0 / 56.1 / 49.1 | 52.0 / 52.7 / 46.7 |
+| B | 70.6 / 67.8 / 65.5 | 60.9 / 61.4 / 61.1 | 37.9 / 34.4 / 26.2 |
+| C | 59.7 / 59.6 / 58.0 | 59.0 / 58.9 / 58.7 | 59.4 / 59.4 / 58.9 |
+| D | 61.9 / 62.0 / 61.9 | 68.3 / 68.8 / 68.3 | 61.7 / 61.8 / 61.3 |
+
+After `weights fix`, straight / surface (failing findings): A 54.2 (5) /
+53.5 (5), 55.9 (2) / 56.7 (3), 54.3 (3) / 54.6 (2); B 74.6 (0) / 73.5
+(0), 61.2 (0) / 61.8 (0), 66.4 (1) / 66.6 (1); C 59.8 (1) / 59.8 (1),
+59.1 (1) / 59.0 (1), 59.5 (1) / 59.5 (1); D 67.0 (2) / 69.8 (0), 68.3
+(0) / 68.8 (0), 69.5 (0) / 70.0 (0). Failing vertices in `hip_forward`
+(both sides, raw), straight to surface: A 61 to 60, 46 to 45, 55 to 54;
+B 0 to 2, 0 to 0, 80 to 91; C 20 to 20, 25 to 21, 18 to 14; D 13 to 6,
+0 to 0, 4 to 2. `arm_up`: A 10 to 15, 14 to 16, 14 to 14; B 3 to 4, 4
+to 4, 31 to 30; C and D 0 to 2 at most. No `D_BLEED` finding in any
+run, either copy.
+
+Why so little: the surface copy changes a vertex's weights by more
+than 0.2 (L1) on 1 to 4 vertices of 7,000 per run (34 on B seed 3), and
+on the vertices the checker flags the mean change is 0.005. The 8
+nearest samples (about 1 cm) are the same samples along the surface
+almost everywhere: on these meshes nothing that should move apart sits
+closer than the sample spacing without being joined to it. The zoom
+sheets show the same red faces with both copies: the crotch strip and
+inner thighs in `hip_forward`, the underarm in `arm_up`, and on A a long
+band down the coat's front edge where the coat's weights hand over from
+the spine to the thigh. Those come from what the model predicts at the
+sample points and from the fused geometry (legs joined by a bridge of
+skin, sleeves joined to the torso, a coat skirt in one sheet with the
+body), not from the copy. Only D gains clearly (9 crotch vertices
+cleared on seed 1, 0 failing after fix instead of 2).
+
+Kept: `straight` stays the default (upstream's, and every recorded
+number used it); `surface` is there for meshes with loose pieces close
+to the body (`--transfer surface` or `SKINTOKENS_TRANSFER=surface`);
+`facing` is worse on every character (it drops legitimate neighbours
+round thin parts) and stays only to compare.
