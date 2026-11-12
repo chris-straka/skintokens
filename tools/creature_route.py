@@ -261,8 +261,13 @@ def main():
             return {"score": 0.0, "pass": False, "fails": ["skeleton check did not run: " + tail(r["err"], 120)]}
 
     def rank(x):
-        """Passes both checks first, then the creature score (bend x skeleton)."""
-        return (bool(x["pass"] and x["skeleton"]["pass"]), x["score"] * x["skeleton"]["score"] / 100.0)
+        """The creature score (bend x skeleton / 100), 15 off for a failing
+        skeleton finding (a limb with no bones in it costs more than a few
+        torn faces), 5 on for passing both checks. Passing alone does not
+        win: a rig can pass both with bones along half a limb and score 44
+        beside one that scores 75 with a single failing finding."""
+        both = x["pass"] and x["skeleton"]["pass"]
+        return x["score"] * x["skeleton"]["score"] / 100.0 - (0 if x["skeleton"]["pass"] else 15) + (5 if both else 0)
 
     picked = {"glb": fixed, "rom": rom, "sheet": base + ".sheet.png", "skeleton_png": base + ".skeleton.png", "which": "body"}
     sk = None
