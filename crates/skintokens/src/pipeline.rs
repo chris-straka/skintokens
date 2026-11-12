@@ -9,7 +9,7 @@ use skintokens_nn::Rng;
 
 use crate::generate::GenConfig;
 use crate::geom::{self, M4, V3};
-use crate::glb::{Frame, Glb};
+use crate::glb::{Frame, Glb, Part};
 use crate::mesh::{self, Mesh, Normalize, Transfer};
 use crate::model::{self, TokenRig};
 use crate::naming;
@@ -218,7 +218,7 @@ fn rot_to_gltf(c: [V3; 3]) -> [V3; 3] {
 
 /// Removes skins, animations, skinning attributes and detaches old joint
 /// nodes from the scene (an already rigged input is re-rigged from scratch).
-fn strip_rig(g: &mut Glb) {
+pub fn strip_rig(g: &mut Glb) {
     let mut joints = std::collections::HashSet::new();
     for s in g.json["skins"].as_array().into_iter().flatten() {
         for j in s["joints"].as_array().into_iter().flatten() {
@@ -253,6 +253,108 @@ fn strip_rig(g: &mut Glb) {
             }
         }
     }
+}
+
+/// Adds a skeleton and its skin to `g` (any old rig already stripped): the
+/// joints as nodes under a new `Armature` node at the scene root, one skin
+/// per distinct mesh placement, and JOINTS_0/WEIGHTS_0 on every primitive.
+/// `worlds` are the joints' rest matrices in glTF world space, `parents`
+/// -1 for a root; `js`/`ws` run over the vertices of `parts` in order.
+pub fn attach_skeleton(
+    g: &mut Glb,
+    parts: &[Part],
+    names: &[String],
+    parents: &[i64],
+    worlds: &[M4],
+    js: &[[u16; 4]],
+    ws: &[[f32; 4]],
+) -> Result<()> {
+    let node_worlds = g.world_matrices();
+    // joint nodes under a new armature node at the scene root
+    let base = g.nodes().len();
+    let arm = base + names.len();
+    let mut kids: Vec<Vec<usize>> = vec![vec![]; names.len()];
+    for (i, &p) in parents.iter().enumerate() {
+        if p >= 0 {
+            kids[p as usize].push(i);
+        }
+    }
+    let mut new_nodes = vec![];
+    for i in 0..names.len() {
+        let local = if parents[i] >= 0 {
+            geom::mul(&geom::inverse(&worlds[parents[i] as usize]), &worlds[i])
+        } else {
+            worlds[i]
+        };
+        let q = geom::quat_from_cols(geom::cols(&local));
+        let t = geom::translation(&local);
+        let mut nd = json!({"name": names[i], "translation": t, "rotation": q});
+        if !kids[i].is_empty() {
+            nd["children"] = json!(kids[i].iter().map(|&k| base + k).collect::<Vec<_>>());
+        }
+        new_nodes.push(nd);
+    }
+    let roots: Vec<usize> = (0..names.len())
+        .filter(|&i| parents[i] < 0)
+        .map(|i| base + i)
+        .collect();
+    new_nodes.push(json!({"name": "Armature", "children": roots}));
+    let nodes = g.json["nodes"]
+        .as_array_mut()
+        .ok_or_else(|| anyhow!("no nodes"))?;
+    nodes.extend(new_nodes);
+    let si = g.json["scene"].as_u64().unwrap_or(0) as usize;
+    if let Some(sn) = g.json["scenes"]
+        .get_mut(si)
+        .and_then(|s| s["nodes"].as_array_mut())
+    {
+        sn.push(json!(arm));
+    } else {
+        bail!("GLB has no scene to add the armature to");
+    }
+    // one skin per distinct mesh-node world matrix (inverse bind = joint^-1 * mesh)
+    let mut skins: Vec<(M4, usize)> = vec![];
+    let joint_nodes: Vec<usize> = (0..names.len()).map(|i| base + i).collect();
+    let mut node_skin: HashMap<usize, usize> = HashMap::new();
+    for p in parts {
+        if node_skin.contains_key(&p.node) {
+            continue;
+        }
+        let mw = node_worlds[p.node];
+        let k = match skins
+            .iter()
+            .position(|(m, _)| (0..4).all(|c| (0..4).all(|r| (m[c][r] - mw[c][r]).abs() < 1e-9)))
+        {
+            Some(k) => k,
+            None => {
+                let ibm: Vec<M4> = worlds
+                    .iter()
+                    .map(|w| geom::mul(&geom::inverse(w), &mw))
+                    .collect();
+                let acc = g.push_mat4s(&ibm);
+                skins.push((mw, acc));
+                skins.len() - 1
+            }
+        };
+        node_skin.insert(p.node, k);
+    }
+    g.json["skins"] = json!(skins
+        .iter()
+        .map(|(_, acc)| json!({"joints": joint_nodes, "inverseBindMatrices": acc, "skeleton": roots[0]}))
+        .collect::<Vec<_>>());
+    for (&n, &k) in &node_skin {
+        g.json["nodes"][n]["skin"] = json!(k);
+    }
+    let mut offset = 0;
+    for p in parts.iter() {
+        let (s, e) = (offset, offset + p.positions.len());
+        offset = e;
+        let (ja, wa) = g.push_skin_attrs(&js[s..e], &ws[s..e]);
+        let attrs = &mut g.json["meshes"][p.mesh]["primitives"][p.prim]["attributes"];
+        attrs["JOINTS_0"] = json!(ja);
+        attrs["WEIGHTS_0"] = json!(wa);
+    }
+    Ok(())
 }
 
 pub fn rig(
@@ -328,91 +430,7 @@ pub fn rig(
         }
     }
 
-    // joint nodes under a new armature node at the scene root
-    let base = g.nodes().len();
-    let arm = base + names.len();
-    let mut kids: Vec<Vec<usize>> = vec![vec![]; names.len()];
-    for (i, &p) in sk.parents.iter().enumerate() {
-        if p >= 0 {
-            kids[p as usize].push(i);
-        }
-    }
-    let mut new_nodes = vec![];
-    for i in 0..names.len() {
-        let local = if sk.parents[i] >= 0 {
-            geom::mul(&geom::inverse(&worlds[sk.parents[i] as usize]), &worlds[i])
-        } else {
-            worlds[i]
-        };
-        let q = geom::quat_from_cols(geom::cols(&local));
-        let t = geom::translation(&local);
-        let mut nd = json!({"name": names[i], "translation": t, "rotation": q});
-        if !kids[i].is_empty() {
-            nd["children"] = json!(kids[i].iter().map(|&k| base + k).collect::<Vec<_>>());
-        }
-        new_nodes.push(nd);
-    }
-    let roots: Vec<usize> = (0..names.len())
-        .filter(|&i| sk.parents[i] < 0)
-        .map(|i| base + i)
-        .collect();
-    new_nodes.push(json!({"name": "Armature", "children": roots}));
-    let nodes = g.json["nodes"]
-        .as_array_mut()
-        .ok_or_else(|| anyhow!("no nodes"))?;
-    nodes.extend(new_nodes);
-    let si = g.json["scene"].as_u64().unwrap_or(0) as usize;
-    if let Some(sn) = g.json["scenes"]
-        .get_mut(si)
-        .and_then(|s| s["nodes"].as_array_mut())
-    {
-        sn.push(json!(arm));
-    } else {
-        bail!("GLB has no scene to add the armature to");
-    }
-    // one skin per distinct mesh-node world matrix (inverse bind = joint^-1 * mesh)
-    let mut skins: Vec<(M4, usize)> = vec![];
-    let joint_nodes: Vec<usize> = (0..names.len()).map(|i| base + i).collect();
-    let mut node_skin: HashMap<usize, usize> = HashMap::new();
-    for p in &parts {
-        if node_skin.contains_key(&p.node) {
-            continue;
-        }
-        let mw = node_worlds[p.node];
-        let k = match skins
-            .iter()
-            .position(|(m, _)| (0..4).all(|c| (0..4).all(|r| (m[c][r] - mw[c][r]).abs() < 1e-9)))
-        {
-            Some(k) => k,
-            None => {
-                let ibm: Vec<M4> = worlds
-                    .iter()
-                    .map(|w| geom::mul(&geom::inverse(w), &mw))
-                    .collect();
-                let acc = g.push_mat4s(&ibm);
-                skins.push((mw, acc));
-                skins.len() - 1
-            }
-        };
-        node_skin.insert(p.node, k);
-    }
-    g.json["skins"] = json!(skins
-        .iter()
-        .map(|(_, acc)| json!({"joints": joint_nodes, "inverseBindMatrices": acc, "skeleton": roots[0]}))
-        .collect::<Vec<_>>());
-    for (&n, &k) in &node_skin {
-        g.json["nodes"][n]["skin"] = json!(k);
-    }
-    for (pi, p) in parts.iter().enumerate() {
-        let (s, e) = (
-            prep.mesh.offsets[pi],
-            prep.mesh.offsets[pi] + p.positions.len(),
-        );
-        let (ja, wa) = g.push_skin_attrs(&js[s..e], &ws[s..e]);
-        let attrs = &mut g.json["meshes"][p.mesh]["primitives"][p.prim]["attributes"];
-        attrs["JOINTS_0"] = json!(ja);
-        attrs["WEIGHTS_0"] = json!(wa);
-    }
+    attach_skeleton(&mut g, &parts, &names, &sk.parents, &worlds, &js, &ws)?;
     g.doc()?;
     details["weights"] = weights_summary(&js, &ws);
     details["tokens"] = json!(out.ids.len());
