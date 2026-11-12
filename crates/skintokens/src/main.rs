@@ -1,6 +1,6 @@
 //! skintokens: SkinTokens/TokenRig auto-rigging as a file-in, file-out CLI.
 
-use skintokens::{generate, glb, model, parity, pipeline};
+use skintokens::{generate, glb, mesh, model, parity, pipeline};
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -18,7 +18,8 @@ const CKPT_REL: &str = "experiments/articulation_xl_quantization_256_token_4/grp
 const HELP: &str = "skintokens: SkinTokens/TokenRig auto-rigging as a file-in, file-out CLI.
 
     skintokens rig    IN.glb OUT.glb [--report R.json] [--class humanoid|quadruped|custom] [--seed N]
-    skintokens skin   IN.glb OUT.glb [--report R.json] [--seed N]
+                      [--transfer surface|facing|straight]
+    skintokens skin   IN.glb OUT.glb [--report R.json] [--seed N] [--transfer ...]
     skintokens joints IN.glb OUT.json [--subject NAME]
     skintokens doctor
 
@@ -28,6 +29,15 @@ rig    generates a skeleton and skin weights for an unrigged mesh. Humanoid
 skin   keeps IN's skeleton and replaces only its weights (JOINTS_0/WEIGHTS_0
        bytes): a weightforge `fix --candidate`. Twist/helper bones are hidden
        from the model and left unweighted.
+--transfer  how the model's weights, predicted on 54,000 points scattered
+       over the surface, reach the mesh's vertices: each vertex blends its 8
+       nearest points. straight (default): upstream's, nearest in a
+       straight line through space. surface: nearest along the surface (a
+       walk over the mesh, welded across UV seams), so parts that nearly
+       touch but are not joined keep their own weights. facing: nearest in
+       a straight line, but only points on the vertex's own piece whose
+       surface faces its way. SKINTOKENS_TRANSFER sets it when the flag is
+       not given (for callers such as weightforge's --skintokens).
 joints writes skintokens-joints/1 (same schema as unirig-joints/1) from a
        rigged GLB: rigforge's joint hints.
 
@@ -39,7 +49,7 @@ at a time per machine (a file lock in $SKINTOKENS_HOME).
 
 Environment: SKINTOKENS_HOME (default ~/.local/share/skintokens),
 SKINTOKENS_CKPT (path to grpo_1400.ckpt), SKINTOKENS_DEVICE=cpu|metal,
-SKINTOKENS_DTYPE=f32|bf16 (default f32).";
+SKINTOKENS_DTYPE=f32|bf16 (default f32), SKINTOKENS_TRANSFER (see --transfer).";
 
 /// Exit 2: nothing ran, no report.
 struct Usage(String);
@@ -199,6 +209,12 @@ fn seed(a: &Args) -> Result<u64, Usage> {
     a.get("seed").unwrap_or("0").parse::<u64>().map_err(|_| Usage("--seed must be a non-negative integer".into()))
 }
 
+fn transfer(a: &Args) -> Result<mesh::Transfer, Usage> {
+    let env = std::env::var("SKINTOKENS_TRANSFER").ok();
+    let t = a.get("transfer").or(env.as_deref()).unwrap_or(mesh::Transfer::DEFAULT.name());
+    mesh::Transfer::parse(t).ok_or_else(|| Usage(format!("--transfer must be straight, facing or surface (got {t})")))
+}
+
 fn base_details(seed: u64) -> Value {
     json!({"seed": seed, "model": MODEL, "upstream": UPSTREAM, "runtime": format!("rust {VERSION}")})
 }
@@ -212,13 +228,14 @@ fn merge(a: &mut Value, b: Value) {
 }
 
 fn cmd_rig(v: &[String]) -> Result<u8, Usage> {
-    let a = Args::parse(v, &["report", "class", "seed"], &[])?;
+    let a = Args::parse(v, &["report", "class", "seed", "transfer"], &[])?;
     let [inp, out] = &a.pos[..] else { return Err(Usage("rig needs IN.glb OUT.glb".into())) };
     let cls = a.get("class").unwrap_or("humanoid");
     if !["humanoid", "quadruped", "custom"].contains(&cls) {
         return Err(Usage(format!("--class must be humanoid, quadruped or custom (got {cls})")));
     }
     let seed = seed(&a)?;
+    let how = transfer(&a)?;
     let g = read_input(inp)?;
     let out = PathBuf::from(out);
     let report = report_path(&a, &out);
@@ -227,7 +244,7 @@ fn cmd_rig(v: &[String]) -> Result<u8, Usage> {
     let model = load_model()?;
     let mut details = base_details(seed);
     details["class"] = json!(cls);
-    match pipeline::rig(&g, &model, &generate::GenConfig::default(), seed, cls == "humanoid") {
+    match pipeline::rig(&g, &model, &generate::GenConfig::default(), seed, cls == "humanoid", how) {
         Err(e) => {
             write_report(&report, &[], "rig", false, details, Some(format!("model run failed: {e:#}")))?;
             Ok(1)
@@ -250,9 +267,10 @@ fn cmd_rig(v: &[String]) -> Result<u8, Usage> {
 }
 
 fn cmd_skin(v: &[String]) -> Result<u8, Usage> {
-    let a = Args::parse(v, &["report", "seed"], &[])?;
+    let a = Args::parse(v, &["report", "seed", "transfer"], &[])?;
     let [inp, out] = &a.pos[..] else { return Err(Usage("skin needs IN.glb OUT.glb".into())) };
     let seed = seed(&a)?;
+    let how = transfer(&a)?;
     let g = read_input(inp)?;
     if let Err(e) = g.skin_info().and_then(|_| g.parts(glb::Frame::SkinBind)) {
         return Err(Usage(format!("{inp}: skin needs a rigged GLB ({e:#})")));
@@ -263,7 +281,7 @@ fn cmd_skin(v: &[String]) -> Result<u8, Usage> {
     let _lock = lock()?;
     let model = load_model()?;
     let mut details = base_details(seed);
-    match pipeline::skin(&g, &model, &generate::GenConfig::default(), seed) {
+    match pipeline::skin(&g, &model, &generate::GenConfig::default(), seed, how) {
         Err(e) => {
             write_report(&report, &[], "skin", false, details, Some(format!("{e:#}")))?;
             Ok(1)

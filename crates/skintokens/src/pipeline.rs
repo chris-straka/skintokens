@@ -10,8 +10,8 @@ use skintokens_nn::Rng;
 use crate::generate::GenConfig;
 use crate::geom::{self, M4, V3};
 use crate::glb::{Frame, Glb};
-use crate::mesh::{self, Mesh, Normalize};
-use crate::model::TokenRig;
+use crate::mesh::{self, Mesh, Normalize, Transfer};
+use crate::model::{self, TokenRig};
 use crate::naming;
 use crate::tokenizer;
 
@@ -22,6 +22,8 @@ struct Prepared {
     /// Normalized vertices (model frame).
     verts: Vec<V3>,
     samples: Vec<[f32; 6]>,
+    /// Face each sample lies on.
+    sample_faces: Vec<u32>,
 }
 
 fn prepare(parts: Vec<(Vec<V3>, Vec<[u32; 3]>)>, joints: &[V3], rng: &mut Rng) -> Prepared {
@@ -31,12 +33,58 @@ fn prepare(parts: Vec<(Vec<V3>, Vec<[u32; 3]>)>, joints: &[V3], rng: &mut Rng) -
     let nm = Mesh { vertices: verts.clone(), faces: mesh.faces.clone(), offsets: mesh.offsets.clone() };
     let fnorm = nm.face_normals();
     let vnorm = nm.vertex_normals(&fnorm);
-    let samples = mesh::sample(&verts, &nm.faces, &vnorm, &fnorm, rng);
+    let (samples, sample_faces) = mesh::sample_with_faces(&verts, &nm.faces, &vnorm, &fnorm, rng);
     if let Ok(p) = std::env::var("SKINTOKENS_DUMP_SAMPLES") {
         let flat: Vec<f32> = samples.iter().flatten().copied().collect();
         let _ = candle_core::Tensor::from_vec(flat, (samples.len(), 6), &candle_core::Device::Cpu).and_then(|t| t.write_npy(p));
     }
-    Prepared { mesh, norm, verts, samples }
+    Prepared { mesh, norm, verts, samples, sample_faces }
+}
+
+impl Prepared {
+    /// Per-vertex skin from the model's per-sample skin.
+    fn transfer(&self, how: Transfer, skin: &[Vec<f32>]) -> (Vec<Vec<f32>>, Value) {
+        let t = std::time::Instant::now();
+        let (out, st) = mesh::transfer(how, &self.samples, &self.sample_faces, skin, &self.verts, &self.mesh.faces);
+        let mut d = json!({"method": how.name(), "seconds": (t.elapsed().as_secs_f64() * 100.0).round() / 100.0});
+        if how != Transfer::Straight {
+            d["welded_vertices"] = json!(st.welded);
+            d["pieces"] = json!(st.pieces);
+            d["fell_back_to_straight"] = json!(st.fallback);
+            d["fewer_than_8_samples"] = json!(st.short);
+        }
+        (out, d)
+    }
+}
+
+/// `model.run`, or its result kept from an earlier run when
+/// SKINTOKENS_PRED_CACHE names a file prefix: the first run writes
+/// <prefix>.ids.npy and <prefix>.skin.npy, later runs with the same input
+/// and seed read them instead of running the model (developer hook, so two
+/// transfers can be compared on one prediction).
+fn run_model(model: &TokenRig, prep: &Prepared, start: &[u32], cfg: &GenConfig, seed: u64) -> Result<model::Output> {
+    use candle_core::{Device, Tensor};
+    let Ok(prefix) = std::env::var("SKINTOKENS_PRED_CACHE") else {
+        return model.run(&prep.samples, start, cfg, seed);
+    };
+    let (ids_p, skin_p) = (format!("{prefix}.ids.npy"), format!("{prefix}.skin.npy"));
+    if std::path::Path::new(&skin_p).exists() {
+        let ids: Vec<u32> = Tensor::read_npy(&ids_p)?.to_vec1::<i64>()?.into_iter().map(|x| x as u32).collect();
+        let skin: Vec<Vec<f32>> = Tensor::read_npy(&skin_p)?.to_vec2::<f32>()?;
+        if skin.len() != prep.samples.len() || !ids.starts_with(start) {
+            bail!("SKINTOKENS_PRED_CACHE {prefix}: kept prediction does not match this input");
+        }
+        let w = ids.iter().position(|&t| t == tokenizer::EOS).ok_or_else(|| anyhow!("kept ids have no skeleton end"))?;
+        let skeleton = tokenizer::detokenize(&ids[..=w])?;
+        return Ok(model::Output { ids, skeleton, skin });
+    }
+    let out = model.run(&prep.samples, start, cfg, seed)?;
+    let ids: Vec<i64> = out.ids.iter().map(|&x| x as i64).collect();
+    Tensor::from_vec(ids.clone(), ids.len(), &Device::Cpu)?.write_npy(&ids_p)?;
+    let j = out.skin.first().map(|r| r.len()).unwrap_or(0);
+    let flat: Vec<f32> = out.skin.iter().flatten().copied().collect();
+    Tensor::from_vec(flat, (out.skin.len(), j), &Device::Cpu)?.write_npy(&skin_p)?;
+    Ok(out)
 }
 
 pub fn weights_summary(js: &[[u16; 4]], ws: &[[f32; 4]]) -> Value {
@@ -148,16 +196,16 @@ fn strip_rig(g: &mut Glb) {
     }
 }
 
-pub fn rig(input: &Glb, model: &TokenRig, cfg: &GenConfig, seed: u64, humanoid: bool) -> Result<RigResult> {
+pub fn rig(input: &Glb, model: &TokenRig, cfg: &GenConfig, seed: u64, humanoid: bool, how: Transfer) -> Result<RigResult> {
     let parts = input.parts(Frame::World)?;
     let mut rng = Rng::new(seed);
     let model_parts: Vec<(Vec<V3>, Vec<[u32; 3]>)> =
         parts.iter().map(|p| (p.positions.iter().map(|&v| mesh::to_model(v)).collect(), p.triangles.clone())).collect();
     let prep = prepare(model_parts, &[], &mut rng);
     let start = vec![tokenizer::BOS, tokenizer::CLS_ARTICULATION];
-    let out = model.run(&prep.samples, &start, cfg, rng.next_u64())?;
+    let out = run_model(model, &prep, &start, cfg, rng.next_u64())?;
     let sk = &out.skeleton;
-    let skin = mesh::transfer_skin(&prep.samples, &out.skin, &prep.verts);
+    let (skin, transfer) = prep.transfer(how, &out.skin);
     let (js, ws) = mesh::top4(&skin);
 
     // skeleton in the input's world space
@@ -253,6 +301,7 @@ pub fn rig(input: &Glb, model: &TokenRig, cfg: &GenConfig, seed: u64, humanoid: 
     g.doc()?;
     details["weights"] = weights_summary(&js, &ws);
     details["tokens"] = json!(out.ids.len());
+    details["transfer"] = transfer;
     Ok(RigResult { glb: g, details, missing })
 }
 
@@ -336,7 +385,7 @@ pub struct SkinResult {
     pub details: Value,
 }
 
-pub fn skin(input: &Glb, model: &TokenRig, cfg: &GenConfig, seed: u64) -> Result<SkinResult> {
+pub fn skin(input: &Glb, model: &TokenRig, cfg: &GenConfig, seed: u64, how: Transfer) -> Result<SkinResult> {
     let info = input.skin_info()?;
     let skin_joints: Vec<usize> = input.json["skins"][0]["joints"].as_array().into_iter().flatten().filter_map(|v| v.as_u64().map(|x| x as usize)).collect();
     let helpers = helper_joints(input, &skin_joints);
@@ -387,11 +436,11 @@ pub fn skin(input: &Glb, model: &TokenRig, cfg: &GenConfig, seed: u64) -> Result
         let t = candle_core::Tensor::read_npy(p)?.to_dtype(candle_core::DType::I64)?.to_vec1::<i64>()?;
         start = t.into_iter().map(|x| x as u32).collect();
     }
-    let out = model.run(&prep.samples, &start, cfg, rng.next_u64())?;
+    let out = run_model(model, &prep, &start, cfg, rng.next_u64())?;
     if out.skin.first().map(|r| r.len()) != Some(kept.len()) {
         bail!("model returned {} joints for {} given", out.skin.first().map(|r| r.len()).unwrap_or(0), kept.len());
     }
-    let skin = mesh::transfer_skin(&prep.samples, &out.skin, &prep.verts);
+    let (skin, transfer) = prep.transfer(how, &out.skin);
     let (js, ws) = mesh::top4(&skin);
     let slots: Vec<usize> = kept.iter().map(|&i| info.skin_slot[i]).collect();
     let mut g = Glb { json: input.json.clone(), bin: input.bin.clone() };
@@ -422,6 +471,7 @@ pub fn skin(input: &Glb, model: &TokenRig, cfg: &GenConfig, seed: u64) -> Result
         "helpers_unweighted": helpers.len(),
         "weights": weights_summary(&js, &ws),
         "tokens": out.ids.len(),
+        "transfer": transfer,
     });
     Ok(SkinResult { glb: g, details })
 }
