@@ -133,7 +133,7 @@ impl TokenRig {
         let (_, mc) = self.mesh_cond(&cond, &eq)?;
         let prompt = self.prompt(&mc, start)?;
         lap("encoders");
-        let g = Grammar { init: start.to_vec(), eos_lm: self.eos_lm, tokens_per_skin: TOKENS_PER_SKIN };
+        let g = Grammar { init: start.to_vec(), eos_lm: self.eos_lm, tokens_per_skin: TOKENS_PER_SKIN, full_skin: full_skin() };
         let gen = if cfg.num_beams == 1 && !cfg.do_sample {
             generate::greedy(&self.llm, &prompt, cfg, &g)?
         } else {
@@ -155,4 +155,10 @@ impl TokenRig {
 /// activation, so keep it small.
 fn decode_batch(dev: &Device) -> usize {
     std::env::var("SKINTOKENS_DECODE_BATCH").ok().and_then(|v| v.parse().ok()).unwrap_or(if dev.is_metal() { 2 } else { 1 })
+}
+
+/// Whether the last joint's last skin token is generated (SKINTOKENS_FULL_SKIN
+/// set) or left as upstream leaves it (the LM eos read as a skin code).
+pub fn full_skin() -> bool {
+    std::env::var("SKINTOKENS_FULL_SKIN").is_ok()
 }

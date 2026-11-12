@@ -302,6 +302,8 @@ pub fn rig(input: &Glb, model: &TokenRig, cfg: &GenConfig, seed: u64, humanoid: 
     details["weights"] = weights_summary(&js, &ws);
     details["tokens"] = json!(out.ids.len());
     details["transfer"] = transfer;
+    details["last_joint"] = json!(names.last());
+    details["full_skin"] = json!(model::full_skin());
     Ok(RigResult { glb: g, details, missing })
 }
 

@@ -53,6 +53,9 @@ pub struct Grammar {
     pub init: Vec<u32>,
     pub eos_lm: u32,
     pub tokens_per_skin: usize,
+    /// Let the model write the last joint's last skin token before the LM
+    /// eos (see `apply`). Off = upstream's behaviour, token for token.
+    pub full_skin: bool,
 }
 
 impl Grammar {
@@ -67,7 +70,14 @@ impl Grammar {
                 *m = 0.0;
             }
             let j = tokenizer::bones_in_sequence(&seq);
-            if seq.len() - w == j * self.tokens_per_skin {
+            // Skin tokens written so far: everything after the skeleton's
+            // eos. Upstream ends one short (`len - eos_pos == joints *
+            // tokens_per_skin` counts the eos itself), so the last joint's
+            // last code is never generated: the decoder reads the LM eos
+            // in its place, which the FSQ turns into its lowest code.
+            let written = seq.len() - w - 1;
+            let need = j * self.tokens_per_skin;
+            if (self.full_skin && written == need) || (!self.full_skin && written + 1 == need) {
                 mask.iter_mut().for_each(|m| *m = ninf);
                 mask[self.eos_lm as usize] = 0.0;
             } else {

@@ -107,7 +107,7 @@ pub fn run(model: &TokenRig, dir: &Path, gen: bool) -> Result<()> {
     if gen {
         let start = ids(dir, "start_tokens")?;
         let prompt = model.prompt(&mc_ref, &start)?;
-        let g = Grammar { init: start.clone(), eos_lm: model.eos_lm, tokens_per_skin: TOKENS_PER_SKIN };
+        let g = Grammar { init: start.clone(), eos_lm: model.eos_lm, tokens_per_skin: TOKENS_PER_SKIN, full_skin: false };
         let cmp = |name: &str, got: &[u32]| -> Result<()> {
             let want = ids(dir, name)?;
             let mut full = start.clone();
