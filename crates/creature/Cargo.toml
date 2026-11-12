@@ -1,0 +1,17 @@
+[package]
+name = "creature-rig"
+description = "Creature rigs from the body's own shape: finds limbs, tail, head and wings in the mesh volume, checks a skeleton against them, repairs or builds one, and weights it through the volume"
+license = "MIT"
+edition.workspace = true
+version.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "creature-rig"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+skintokens = { path = "../skintokens", default-features = false }
+serde_json = { version = "1", features = ["preserve_order"] }
+png = "0.17"
