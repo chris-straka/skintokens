@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/skintokens", "crates/skintokens-nn", "crates/skintokens-encoder", "crates/creature"]
+members = ["crates/skintokens", "crates/skintokens-nn", "crates/skintokens-encoder", "crates/creature", "crates/bench"]
 
 [workspace.package]
 edition = "2021"

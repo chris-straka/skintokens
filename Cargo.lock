@@ -289,6 +289,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "creature-bench"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "gltf",
+ "png",
+ "serde_json",
+ "skintokens",
+]
+
+[[package]]
 name = "creature-rig"
 version = "0.2.0"
 dependencies = [

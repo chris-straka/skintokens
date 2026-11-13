@@ -1,0 +1,18 @@
+[package]
+name = "creature-bench"
+description = "Scores a creature rig against a hand-made rig of the same mesh: where its joints are, and how far its skin lands from the artist's when both play the artist's clips"
+license = "MIT"
+edition.workspace = true
+version.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "creature-bench"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+skintokens = { path = "../skintokens", default-features = false }
+serde_json = { version = "1", features = ["preserve_order"] }
+png = "0.17"
+gltf = { version = "1.4", default-features = false, features = ["utils", "names"] }
