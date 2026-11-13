@@ -92,7 +92,11 @@ pub fn m3_mul(a: &M3, b: &M3) -> M3 {
 }
 
 pub fn m3_t(a: &M3) -> M3 {
-    [[a[0][0], a[1][0], a[2][0]], [a[0][1], a[1][1], a[2][1]], [a[0][2], a[1][2], a[2][2]]]
+    [
+        [a[0][0], a[1][0], a[2][0]],
+        [a[0][1], a[1][1], a[2][1]],
+        [a[0][2], a[1][2], a[2][2]],
+    ]
 }
 
 fn unit(v: V3) -> V3 {
@@ -126,7 +130,11 @@ fn decompose(m: &M4) -> Trs {
         r[2] = geom::scale(r[2], -1.0);
         s[2] = -s[2];
     }
-    Trs { t: geom::translation(m), r: geom::quat_from_cols(r), s }
+    Trs {
+        t: geom::translation(m),
+        r: geom::quat_from_cols(r),
+        s,
+    }
 }
 
 fn node_trs(node: &Value) -> Trs {
@@ -142,7 +150,11 @@ fn node_trs(node: &Value) -> Trs {
     let t = a("translation", &[0.0, 0.0, 0.0]);
     let r = a("rotation", &[0.0, 0.0, 0.0, 1.0]);
     let s = a("scale", &[1.0, 1.0, 1.0]);
-    Trs { t: [t[0], t[1], t[2]], r: [r[0], r[1], r[2], r[3]], s: [s[0], s[1], s[2]] }
+    Trs {
+        t: [t[0], t[1], t[2]],
+        r: [r[0], r[1], r[2], r[3]],
+        s: [s[0], s[1], s[2]],
+    }
 }
 
 fn m4_from_f32(m: [[f32; 4]; 4]) -> M4 {
@@ -211,19 +223,28 @@ impl Rig {
                     continue;
                 }
                 let r = prim.reader(glb.buffer());
-                let Some(pos) = r.read_positions() else { continue };
-                let pos: Vec<V3> = pos.map(|p| [p[0] as f64, p[1] as f64, p[2] as f64]).collect();
+                let Some(pos) = r.read_positions() else {
+                    continue;
+                };
+                let pos: Vec<V3> = pos
+                    .map(|p| [p[0] as f64, p[1] as f64, p[2] as f64])
+                    .collect();
                 let base = rest_pos.len() as u32;
                 let idx: Vec<u32> = match r.read_indices() {
                     Some(i) => i.into_u32().collect(),
                     None => (0..pos.len() as u32).collect(),
                 };
-                tris.extend(idx.chunks_exact(3).map(|c| [c[0] + base, c[1] + base, c[2] + base]));
+                tris.extend(
+                    idx.chunks_exact(3)
+                        .map(|c| [c[0] + base, c[1] + base, c[2] + base]),
+                );
                 let mut sets: Vec<(Vec<[u16; 4]>, Vec<[f32; 4]>)> = vec![];
                 if !slot_joint.is_empty() {
                     for set in 0..4 {
                         match (r.read_joints(set), r.read_weights(set)) {
-                            (Some(j), Some(w)) => sets.push((j.into_u16().collect(), w.into_f32().collect())),
+                            (Some(j), Some(w)) => {
+                                sets.push((j.into_u16().collect(), w.into_f32().collect()))
+                            }
                             _ => break,
                         }
                     }
@@ -267,7 +288,12 @@ impl Rig {
         }
         let names: Vec<String> = joints
             .iter()
-            .map(|&nd| glb.nodes()[nd]["name"].as_str().map(String::from).unwrap_or(format!("joint_{nd}")))
+            .map(|&nd| {
+                glb.nodes()[nd]["name"]
+                    .as_str()
+                    .map(String::from)
+                    .unwrap_or(format!("joint_{nd}"))
+            })
             .collect();
         let parent: Vec<Option<usize>> = joints
             .iter()
@@ -314,18 +340,21 @@ impl Rig {
                     _ => continue,
                 };
                 let rd = ch.reader(glb.buffer());
-                let Some(times) = rd.read_inputs() else { continue };
+                let Some(times) = rd.read_inputs() else {
+                    continue;
+                };
                 let times: Vec<f64> = times.map(|t| t as f64).collect();
                 let mut values: Vec<[f64; 4]> = match rd.read_outputs() {
-                    Some(gltf::animation::util::ReadOutputs::Translations(it)) => {
-                        it.map(|v| [v[0] as f64, v[1] as f64, v[2] as f64, 0.0]).collect()
-                    }
-                    Some(gltf::animation::util::ReadOutputs::Scales(it)) => {
-                        it.map(|v| [v[0] as f64, v[1] as f64, v[2] as f64, 0.0]).collect()
-                    }
-                    Some(gltf::animation::util::ReadOutputs::Rotations(it)) => {
-                        it.into_f32().map(|v| [v[0] as f64, v[1] as f64, v[2] as f64, v[3] as f64]).collect()
-                    }
+                    Some(gltf::animation::util::ReadOutputs::Translations(it)) => it
+                        .map(|v| [v[0] as f64, v[1] as f64, v[2] as f64, 0.0])
+                        .collect(),
+                    Some(gltf::animation::util::ReadOutputs::Scales(it)) => it
+                        .map(|v| [v[0] as f64, v[1] as f64, v[2] as f64, 0.0])
+                        .collect(),
+                    Some(gltf::animation::util::ReadOutputs::Rotations(it)) => it
+                        .into_f32()
+                        .map(|v| [v[0] as f64, v[1] as f64, v[2] as f64, v[3] as f64])
+                        .collect(),
                     _ => continue,
                 };
                 let interp = ch.sampler().interpolation();
@@ -345,7 +374,13 @@ impl Rig {
                 });
             }
             if !channels.is_empty() {
-                clips.push(Clip { name: anim.name().map(String::from).unwrap_or(format!("clip_{ai}")), channels });
+                clips.push(Clip {
+                    name: anim
+                        .name()
+                        .map(String::from)
+                        .unwrap_or(format!("clip_{ai}")),
+                    channels,
+                });
             }
         }
 
@@ -376,7 +411,10 @@ impl Rig {
 
     /// Position of every joint in the rest pose.
     pub fn joint_rest(&self) -> Vec<V3> {
-        self.joints.iter().map(|&n| geom::translation(&self.rest_world[n])).collect()
+        self.joints
+            .iter()
+            .map(|&n| geom::translation(&self.rest_world[n]))
+            .collect()
     }
 
     /// World matrix of every node at a time of a clip.
@@ -437,7 +475,9 @@ impl Rig {
         if n <= max || max < 2 {
             return ch.times.clone();
         }
-        (0..max).map(|k| ch.times[(k * (n - 1)) / (max - 1)]).collect()
+        (0..max)
+            .map(|k| ch.times[(k * (n - 1)) / (max - 1)])
+            .collect()
     }
 
     /// A copy of this file with `clips` instead of its own animations:
@@ -446,7 +486,10 @@ impl Rig {
     /// its parent changes gets a translation track too. Nodes above the
     /// joints stay as they are.
     pub fn with_clips(&self, clips: &[(String, Vec<f64>, Vec<Vec<M4>>)]) -> Result<Glb> {
-        let mut g = Glb { json: self.glb.json.clone(), bin: self.glb.bin.clone() };
+        let mut g = Glb {
+            json: self.glb.json.clone(),
+            bin: self.glb.bin.clone(),
+        };
         let mut anims = vec![];
         let span = {
             let mut lo = [f64::INFINITY; 3];
@@ -463,13 +506,19 @@ impl Rig {
             if times.is_empty() {
                 continue;
             }
-            let tb: Vec<u8> = times.iter().flat_map(|t| (*t as f32).to_le_bytes()).collect();
+            let tb: Vec<u8> = times
+                .iter()
+                .flat_map(|t| (*t as f32).to_le_bytes())
+                .collect();
             let t_acc = g.push_accessor(
                 &tb,
                 5126,
                 "SCALAR",
                 times.len(),
-                Some((vec![times[0] as f32 as f64], vec![*times.last().unwrap() as f32 as f64])),
+                Some((
+                    vec![times[0] as f32 as f64],
+                    vec![*times.last().unwrap() as f32 as f64],
+                )),
                 false,
             );
             let mut samplers = vec![];
@@ -495,14 +544,22 @@ impl Rig {
                     rots.push(q);
                     trs.push(geom::translation(&local));
                 }
-                let rb: Vec<u8> = rots.iter().flat_map(|q| q.iter().flat_map(|v| (*v as f32).to_le_bytes())).collect();
+                let rb: Vec<u8> = rots
+                    .iter()
+                    .flat_map(|q| q.iter().flat_map(|v| (*v as f32).to_le_bytes()))
+                    .collect();
                 let r_acc = g.push_accessor(&rb, 5126, "VEC4", rots.len(), None, false);
                 samplers.push(json!({"input": t_acc, "output": r_acc, "interpolation": "LINEAR"}));
                 channels.push(json!({"sampler": samplers.len() - 1, "target": {"node": node, "path": "rotation"}}));
                 let rest_t = self.rest[node].t;
-                let moved = trs.iter().any(|t| geom::norm(geom::sub(*t, rest_t)) > 1e-6 * span.max(1e-9));
+                let moved = trs
+                    .iter()
+                    .any(|t| geom::norm(geom::sub(*t, rest_t)) > 1e-6 * span.max(1e-9));
                 if moved {
-                    let b: Vec<u8> = trs.iter().flat_map(|t| t.iter().flat_map(|v| (*v as f32).to_le_bytes())).collect();
+                    let b: Vec<u8> = trs
+                        .iter()
+                        .flat_map(|t| t.iter().flat_map(|v| (*v as f32).to_le_bytes()))
+                        .collect();
                     let a = g.push_accessor(&b, 5126, "VEC3", trs.len(), None, false);
                     samplers.push(json!({"input": t_acc, "output": a, "interpolation": "LINEAR"}));
                     channels.push(json!({"sampler": samplers.len() - 1, "target": {"node": node, "path": "translation"}}));
@@ -510,7 +567,10 @@ impl Rig {
             }
             anims.push(json!({"name": name, "samplers": samplers, "channels": channels}));
         }
-        let obj = g.json.as_object_mut().ok_or_else(|| anyhow!("no JSON object"))?;
+        let obj = g
+            .json
+            .as_object_mut()
+            .ok_or_else(|| anyhow!("no JSON object"))?;
         if anims.is_empty() {
             obj.remove("animations");
         } else {

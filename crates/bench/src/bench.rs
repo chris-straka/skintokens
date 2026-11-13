@@ -87,7 +87,12 @@ pub fn align(truth_rest: &[V3], route_rest: &[V3]) -> Align {
         for quarter in 0..4 {
             let th = quarter as f64 * std::f64::consts::FRAC_PI_2;
             let (s, c) = th.sin_cos();
-            let rot: M4 = [[c, 0.0, -s, 0.0], [0.0, 1.0, 0.0, 0.0], [s, 0.0, c, 0.0], [0.0, 0.0, 0.0, 1.0]];
+            let rot: M4 = [
+                [c, 0.0, -s, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [s, 0.0, c, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ];
             let mut m = rot;
             let mut scale = 1.0;
             if fitted {
@@ -95,7 +100,12 @@ pub fn align(truth_rest: &[V3], route_rest: &[V3]) -> Align {
                 scale = len_r / longest(&turned).max(1e-12);
                 let (lo, hi) = bbox(&turned);
                 let tc = geom::scale(geom::add(lo, hi), 0.5 * scale);
-                let sm: M4 = [[scale, 0.0, 0.0, 0.0], [0.0, scale, 0.0, 0.0], [0.0, 0.0, scale, 0.0], [rc[0] - tc[0], rc[1] - tc[1], rc[2] - tc[2], 1.0]];
+                let sm: M4 = [
+                    [scale, 0.0, 0.0, 0.0],
+                    [0.0, scale, 0.0, 0.0],
+                    [0.0, 0.0, scale, 0.0],
+                    [rc[0] - tc[0], rc[1] - tc[1], rc[2] - tc[2], 1.0],
+                ];
                 m = geom::mul(&sm, &rot);
             }
             let (mut sum, mut worst) = (0.0, 0.0f64);
@@ -105,8 +115,18 @@ pub fn align(truth_rest: &[V3], route_rest: &[V3]) -> Align {
                 worst = worst.max(d);
             }
             let fit = sum / truth_rest.len() as f64 / len_r;
-            let cand = Align { m, yaw_deg: quarter as f64 * 90.0, scale, fit, fit_max: worst / len_r };
-            if best.as_ref().map(|b| cand.fit < b.fit - 1e-9).unwrap_or(true) {
+            let cand = Align {
+                m,
+                yaw_deg: quarter as f64 * 90.0,
+                scale,
+                fit,
+                fit_max: worst / len_r,
+            };
+            if best
+                .as_ref()
+                .map(|b| cand.fit < b.fit - 1e-9)
+                .unwrap_or(true)
+            {
                 best = Some(cand);
             }
         }
@@ -122,10 +142,19 @@ pub fn align(truth_rest: &[V3], route_rest: &[V3]) -> Align {
         if best.fit < 1e-6 {
             break;
         }
-        let moved: Vec<V3> = truth_rest.iter().map(|p| geom::apply(&best.m, *p)).collect();
-        let near: Vec<V3> = moved.iter().map(|p| route_rest[tree.knn(*p, 1)[0].1]).collect();
+        let moved: Vec<V3> = truth_rest
+            .iter()
+            .map(|p| geom::apply(&best.m, *p))
+            .collect();
+        let near: Vec<V3> = moved
+            .iter()
+            .map(|p| route_rest[tree.knn(*p, 1)[0].1])
+            .collect();
         let n = moved.len() as f64;
-        let ct = geom::scale(moved.iter().fold([0.0; 3], |a, p| geom::add(a, *p)), 1.0 / n);
+        let ct = geom::scale(
+            moved.iter().fold([0.0; 3], |a, p| geom::add(a, *p)),
+            1.0 / n,
+        );
         let cr = geom::scale(near.iter().fold([0.0; 3], |a, p| geom::add(a, *p)), 1.0 / n);
         let (mut sn, mut cs, mut aa) = (0.0, 0.0, 0.0);
         for (p, q) in moved.iter().zip(&near) {
@@ -136,12 +165,21 @@ pub fn align(truth_rest: &[V3], route_rest: &[V3]) -> Align {
         }
         let th = sn.atan2(cs);
         let (s, c) = th.sin_cos();
-        let rot: M4 = [[c, 0.0, -s, 0.0], [0.0, 1.0, 0.0, 0.0], [s, 0.0, c, 0.0], [0.0, 0.0, 0.0, 1.0]];
+        let rot: M4 = [
+            [c, 0.0, -s, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [s, 0.0, c, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
         let mut ab = 0.0;
         for (p, q) in moved.iter().zip(&near) {
             ab += geom::dot(geom::apply_dir(&rot, geom::sub(*p, ct)), geom::sub(*q, cr));
         }
-        let k = if aa > 1e-18 { (ab / aa).clamp(0.5, 2.0) } else { 1.0 };
+        let k = if aa > 1e-18 {
+            (ab / aa).clamp(0.5, 2.0)
+        } else {
+            1.0
+        };
         let rc = geom::scale(geom::apply_dir(&rot, ct), k);
         let step: M4 = [
             [k * rot[0][0], 0.0, k * rot[0][2], 0.0],
@@ -160,7 +198,13 @@ pub fn align(truth_rest: &[V3], route_rest: &[V3]) -> Align {
         if fit >= best.fit - 1e-9 {
             break;
         }
-        best = Align { m, yaw_deg: best.yaw_deg + th.to_degrees(), scale: best.scale * k, fit, fit_max: worst / len_r };
+        best = Align {
+            m,
+            yaw_deg: best.yaw_deg + th.to_degrees(),
+            scale: best.scale * k,
+            fit,
+            fit_max: worst / len_r,
+        };
     }
     best
 }
@@ -195,9 +239,19 @@ impl Role {
         }
     }
     pub fn parse(s: &str) -> Option<Role> {
-        [Role::Trunk, Role::Neck, Role::Head, Role::Jaw, Role::Leg, Role::Toe, Role::Tail, Role::Wing, Role::Other]
-            .into_iter()
-            .find(|r| r.name() == s)
+        [
+            Role::Trunk,
+            Role::Neck,
+            Role::Head,
+            Role::Jaw,
+            Role::Leg,
+            Role::Toe,
+            Role::Tail,
+            Role::Wing,
+            Role::Other,
+        ]
+        .into_iter()
+        .find(|r| r.name() == s)
     }
     /// The joints a rig is judged on. Toes, ears and the like are listed
     /// when a route lacks them, but their distance is not in the mean.
@@ -224,15 +278,23 @@ pub fn role_of(name: &str) -> Role {
         Role::Neck
     } else if has(&["head", "face", "nose", "skull", "snout"]) {
         Role::Head
-    } else if has(&["leg", "arm", "foot", "feet", "hand", "thigh", "shin", "calf", "paw", "hoof", "knee", "elbow", "ankle"]) {
+    } else if has(&[
+        "leg", "arm", "foot", "feet", "hand", "thigh", "shin", "calf", "paw", "hoof", "knee",
+        "elbow", "ankle",
+    ]) {
         Role::Leg
     } else if has(&["shoulders"]) {
         Role::Trunk
     } else if has(&["shoulder", "clavicle", "scapula"]) {
         Role::Leg
-    } else if has(&["ear", "eye", "tongue", "antenna", "horn", "hair", "whisker", "pole", "target", "sting"]) {
+    } else if has(&[
+        "ear", "eye", "tongue", "antenna", "horn", "hair", "whisker", "pole", "target", "sting",
+    ]) {
         Role::Other
-    } else if has(&["body", "hip", "spine", "back", "torso", "chest", "pelvis", "abdomen", "thorax", "root", "belly", "waist"]) {
+    } else if has(&[
+        "body", "hip", "spine", "back", "torso", "chest", "pelvis", "abdomen", "thorax", "root",
+        "belly", "waist",
+    ]) {
         Role::Trunk
     } else {
         Role::Other
@@ -304,14 +366,25 @@ fn bone_lines(rig: &Rig, pos: &[V3], verts: &[V3], len: f64) -> Vec<Vec<(V3, V3)
 
 impl<'a> Truth<'a> {
     pub fn new(rig: &'a Rig, al: &Align, roles_given: &Value) -> Truth<'a> {
-        let rest_pos: Vec<V3> = rig.rest_pos.iter().map(|p| geom::apply(&al.m, *p)).collect();
-        let rest_world: Vec<M4> = rig.joints.iter().map(|&n| geom::mul(&al.m, &rig.rest_world[n])).collect();
+        let rest_pos: Vec<V3> = rig
+            .rest_pos
+            .iter()
+            .map(|p| geom::apply(&al.m, *p))
+            .collect();
+        let rest_world: Vec<M4> = rig
+            .joints
+            .iter()
+            .map(|&n| geom::mul(&al.m, &rig.rest_world[n]))
+            .collect();
         let joint_pos: Vec<V3> = rest_world.iter().map(geom::translation).collect();
         let len = longest(&rest_pos);
         let mut roles: Vec<Role> = rig.names.iter().map(|n| role_of(n)).collect();
         // a shoulder that carries a wing is the wing's first bone
         for j in 0..roles.len() {
-            if roles[j] == Role::Leg && rig.names[j].to_lowercase().contains("shoulder") && rig.children[j].iter().any(|&c| roles[c] == Role::Wing) {
+            if roles[j] == Role::Leg
+                && rig.names[j].to_lowercase().contains("shoulder")
+                && rig.children[j].iter().any(|&c| roles[c] == Role::Wing)
+            {
                 roles[j] = Role::Wing;
             }
         }
@@ -348,8 +421,18 @@ impl<'a> Truth<'a> {
     /// Joint matrices and the skin at a time of a clip, in the route's space.
     pub fn frame(&self, clip: usize, t: f64) -> (Vec<M4>, Vec<V3>) {
         let nodes = self.rig.pose_nodes(&self.rig.clips[clip], t);
-        let skin: Vec<V3> = self.rig.skin_nodes(&nodes).iter().map(|p| geom::apply(&self.a, *p)).collect();
-        let jw = self.rig.joints.iter().map(|&n| geom::mul(&self.a, &nodes[n])).collect();
+        let skin: Vec<V3> = self
+            .rig
+            .skin_nodes(&nodes)
+            .iter()
+            .map(|p| geom::apply(&self.a, *p))
+            .collect();
+        let jw = self
+            .rig
+            .joints
+            .iter()
+            .map(|&n| geom::mul(&self.a, &nodes[n]))
+            .collect();
         (jw, skin)
     }
 }
@@ -395,7 +478,11 @@ pub fn map_bones(truth: &Truth, route: &Rig, r2t: &[usize]) -> Mapping {
                         / truth.len;
                     let ld = geom::sub(lb, la);
                     let ll = geom::norm(ld);
-                    let turn = if dl > 1e-9 && ll > 1e-9 { 1.0 - geom::dot(dir, ld) / (dl * ll) } else { 0.0 };
+                    let turn = if dl > 1e-9 && ll > 1e-9 {
+                        1.0 - geom::dot(dir, ld) / (dl * ll)
+                    } else {
+                        0.0
+                    };
                     let c = d + 0.15 * turn;
                     if c < seg_best.0 {
                         seg_best = (c, d);
@@ -442,7 +529,11 @@ pub fn map_bones(truth: &Truth, route: &Rig, r2t: &[usize]) -> Mapping {
             }
         };
     }
-    Mapping { by_line, off, by_skin }
+    Mapping {
+        by_line,
+        off,
+        by_skin,
+    }
 }
 
 // ------------------------------------------------------------ the skeleton
@@ -459,7 +550,12 @@ pub fn skeleton(truth: &Truth, route: &Rig, map: &Mapping) -> Value {
     let near = |a: usize, among: &[usize]| -> Option<(f64, usize)> {
         among
             .iter()
-            .map(|&j| (geom::norm(geom::sub(rpos[j], truth.joint_pos[a])) / truth.len, j))
+            .map(|&j| {
+                (
+                    geom::norm(geom::sub(rpos[j], truth.joint_pos[a])) / truth.len,
+                    j,
+                )
+            })
             .min_by(|x, y| x.0.partial_cmp(&y.0).unwrap())
     };
     let mut joints = vec![];
@@ -504,8 +600,10 @@ pub fn skeleton(truth: &Truth, route: &Rig, map: &Mapping) -> Value {
                 unmatched += 1;
             }
         }
-        joints.push(json!({"joint": truth.rig.names[a], "role": role.name(), "error_pct": pct(e),
-            "nearest": route.names.get(j), "has_a_joint": has}));
+        joints.push(
+            json!({"joint": truth.rig.names[a], "role": role.name(), "error_pct": pct(e),
+            "nearest": route.names.get(j), "has_a_joint": has}),
+        );
     }
     // chains: bones of one role joined through the hierarchy (a bone
     // that holds no skin but carries the next one stays in its chain)
@@ -515,7 +613,8 @@ pub fn skeleton(truth: &Truth, route: &Rig, map: &Mapping) -> Value {
         if !truth.leads[a] {
             continue;
         }
-        let joined = truth.rig.parent[a].filter(|&p| truth.roles[p] == truth.roles[a] && chain_of[p] != usize::MAX);
+        let joined = truth.rig.parent[a]
+            .filter(|&p| truth.roles[p] == truth.roles[a] && chain_of[p] != usize::MAX);
         match joined {
             Some(p) => {
                 chain_of[a] = chain_of[p];
@@ -539,7 +638,13 @@ pub fn skeleton(truth: &Truth, route: &Rig, map: &Mapping) -> Value {
         let label = if c.len() == 1 {
             format!("{} ({})", role.name(), truth.rig.names[c[0]])
         } else {
-            format!("{} ({} to {}, {} bones)", role.name(), truth.rig.names[c[0]], truth.rig.names[*c.last().unwrap()], c.len())
+            format!(
+                "{} ({} to {}, {} bones)",
+                role.name(),
+                truth.rig.names[c[0]],
+                truth.rig.names[*c.last().unwrap()],
+                c.len()
+            )
         };
         chain_json.push(json!({"chain": label, "role": role.name(), "bones": c.len(), "with_a_bone_along": covered}));
         if covered == 0 {
@@ -551,7 +656,10 @@ pub fn skeleton(truth: &Truth, route: &Rig, map: &Mapping) -> Value {
     // the route's bones that lie along nothing of the artist's
     let is_extra = |j: usize| map.off[j] > ALONG_NOTHING && route.mass[j] > 1e-6;
     let extra: Vec<usize> = (0..rpos.len()).filter(|&j| is_extra(j)).collect();
-    let extra_chains = extra.iter().filter(|&&j| route.parent[j].map(|p| !is_extra(p)).unwrap_or(true)).count();
+    let extra_chains = extra
+        .iter()
+        .filter(|&&j| route.parent[j].map(|p| !is_extra(p)).unwrap_or(true))
+        .count();
     let mut sorted = errs.clone();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
     json!({
@@ -603,7 +711,10 @@ pub fn drive(truth: &Truth, route: &Rig, follow: &[usize], now: &[M4], how: Driv
             None => geom::apply(&delta, p),
             Some(pj) => {
                 let pr = geom::translation(&route.rest_world[route.joints[pj]]);
-                let mut at = geom::add(geom::translation(&out[pj]), m3_apply(&turn[pj], geom::sub(p, pr)));
+                let mut at = geom::add(
+                    geom::translation(&out[pj]),
+                    m3_apply(&turn[pj], geom::sub(p, pr)),
+                );
                 // Where the artist slides this bone along its parent (a
                 // body bobbing on its root, a foot on its handle), and
                 // the route's bone hangs from the bone that follows that
@@ -611,7 +722,8 @@ pub fn drive(truth: &Truth, route: &Rig, follow: &[usize], now: &[M4], how: Driv
                 let ap = follow[pj];
                 if truth.rig.parent[a] == Some(ap) {
                     let rest_off = geom::sub(truth.joint_pos[a], truth.joint_pos[ap]);
-                    let now_off = geom::sub(geom::translation(&now[a]), geom::translation(&now[ap]));
+                    let now_off =
+                        geom::sub(geom::translation(&now[a]), geom::translation(&now[ap]));
                     at = geom::add(at, geom::sub(now_off, m3_apply(&turn[pj], rest_off)));
                 }
                 at
@@ -634,10 +746,30 @@ fn best_rotation(pairs: &[(V3, V3, f64)]) -> M3 {
         }
     }
     let mut n = [
-        [s[0][0] + s[1][1] + s[2][2], s[1][2] - s[2][1], s[2][0] - s[0][2], s[0][1] - s[1][0]],
-        [s[1][2] - s[2][1], s[0][0] - s[1][1] - s[2][2], s[0][1] + s[1][0], s[2][0] + s[0][2]],
-        [s[2][0] - s[0][2], s[0][1] + s[1][0], -s[0][0] + s[1][1] - s[2][2], s[1][2] + s[2][1]],
-        [s[0][1] - s[1][0], s[2][0] + s[0][2], s[1][2] + s[2][1], -s[0][0] - s[1][1] + s[2][2]],
+        [
+            s[0][0] + s[1][1] + s[2][2],
+            s[1][2] - s[2][1],
+            s[2][0] - s[0][2],
+            s[0][1] - s[1][0],
+        ],
+        [
+            s[1][2] - s[2][1],
+            s[0][0] - s[1][1] - s[2][2],
+            s[0][1] + s[1][0],
+            s[2][0] + s[0][2],
+        ],
+        [
+            s[2][0] - s[0][2],
+            s[0][1] + s[1][0],
+            -s[0][0] + s[1][1] - s[2][2],
+            s[1][2] + s[2][1],
+        ],
+        [
+            s[0][1] - s[1][0],
+            s[2][0] + s[0][2],
+            s[1][2] + s[2][1],
+            -s[0][0] - s[1][1] + s[2][2],
+        ],
     ];
     // Jacobi: the eigenvector of the largest eigenvalue is the quaternion (w, x, y, z)
     let mut v = [[0.0f64; 4]; 4];
@@ -679,14 +811,28 @@ fn best_rotation(pairs: &[(V3, V3, f64)]) -> M3 {
             }
         }
     }
-    let top = (0..4).max_by(|&a, &b| n[a][a].partial_cmp(&n[b][b]).unwrap()).unwrap();
+    let top = (0..4)
+        .max_by(|&a, &b| n[a][a].partial_cmp(&n[b][b]).unwrap())
+        .unwrap();
     let (w, x, y, z) = (v[0][top], v[1][top], v[2][top], v[3][top]);
     let l = (w * w + x * x + y * y + z * z).sqrt().max(1e-12);
     let (w, x, y, z) = (w / l, x / l, y / l, z / l);
     [
-        [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y + z * w), 2.0 * (x * z - y * w)],
-        [2.0 * (x * y - z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z + x * w)],
-        [2.0 * (x * z + y * w), 2.0 * (y * z - x * w), 1.0 - 2.0 * (x * x + y * y)],
+        [
+            1.0 - 2.0 * (y * y + z * z),
+            2.0 * (x * y + z * w),
+            2.0 * (x * z - y * w),
+        ],
+        [
+            2.0 * (x * y - z * w),
+            1.0 - 2.0 * (x * x + z * z),
+            2.0 * (y * z + x * w),
+        ],
+        [
+            2.0 * (x * z + y * w),
+            2.0 * (y * z - x * w),
+            1.0 - 2.0 * (x * x + y * y),
+        ],
     ]
 }
 
@@ -707,7 +853,10 @@ impl Fitter {
         let n = route.joints.len();
         let (mut tin, mut tout) = (vec![0; n], vec![0; n]);
         let mut clock = 0;
-        let mut stack: Vec<(usize, bool)> = (0..n).filter(|&j| route.parent[j].is_none()).map(|j| (j, false)).collect();
+        let mut stack: Vec<(usize, bool)> = (0..n)
+            .filter(|&j| route.parent[j].is_none())
+            .map(|j| (j, false))
+            .collect();
         while let Some((j, done)) = stack.pop() {
             if done {
                 tout[j] = clock;
@@ -734,7 +883,13 @@ impl Fitter {
                 }
             }
         }
-        Fitter { under, tin, tout, pos: route.joint_rest(), sweeps }
+        Fitter {
+            under,
+            tin,
+            tout,
+            pos: route.joint_rest(),
+            sweeps,
+        }
     }
 }
 
@@ -749,10 +904,16 @@ impl Fitter {
 pub fn fit(route: &Rig, fz: &Fitter, start: &[M4], target: &[V3]) -> Vec<M4> {
     let n = route.joints.len();
     // state: each joint's turn from rest, and where it is
-    let rest_rot: Vec<M3> = (0..n).map(|j| rotation_of(&route.rest_world[route.joints[j]])).collect();
-    let mut rot: Vec<M3> = (0..n).map(|j| m3_mul(&rotation_of(&start[j]), &m3_t(&rest_rot[j]))).collect();
+    let rest_rot: Vec<M3> = (0..n)
+        .map(|j| rotation_of(&route.rest_world[route.joints[j]]))
+        .collect();
+    let mut rot: Vec<M3> = (0..n)
+        .map(|j| m3_mul(&rotation_of(&start[j]), &m3_t(&rest_rot[j])))
+        .collect();
     let mut at: Vec<V3> = start.iter().map(geom::translation).collect();
-    let place = |rot: &[M3], at: &[V3], k: usize, x: V3| geom::add(at[k], m3_apply(&rot[k], geom::sub(x, fz.pos[k])));
+    let place = |rot: &[M3], at: &[V3], k: usize, x: V3| {
+        geom::add(at[k], m3_apply(&rot[k], geom::sub(x, fz.pos[k])))
+    };
     for _ in 0..fz.sweeps {
         let mut moved = 0.0f64;
         for &j in &route.joint_order {
@@ -784,25 +945,35 @@ pub fn fit(route: &Rig, fz: &Fitter, start: &[M4], target: &[V3]) -> Vec<M4> {
                 m.push(mv);
             }
             let err = |r: &M3, c: V3| -> f64 {
-                (0..a.len()).map(|i| geom::dist2(geom::add(m3_apply(r, a[i]), geom::scale(c, m[i])), b[i])).sum()
+                (0..a.len())
+                    .map(|i| geom::dist2(geom::add(m3_apply(r, a[i]), geom::scale(c, m[i])), b[i]))
+                    .sum()
             };
             let before = err(&rot[j], [0.0; 3]);
             let spread = (a.iter().map(|x| geom::dot(*x, *x)).sum::<f64>() / a.len() as f64).sqrt();
             let mut shift = [0.0; 3];
             let mut r_new = rot[j];
             for _ in 0..(if route.parent[j].is_none() { 3 } else { 1 }) {
-                let mut pairs: Vec<(V3, V3, f64)> = (0..a.len()).map(|i| (a[i], geom::sub(b[i], geom::scale(shift, m[i])), 1.0)).collect();
+                let mut pairs: Vec<(V3, V3, f64)> = (0..a.len())
+                    .map(|i| (a[i], geom::sub(b[i], geom::scale(shift, m[i])), 1.0))
+                    .collect();
                 // a thin limb's spin about its own length is not told by
                 // its skin: hold it lightly where it is
                 for k in 0..3 {
-                    let e = geom::scale([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]][k], spread);
+                    let e = geom::scale(
+                        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]][k],
+                        spread,
+                    );
                     pairs.push((e, m3_apply(&rot[j], e), 0.01 * a.len() as f64));
                 }
                 r_new = best_rotation(&pairs);
                 if route.parent[j].is_none() {
                     let (mut num, mut den) = ([0.0; 3], 0.0);
                     for i in 0..a.len() {
-                        num = geom::add(num, geom::scale(geom::sub(b[i], m3_apply(&r_new, a[i])), m[i]));
+                        num = geom::add(
+                            num,
+                            geom::scale(geom::sub(b[i], m3_apply(&r_new, a[i])), m[i]),
+                        );
                         den += m[i] * m[i];
                     }
                     if den > 1e-12 {
@@ -821,7 +992,10 @@ pub fn fit(route: &Rig, fz: &Fitter, start: &[M4], target: &[V3]) -> Vec<M4> {
             for k in 0..n {
                 if below(k) {
                     rot[k] = m3_mul(&step, &rot[k]);
-                    at[k] = geom::add(geom::add(pivot, m3_apply(&step, geom::sub(at[k], pivot))), shift);
+                    at[k] = geom::add(
+                        geom::add(pivot, m3_apply(&step, geom::sub(at[k], pivot))),
+                        shift,
+                    );
                 }
             }
         }
@@ -829,7 +1003,14 @@ pub fn fit(route: &Rig, fz: &Fitter, start: &[M4], target: &[V3]) -> Vec<M4> {
             break;
         }
     }
-    (0..n).map(|j| geom::from_rt(m3_mul(&rot[j], &geom::cols(&route.rest_world[route.joints[j]])), at[j])).collect()
+    (0..n)
+        .map(|j| {
+            geom::from_rt(
+                m3_mul(&rot[j], &geom::cols(&route.rest_world[route.joints[j]])),
+                at[j],
+            )
+        })
+        .collect()
 }
 
 // ------------------------------------------------------------ skin and feet
@@ -842,7 +1023,12 @@ pub struct Frames {
 }
 
 pub fn frames(truth: &Truth, max: usize) -> Frames {
-    let mut f = Frames { clip: vec![], time: vec![], truth_joints: vec![], truth_skin: vec![] };
+    let mut f = Frames {
+        clip: vec![],
+        time: vec![],
+        truth_joints: vec![],
+        truth_skin: vec![],
+    };
     for (ci, clip) in truth.rig.clips.iter().enumerate() {
         for t in Rig::frame_times(clip, max) {
             let (jw, skin) = truth.frame(ci, t);
@@ -865,7 +1051,13 @@ pub struct SkinRun {
 /// How far the route's skin lands from the artist's on every frame.
 /// `t2r`: for each of the artist's vertices, the same vertex of the
 /// route's mesh.
-pub fn skin_error(truth: &Truth, route: &Rig, fr: &Frames, t2r: &[usize], pose: impl Fn(usize) -> Vec<M4>) -> SkinRun {
+pub fn skin_error(
+    truth: &Truth,
+    route: &Rig,
+    fr: &Frames,
+    t2r: &[usize],
+    pose: impl Fn(usize) -> Vec<M4>,
+) -> SkinRun {
     let nf = fr.time.len();
     let nv = truth.rest_pos.len();
     let mut skins = Vec::with_capacity(nf);
@@ -879,7 +1071,9 @@ pub fn skin_error(truth: &Truth, route: &Rig, fr: &Frames, t2r: &[usize], pose: 
     for f in 0..nf {
         let jw = pose(f);
         let skin = route.skin(&jw);
-        let mut e: Vec<f64> = (0..nv).map(|v| geom::norm(geom::sub(skin[t2r[v]], fr.truth_skin[f][v])) / truth.len).collect();
+        let mut e: Vec<f64> = (0..nv)
+            .map(|v| geom::norm(geom::sub(skin[t2r[v]], fr.truth_skin[f][v])) / truth.len)
+            .collect();
         let mut rs = vec![(0.0, 0.0); nb];
         for v in 0..nv {
             let d = truth.rig.dominant[v];
@@ -924,7 +1118,11 @@ pub fn skin_error(truth: &Truth, route: &Rig, fr: &Frames, t2r: &[usize], pose: 
     regions.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
     let where_worst = (0..nb)
         .filter(|&b| worst_regions.get(b).map(|x| x.1 > 0.0).unwrap_or(false))
-        .max_by(|&a, &b| (worst_regions[a].0 / worst_regions[a].1).partial_cmp(&(worst_regions[b].0 / worst_regions[b].1)).unwrap())
+        .max_by(|&a, &b| {
+            (worst_regions[a].0 / worst_regions[a].1)
+                .partial_cmp(&(worst_regions[b].0 / worst_regions[b].1))
+                .unwrap()
+        })
         .map(|b| truth.rig.names[b].clone());
     let json = json!({
         "mean_pct": pct(mean(&cm)),
@@ -935,7 +1133,11 @@ pub fn skin_error(truth: &Truth, route: &Rig, fr: &Frames, t2r: &[usize], pose: 
         "where": regions.iter().take(6).map(|(n, e)| json!({"under": n, "mean_pct": pct(*e)})).collect::<Vec<_>>(),
         "clips": clips,
     });
-    SkinRun { json, skins, joints }
+    SkinRun {
+        json,
+        skins,
+        joints,
+    }
 }
 
 /// The feet: skin held by a leg bone that stands on the ground in the
@@ -949,7 +1151,9 @@ pub fn feet(truth: &Truth, fr: &Frames, run: &SkinRun, t2r: &[usize]) -> Value {
     let sole: Vec<usize> = (0..truth.rest_pos.len())
         .filter(|&v| {
             let d = truth.rig.dominant[v];
-            d != usize::MAX && matches!(truth.roles[d], Role::Leg | Role::Toe) && truth.rest_pos[v][1] - ground < 0.05 * len
+            d != usize::MAX
+                && matches!(truth.roles[d], Role::Leg | Role::Toe)
+                && truth.rest_pos[v][1] - ground < 0.05 * len
         })
         .collect();
     // gather into feet: soles within 6% of the body's length of each other
@@ -978,13 +1182,22 @@ pub fn feet(truth: &Truth, fr: &Frames, run: &SkinRun, t2r: &[usize]) -> Value {
     let mut grounded = 0usize;
     for f in 0..fr.time.len() {
         for k in 0..n_feet {
-            let vs: Vec<usize> = (0..sole.len()).filter(|&i| foot[i] == k).map(|i| sole[i]).collect();
-            let t_low = vs.iter().map(|&v| fr.truth_skin[f][v][1]).fold(f64::INFINITY, f64::min);
+            let vs: Vec<usize> = (0..sole.len())
+                .filter(|&i| foot[i] == k)
+                .map(|i| sole[i])
+                .collect();
+            let t_low = vs
+                .iter()
+                .map(|&v| fr.truth_skin[f][v][1])
+                .fold(f64::INFINITY, f64::min);
             if t_low - ground > 0.02 * len {
                 continue;
             }
             grounded += 1;
-            let r_low = vs.iter().map(|&v| run.skins[f][t2r[v]][1]).fold(f64::INFINITY, f64::min);
+            let r_low = vs
+                .iter()
+                .map(|&v| run.skins[f][t2r[v]][1])
+                .fold(f64::INFINITY, f64::min);
             let (mut ct, mut cr) = ([0.0; 3], [0.0; 3]);
             for &v in &vs {
                 ct = geom::add(ct, fr.truth_skin[f][v]);
@@ -1006,4 +1219,90 @@ pub fn feet(truth: &Truth, fr: &Frames, run: &SkinRun, t2r: &[usize]) -> Value {
         "sink_max_pct": pct(sink),
         "lift_max_pct": pct(lift),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn best_rotation_finds_a_known_turn() {
+        // 40 degrees about a slanted axis, weights uneven
+        let axis = {
+            let a = [0.3, 0.8, -0.5];
+            geom::scale(a, 1.0 / geom::norm(a))
+        };
+        let (s, c) = 40f64.to_radians().sin_cos();
+        let turn = |v: V3| -> V3 {
+            let k = geom::cross(axis, v);
+            let d = geom::dot(axis, v);
+            [
+                v[0] * c + k[0] * s + axis[0] * d * (1.0 - c),
+                v[1] * c + k[1] * s + axis[1] * d * (1.0 - c),
+                v[2] * c + k[2] * s + axis[2] * d * (1.0 - c),
+            ]
+        };
+        let pts = [
+            [1.0, 0.2, 0.0],
+            [0.0, 1.0, 0.3],
+            [-0.4, 0.1, 1.0],
+            [0.7, -0.6, 0.2],
+            [0.1, 0.1, -0.9],
+        ];
+        let pairs: Vec<(V3, V3, f64)> = pts
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (*p, turn(*p), 1.0 + i as f64))
+            .collect();
+        let r = best_rotation(&pairs);
+        for p in pts {
+            let got = m3_apply(&r, p);
+            let want = turn(p);
+            assert!(
+                geom::norm(geom::sub(got, want)) < 1e-9,
+                "{got:?} vs {want:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn align_finds_a_turned_scaled_moved_mesh() {
+        let truth: Vec<V3> = (0..200)
+            .map(|i| {
+                let t = i as f64 * 0.37;
+                [
+                    t.sin() * 0.3 + 0.1 * (t * 1.7).cos(),
+                    (t * 0.61).cos() * 0.5 + 0.5,
+                    t.cos() * 0.9 + 0.2 * (t * 2.3).sin(),
+                ]
+            })
+            .collect();
+        // a quarter turn and three degrees more, 4% larger, moved
+        let (s, c) = 93f64.to_radians().sin_cos();
+        let route: Vec<V3> = truth
+            .iter()
+            .map(|p| {
+                [
+                    1.04 * (c * p[0] + s * p[2]) + 0.2,
+                    1.04 * p[1],
+                    1.04 * (-s * p[0] + c * p[2]) - 0.1,
+                ]
+            })
+            .collect();
+        let al = align(&truth, &route);
+        assert!(al.fit < 1e-4, "fit {}", al.fit);
+        assert!((al.scale - 1.04).abs() < 2e-3, "scale {}", al.scale);
+        assert!((al.yaw_deg - 93.0).abs() < 0.5, "yaw {}", al.yaw_deg);
+    }
+
+    #[test]
+    fn roles_are_read_from_names() {
+        assert_eq!(role_of("b_LeftForeArm_010"), Role::Leg); // not an ear
+        assert_eq!(role_of("Tail3"), Role::Tail);
+        assert_eq!(role_of("Shoulders"), Role::Trunk);
+        assert_eq!(role_of("Shoulder.L"), Role::Leg);
+        assert_eq!(role_of("Jaw"), Role::Jaw);
+        assert_eq!(role_of("Wing2.R"), Role::Wing);
+        assert_eq!(role_of("PoleTarget.L"), Role::Other);
+    }
 }

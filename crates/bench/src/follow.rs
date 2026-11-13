@@ -26,12 +26,19 @@ impl Camera {
     pub fn write(&self, path: &Path, grey: f64) -> Result<()> {
         let v = json!({"width": self.width, "height": self.height, "px_per_m": self.px_per_m, "centre_z": self.centre_z,
             "centre_y": self.centre_y, "ground_y": self.ground_y, "grey": grey, "looks_along": "+x", "right": "+z", "up": "+y"});
-        std::fs::write(path, serde_json::to_string_pretty(&v)?).with_context(|| format!("writing {}", path.display()))
+        std::fs::write(path, serde_json::to_string_pretty(&v)?)
+            .with_context(|| format!("writing {}", path.display()))
     }
 
     pub fn read(path: &Path) -> Result<Camera> {
-        let v: Value = serde_json::from_str(&std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?)?;
-        let f = |k: &str| v[k].as_f64().ok_or_else(|| anyhow!("{}: no {k}", path.display()));
+        let v: Value = serde_json::from_str(
+            &std::fs::read_to_string(path)
+                .with_context(|| format!("reading {}", path.display()))?,
+        )?;
+        let f = |k: &str| {
+            v[k].as_f64()
+                .ok_or_else(|| anyhow!("{}: no {k}", path.display()))
+        };
         Ok(Camera {
             width: f("width")? as usize,
             height: f("height")? as usize,
@@ -53,7 +60,11 @@ pub struct Mask {
 
 impl Mask {
     fn new(w: usize, h: usize) -> Mask {
-        Mask { w, h, on: vec![false; w * h] }
+        Mask {
+            w,
+            h,
+            on: vec![false; w * h],
+        }
     }
 
     pub fn count(&self) -> usize {
@@ -127,13 +138,24 @@ pub fn overlap(a: &Mask, b: &Mask) -> f64 {
 /// A video frame's outline: what differs from the plain background (the
 /// colour of the picture's border), its largest piece, shrunk `down` times.
 pub fn frame_mask(path: &Path, down: usize, cam: &Camera) -> Result<Mask> {
-    let dec = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?));
-    let mut rd = dec.read_info().map_err(|e| anyhow!("{}: {e}", path.display()))?;
+    let dec = png::Decoder::new(std::io::BufReader::new(
+        std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?,
+    ));
+    let mut rd = dec
+        .read_info()
+        .map_err(|e| anyhow!("{}: {e}", path.display()))?;
     let mut buf = vec![0u8; rd.output_buffer_size()];
-    let info = rd.next_frame(&mut buf).map_err(|e| anyhow!("{}: {e}", path.display()))?;
+    let info = rd
+        .next_frame(&mut buf)
+        .map_err(|e| anyhow!("{}: {e}", path.display()))?;
     let (w, h) = (info.width as usize, info.height as usize);
     if w != cam.width || h != cam.height {
-        bail!("{}: {w}x{h}, the camera is {}x{}", path.display(), cam.width, cam.height);
+        bail!(
+            "{}: {w}x{h}, the camera is {}x{}",
+            path.display(),
+            cam.width,
+            cam.height
+        );
     }
     let ch = match info.color_type {
         png::ColorType::Rgb => 3,
@@ -270,8 +292,19 @@ impl<'a> Follower<'a> {
                 }
             }
         }
-        let active = rig.joint_order.iter().copied().filter(|&j| moves[j]).collect();
-        Follower { rig, cam: cam.clone(), down, pos: rig.joint_rest(), active }
+        let active = rig
+            .joint_order
+            .iter()
+            .copied()
+            .filter(|&j| moves[j])
+            .collect();
+        Follower {
+            rig,
+            cam: cam.clone(),
+            down,
+            pos: rig.joint_rest(),
+            active,
+        }
     }
 
     /// A world matrix per joint for a pose.
@@ -289,11 +322,20 @@ impl<'a> Follower<'a> {
                 }
                 Some(p) => {
                     total[j] = total[p] + pose.turn[j];
-                    at[j] = geom::add(at[p], m3_apply(&rot[p], geom::sub(self.pos[j], self.pos[p])));
+                    at[j] = geom::add(
+                        at[p],
+                        m3_apply(&rot[p], geom::sub(self.pos[j], self.pos[p])),
+                    );
                 }
             }
             rot[j] = rot_x(total[j]);
-            out[j] = geom::from_rt(m3_mul(&rot[j], &geom::cols(&self.rig.rest_world[self.rig.joints[j]])), at[j]);
+            out[j] = geom::from_rt(
+                m3_mul(
+                    &rot[j],
+                    &geom::cols(&self.rig.rest_world[self.rig.joints[j]]),
+                ),
+                at[j],
+            );
         }
         out
     }
@@ -304,7 +346,15 @@ impl<'a> Follower<'a> {
         let k = self.cam.px_per_m / self.down as f64;
         let (w, h) = (self.cam.width / self.down, self.cam.height / self.down);
         let (cx, cy) = (w as f64 / 2.0, h as f64 / 2.0);
-        let uv: Vec<(f64, f64)> = skin.iter().map(|p| ((p[2] - self.cam.centre_z) * k + cx, cy - (p[1] - self.cam.centre_y) * k)).collect();
+        let uv: Vec<(f64, f64)> = skin
+            .iter()
+            .map(|p| {
+                (
+                    (p[2] - self.cam.centre_z) * k + cx,
+                    cy - (p[1] - self.cam.centre_y) * k,
+                )
+            })
+            .collect();
         let mut m = Mask::new(w, h);
         for t in &self.rig.tris {
             let (a, b, c) = (uv[t[0] as usize], uv[t[1] as usize], uv[t[2] as usize]);
@@ -325,7 +375,9 @@ impl<'a> Follower<'a> {
                     let e0 = (b.0 - a.0) * (py - a.1) - (b.1 - a.1) * (px - a.0);
                     let e1 = (c.0 - b.0) * (py - b.1) - (c.1 - b.1) * (px - b.0);
                     let e2 = (a.0 - c.0) * (py - c.1) - (a.1 - c.1) * (px - c.0);
-                    if (e0 >= 0.0 && e1 >= 0.0 && e2 >= 0.0) || (e0 <= 0.0 && e1 <= 0.0 && e2 <= 0.0) {
+                    if (e0 >= 0.0 && e1 >= 0.0 && e2 >= 0.0)
+                        || (e0 <= 0.0 && e1 <= 0.0 && e2 <= 0.0)
+                    {
                         m.on[y * w + x] = true;
                     }
                 }
@@ -339,7 +391,14 @@ impl<'a> Follower<'a> {
     /// shrunk pixels, each way), plus what holds the pose steady: a
     /// charge for turning far from the frame before and for going under
     /// the ground.
-    fn cost(&self, pose: &Pose, video: &Mask, video_dist: &[f32], before: &Pose, steady: f64) -> f64 {
+    fn cost(
+        &self,
+        pose: &Pose,
+        video: &Mask,
+        video_dist: &[f32],
+        before: &Pose,
+        steady: f64,
+    ) -> f64 {
         let (m, low) = self.outline(pose);
         let n = m.count();
         if n == 0 {
@@ -378,11 +437,23 @@ impl<'a> Follower<'a> {
     pub fn line_up(&mut self, video: &Mask) -> Pose {
         let dist = video.distance();
         let n = self.rig.joints.len();
-        let mut pose = Pose { shift: [0.0, 0.0], turn: vec![0.0; n] };
+        let mut pose = Pose {
+            shift: [0.0, 0.0],
+            turn: vec![0.0; n],
+        };
         let rest = pose.clone();
         let mut best = self.cost(&pose, video, &dist, &rest, 0.0);
         let px = self.down as f64 / self.cam.px_per_m;
-        for (deg, shift, zoom) in [(24.0, 16.0, 1.06), (16.0, 10.0, 1.04), (8.0, 6.0, 1.02), (16.0, 10.0, 1.02), (8.0, 6.0, 1.01), (4.0, 3.0, 1.01), (2.0, 1.5, 1.005), (1.0, 0.75, 1.0025)] {
+        for (deg, shift, zoom) in [
+            (24.0, 16.0, 1.06),
+            (16.0, 10.0, 1.04),
+            (8.0, 6.0, 1.02),
+            (16.0, 10.0, 1.02),
+            (8.0, 6.0, 1.01),
+            (4.0, 3.0, 1.01),
+            (2.0, 1.5, 1.005),
+            (1.0, 0.75, 1.0025),
+        ] {
             for _ in 0..2 {
                 for k in 0..3 {
                     for sign in [1.0, -1.0] {
@@ -485,9 +556,21 @@ pub struct Followed {
 
 /// The whole clip. `frames`: the video's pictures in order, `fps` their
 /// rate, `step` every how many of them is used.
-pub fn follow(rig: &Rig, cam: &Camera, frames: &[std::path::PathBuf], fps: f64, step: usize, down: usize, steady: f64, overlays: Option<&Path>) -> Result<Followed> {
+pub fn follow(
+    rig: &Rig,
+    cam: &Camera,
+    frames: &[std::path::PathBuf],
+    fps: f64,
+    step: usize,
+    down: usize,
+    steady: f64,
+    overlays: Option<&Path>,
+) -> Result<Followed> {
     let mut fw = Follower::new(rig, cam, down);
-    let rest = Pose { shift: [0.0, 0.0], turn: vec![0.0; rig.joints.len()] };
+    let rest = Pose {
+        shift: [0.0, 0.0],
+        turn: vec![0.0; rig.joints.len()],
+    };
     let used: Vec<usize> = (0..frames.len()).step_by(step.max(1)).collect();
     let mut masks = vec![];
     for &f in &used {
@@ -505,12 +588,20 @@ pub fn follow(rig: &Rig, cam: &Camera, frames: &[std::path::PathBuf], fps: f64, 
         prev = p.clone();
         poses.push(p);
     }
-    let raw: Vec<f64> = poses.iter().zip(&masks).map(|(p, m)| overlap(&fw.outline(p).0, m)).collect();
+    let raw: Vec<f64> = poses
+        .iter()
+        .zip(&masks)
+        .map(|(p, m)| overlap(&fw.outline(p).0, m))
+        .collect();
     // smooth over time (weights 1 2 1), then keep the lowest point on the ground
     let n = poses.len();
     let mut smooth = poses.clone();
     for i in 0..n {
-        let (a, b, c) = (&poses[i.saturating_sub(1)], &poses[i], &poses[(i + 1).min(n - 1)]);
+        let (a, b, c) = (
+            &poses[i.saturating_sub(1)],
+            &poses[i],
+            &poses[(i + 1).min(n - 1)],
+        );
         for k in 0..2 {
             smooth[i].shift[k] = (a.shift[k] + 2.0 * b.shift[k] + c.shift[k]) / 4.0;
         }
@@ -546,7 +637,11 @@ pub fn follow(rig: &Rig, cam: &Camera, frames: &[std::path::PathBuf], fps: f64, 
     let worst = per_frame.iter().cloned().fold(1.0, f64::min);
     let worst_at = per_frame.iter().position(|&x| x == worst).unwrap_or(0);
     let r3 = |x: f64| (x * 1e3).round() / 1e3;
-    let mut turned: Vec<(String, f64)> = fw.active.iter().map(|&j| (rig.names[j].clone(), widest[j])).collect();
+    let mut turned: Vec<(String, f64)> = fw
+        .active
+        .iter()
+        .map(|&j| (rig.names[j].clone(), widest[j]))
+        .collect();
     turned.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
     let body = masks[0].count().max(1) as f64;
     let json = json!({
@@ -566,5 +661,10 @@ pub fn follow(rig: &Rig, cam: &Camera, frames: &[std::path::PathBuf], fps: f64, 
         "camera_lined_up": {"zoom": r3(fw.cam.px_per_m / cam.px_per_m),
             "moved_px": [((cam.centre_z - fw.cam.centre_z) * fw.cam.px_per_m).round(), ((fw.cam.centre_y - cam.centre_y) * fw.cam.px_per_m).round()]},
     });
-    Ok(Followed { json, times, joints, camera: fw.cam.clone() })
+    Ok(Followed {
+        json,
+        times,
+        joints,
+        camera: fw.cam.clone(),
+    })
 }

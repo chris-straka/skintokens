@@ -16,7 +16,8 @@ use skintokens::geom::{self, KdTree, V3};
 use bench::{Drive, Truth};
 use rig::Rig;
 
-const HELP: &str = "creature-bench: a creature rig measured against a hand-made rig of the same mesh.
+const HELP: &str =
+    "creature-bench: a creature rig measured against a hand-made rig of the same mesh.
 
     creature-bench score TRUTH.glb ROUTE.glb [--json OUT.json] [--clips OUT.glb]
                          [--max-frames 48] [--sweeps 6] [--roles ROLES.json] [--label NAME]
@@ -90,7 +91,9 @@ fn parse(args: &[String]) -> Result<Args> {
     let mut k = 0;
     while k < args.len() {
         if let Some(name) = args[k].strip_prefix("--") {
-            let v = args.get(k + 1).ok_or_else(|| anyhow!("--{name} needs a value"))?;
+            let v = args
+                .get(k + 1)
+                .ok_or_else(|| anyhow!("--{name} needs a value"))?;
             flags.insert(name.to_string(), v.clone());
             k += 2;
         } else {
@@ -103,7 +106,9 @@ fn parse(args: &[String]) -> Result<Args> {
 
 fn roles_file(a: &Args) -> Result<Value> {
     match a.flags.get("roles") {
-        Some(p) => Ok(serde_json::from_str(&std::fs::read_to_string(p).with_context(|| format!("reading {p}"))?)?),
+        Some(p) => Ok(serde_json::from_str(
+            &std::fs::read_to_string(p).with_context(|| format!("reading {p}"))?,
+        )?),
         None => Ok(json!({})),
     }
 }
@@ -125,7 +130,12 @@ fn score(a: &Args) -> Result<()> {
     if route.joints.is_empty() {
         bail!("{} has no skin", a.pos[1]);
     }
-    let max_frames: usize = a.flags.get("max-frames").map(|s| s.parse()).transpose()?.unwrap_or(48);
+    let max_frames: usize = a
+        .flags
+        .get("max-frames")
+        .map(|s| s.parse())
+        .transpose()?
+        .unwrap_or(48);
     let al = bench::align(&truth_rig.rest_pos, &route.rest_pos);
     let truth = Truth::new(&truth_rig, &al, &roles_file(a)?);
     let t2r = nearest(&truth.rest_pos, &route.rest_pos);
@@ -134,14 +144,41 @@ fn score(a: &Args) -> Result<()> {
     let skeleton = bench::skeleton(&truth, &route, &map);
     let fr = bench::frames(&truth, max_frames);
     // the headline: the rig's best effort at the artist's motion
-    let sweeps: usize = a.flags.get("sweeps").map(|s| s.parse()).transpose()?.unwrap_or(6);
+    let sweeps: usize = a
+        .flags
+        .get("sweeps")
+        .map(|s| s.parse())
+        .transpose()?
+        .unwrap_or(6);
     let fz = bench::Fitter::new(&route, sweeps);
-    let targets: Vec<Vec<V3>> = fr.truth_skin.iter().map(|skin| r2t.iter().map(|&t| skin[t]).collect()).collect();
+    let targets: Vec<Vec<V3>> = fr
+        .truth_skin
+        .iter()
+        .map(|skin| r2t.iter().map(|&t| skin[t]).collect())
+        .collect();
     // a plain retarget: each bone turned as the artist's bone it lies along
-    let mapped = bench::skin_error(&truth, &route, &fr, &t2r, |f| bench::drive(&truth, &route, &map.by_line, &fr.truth_joints[f], Drive::Turn));
+    let mapped = bench::skin_error(&truth, &route, &fr, &t2r, |f| {
+        bench::drive(
+            &truth,
+            &route,
+            &map.by_line,
+            &fr.truth_joints[f],
+            Drive::Turn,
+        )
+    });
     // the headline: from there, the rig's best effort at the artist's skin
-    let turn = bench::skin_error(&truth, &route, &fr, &t2r, |f| bench::fit(&route, &fz, &mapped.joints[f], &targets[f]));
-    let carry = bench::skin_error(&truth, &route, &fr, &t2r, |f| bench::drive(&truth, &route, &map.by_line, &fr.truth_joints[f], Drive::Carry));
+    let turn = bench::skin_error(&truth, &route, &fr, &t2r, |f| {
+        bench::fit(&route, &fz, &mapped.joints[f], &targets[f])
+    });
+    let carry = bench::skin_error(&truth, &route, &fr, &t2r, |f| {
+        bench::drive(
+            &truth,
+            &route,
+            &map.by_line,
+            &fr.truth_joints[f],
+            Drive::Carry,
+        )
+    });
     let feet = bench::feet(&truth, &fr, &turn, &t2r);
 
     let mut clips_note = Value::Null;
@@ -149,7 +186,13 @@ fn score(a: &Args) -> Result<()> {
         let mut clips = vec![];
         for (ci, clip) in truth_rig.clips.iter().enumerate() {
             let idx: Vec<usize> = (0..fr.time.len()).filter(|&f| fr.clip[f] == ci).collect();
-            clips.push((clip.name.clone(), idx.iter().map(|&f| fr.time[f]).collect::<Vec<_>>(), idx.iter().map(|&f| turn.joints[f].clone()).collect::<Vec<_>>()));
+            clips.push((
+                clip.name.clone(),
+                idx.iter().map(|&f| fr.time[f]).collect::<Vec<_>>(),
+                idx.iter()
+                    .map(|&f| turn.joints[f].clone())
+                    .collect::<Vec<_>>(),
+            ));
         }
         let g = route.with_clips(&clips)?;
         g.write(Path::new(out))?;
@@ -170,7 +213,9 @@ fn score(a: &Args) -> Result<()> {
         }
     }
 
-    let differ = (0..route.joints.len()).filter(|&j| map.by_line[j] != map.by_skin[j]).count();
+    let differ = (0..route.joints.len())
+        .filter(|&j| map.by_line[j] != map.by_skin[j])
+        .count();
     let bones: Vec<Value> = (0..route.joints.len())
         .map(|j| {
             json!({"bone": route.names[j], "follows": truth_rig.names[map.by_line[j]], "off_pct": (map.off[j] * 1e4).round() / 1e2,
@@ -198,7 +243,8 @@ fn score(a: &Args) -> Result<()> {
         "mapping": bones,
     });
     if let Some(p) = a.flags.get("json") {
-        std::fs::write(p, serde_json::to_string_pretty(&report)?).with_context(|| format!("writing {p}"))?;
+        std::fs::write(p, serde_json::to_string_pretty(&report)?)
+            .with_context(|| format!("writing {p}"))?;
     }
     let s = &report["skeleton"];
     println!(
@@ -223,7 +269,10 @@ fn rigid(a: &Args) -> Result<()> {
     let rig = Rig::read(Path::new(&a.pos[0]))?;
     let al = bench::align(&rig.rest_pos, &rig.rest_pos);
     let truth = Truth::new(&rig, &al, &json!({}));
-    let mut g = skintokens::glb::Glb { json: rig.glb.json.clone(), bin: rig.glb.bin.clone() };
+    let mut g = skintokens::glb::Glb {
+        json: rig.glb.json.clone(),
+        bin: rig.glb.bin.clone(),
+    };
     let doc = rig.glb.doc()?;
     let mut v0 = 0usize;
     let mut seen = std::collections::HashSet::new();
@@ -233,12 +282,21 @@ fn rigid(a: &Args) -> Result<()> {
         if !seen.insert((mesh.index(), node.skin().map(|s| s.index()))) {
             continue;
         }
-        let slots: Vec<usize> = node.skin().map(|s| s.joints().map(|j| rig.joint_of[&j.index()]).collect()).unwrap_or_default();
+        let slots: Vec<usize> = node
+            .skin()
+            .map(|s| s.joints().map(|j| rig.joint_of[&j.index()]).collect())
+            .unwrap_or_default();
         for (pi, prim) in mesh.primitives().enumerate() {
             if prim.mode() != gltf::mesh::Mode::Triangles {
                 continue;
             }
-            let Some(n) = prim.reader(rig.glb.buffer()).read_positions().map(|p| p.count()) else { continue };
+            let Some(n) = prim
+                .reader(rig.glb.buffer())
+                .read_positions()
+                .map(|p| p.count())
+            else {
+                continue;
+            };
             if !slots.is_empty() {
                 let mut js = vec![[0u16; 4]; n];
                 let ws = vec![[1.0f32, 0.0, 0.0, 0.0]; n];
@@ -262,7 +320,9 @@ fn rigid(a: &Args) -> Result<()> {
                     js[v][0] = best.1 as u16;
                 }
                 let (ja, wa) = g.push_skin_attrs(&js, &ws);
-                let attrs = g.json["meshes"][mesh.index()]["primitives"][pi]["attributes"].as_object_mut().unwrap();
+                let attrs = g.json["meshes"][mesh.index()]["primitives"][pi]["attributes"]
+                    .as_object_mut()
+                    .unwrap();
                 attrs.retain(|k, _| !k.starts_with("JOINTS_") && !k.starts_with("WEIGHTS_"));
                 attrs.insert("JOINTS_0".into(), json!(ja));
                 attrs.insert("WEIGHTS_0".into(), json!(wa));
@@ -282,7 +342,14 @@ fn info(a: &Args) -> Result<()> {
     let rig = Rig::read(Path::new(&a.pos[0]))?;
     let al = bench::align(&rig.rest_pos, &rig.rest_pos);
     let truth = Truth::new(&rig, &al, &roles_file(a)?);
-    println!("{}: {} vertices, {} triangles, {} joints, body length {:.3}", a.pos[0], rig.rest_pos.len(), rig.tris.len(), rig.joints.len(), truth.len);
+    println!(
+        "{}: {} vertices, {} triangles, {} joints, body length {:.3}",
+        a.pos[0],
+        rig.rest_pos.len(),
+        rig.tris.len(),
+        rig.joints.len(),
+        truth.len
+    );
     for &j in &rig.joint_order {
         println!(
             "  {:28} {:6} under {:24} holds {:7.1}",
@@ -294,7 +361,12 @@ fn info(a: &Args) -> Result<()> {
     }
     for c in &rig.clips {
         let t = Rig::frame_times(c, usize::MAX);
-        println!("  clip {:24} {} frames, {:.2} s", c.name, t.len(), t.last().copied().unwrap_or(0.0));
+        println!(
+            "  clip {:24} {} frames, {:.2} s",
+            c.name,
+            t.len(),
+            t.last().copied().unwrap_or(0.0)
+        );
     }
     Ok(())
 }
@@ -314,10 +386,30 @@ fn follow_cmd(a: &Args) -> Result<()> {
     if frames.len() < 2 {
         bail!("{}: fewer than two PNG frames", need("frames")?);
     }
-    let num = |k: &str, d: f64| -> Result<f64> { Ok(a.flags.get(k).map(|s| s.parse()).transpose()?.unwrap_or(d)) };
-    let (fps, step, down, steady) = (num("fps", 24.0)?, num("step", 2.0)? as usize, num("down", 4.0)? as usize, num("steady", 0.001)?);
-    let name = a.flags.get("name").cloned().unwrap_or_else(|| "followed".into());
-    let got = follow::follow(&rig, &cam, &frames, fps, step, down, steady, a.flags.get("overlays").map(Path::new))?;
+    let num = |k: &str, d: f64| -> Result<f64> {
+        Ok(a.flags.get(k).map(|s| s.parse()).transpose()?.unwrap_or(d))
+    };
+    let (fps, step, down, steady) = (
+        num("fps", 24.0)?,
+        num("step", 2.0)? as usize,
+        num("down", 4.0)? as usize,
+        num("steady", 0.001)?,
+    );
+    let name = a
+        .flags
+        .get("name")
+        .cloned()
+        .unwrap_or_else(|| "followed".into());
+    let got = follow::follow(
+        &rig,
+        &cam,
+        &frames,
+        fps,
+        step,
+        down,
+        steady,
+        a.flags.get("overlays").map(Path::new),
+    )?;
     let g = rig.with_clips(&[(name.clone(), got.times.clone(), got.joints.clone())])?;
     g.write(Path::new(need("out")?))?;
     if let Some(p) = a.flags.get("camera-out") {
@@ -328,7 +420,8 @@ fn follow_cmd(a: &Args) -> Result<()> {
     report["clip"] = json!(name);
     report["out"] = json!(need("out")?);
     if let Some(p) = a.flags.get("json") {
-        std::fs::write(p, serde_json::to_string_pretty(&report)?).with_context(|| format!("writing {p}"))?;
+        std::fs::write(p, serde_json::to_string_pretty(&report)?)
+            .with_context(|| format!("writing {p}"))?;
     }
     println!(
         "{}: {} frames followed, outlines overlap {} mean, {} at worst ({} s); rest pose on the first frame {}; widest turn {}",
