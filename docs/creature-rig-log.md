@@ -221,3 +221,45 @@ Leads not taken yet: two limbs in one mass (cut the solid along the
 mirror plane below the hips before reading parts); arms and legs
 through thick fur, which is most of what still fails; a jaw; the
 facing in the clean step itself.
+
+## 2026-11-12, evening: judged against hand-made animals
+
+The benchmark (`docs/creature-bench.md`) put the route's rig against
+twelve hand-made animals playing their own clips: farther from the
+artist than the model's rig on 11 of 12, with four of the six
+four-legged animals read as two-legged or legless, and the route's own
+skeleton check passing them. A new hunched, long-armed beast was read
+with both arms as legs and a leg as a tail, and passed at 99.5.
+
+### Read the body about its own mirror plane (kept)
+
+The beast's cause: the clean step could not tell which way it faces and
+left it sideways, so an arm and a leg of one side read as a left and a
+right. `creature-rig` now finds the body's mirror plane from the mesh
+(every vertical plane, 3 degrees apart then 1: the body's mirror image
+laid on the body, mean distance as the score) and turns the mesh onto it
+when the best plane is more than 10 degrees off and a quarter better.
+The beast: two legs, two arms, a neck and head.
+
+### A branch the body stands on is a leg however short (kept)
+
+A limb had to reach 15% of the body's longest side; a long, low animal's
+legs are a tenth of it, so the pug, cow and rat had no front legs. A
+branch off the midline that reaches the ground now counts at 18% of the
+body's height. Body-read rig against the artist (joints, skin mean): pug
+14.3% / 2.2% to 7.3% / 1.1%, cow 9.8% / 2.4% to 4.9% / 1.3%, rat 11.0% /
+2.3% to 6.7% / 1.6%; the other animals unchanged or within 0.1.
+
+### A head held to one side (kept)
+
+On a body that stands with no limb on the midline up top, the bulkiest
+unnamed limb in the upper half with no like limb opposite is the head.
+Two more creatures get their head chain.
+
+### Not solved
+
+Hips and shoulders still sit where the limb leaves the body (about a
+tenth of the body's length from an artist's). The apatosaurus gets two
+legs of four; the dinosaurs no small arms; the bat and spider no head
+bone. The fused-root figure lost a leg (two to one). The full route
+(weights, the model's rig, the picker) was not rerun with these.

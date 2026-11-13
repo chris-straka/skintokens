@@ -259,6 +259,63 @@ CREATURE_BENCH_BIN=$B/bin/creature-bench WEIGHTS_BIN=.../weights python3 tools/c
 - **The search is local** (nudges from the frame before): a fast limb
   can be lost and found again late.
 
+## The skeleton check that needs no artist
+
+`creature-bench anatomy RIG.glb [--json OUT.json]` judges a skeleton from
+its own joints, the skin they hold and the mirror plane. It uses neither
+an artist's rig nor the route's reading of the body, so a body the route
+misread cannot pass on that misreading (the route's own check passed a
+sideways-read beast at 99.5). What fails:
+
+- **B_LOPSIDED**: a limb that branches off the centre line with no
+  partner on the other side (joined at the mirrored place, as many
+  joints give or take one, at most half again as long). A body that is
+  itself lopsided (more than 2% of its length from its mirror image)
+  gets these as warnings, but must still have as many limbs on one side
+  as on the other.
+- **B_NO_HEAD**: no bone of its own on the centre line, past the last
+  limbs, holds a hundredth of the skin. On a lopsided body a lone limb
+  joined up there and holding that much counts as a head held to one
+  side.
+- **B_NO_ARMS**: a body whose trunk is taller than it is long has no
+  pair of limbs on the upper part of its trunk.
+- **B_NO_LEG**: where the body stands on the ground off the mirror
+  plane, the skin there is held by a bone on the centre line: that leg
+  has no bones. A limb is a leg by where it joins, not by reaching the
+  ground: an arm that hangs to the ground still joins at the shoulders.
+- **B_KIND**: a limb's name disagrees with where it joins (a "leg" on
+  the upper part of a standing trunk, a "tail" hanging off the side).
+- **B_OFF_CENTRE**: a bone on the centre line far off the mirror plane.
+
+All 12 hand-made animals' rigs pass. `tools/bench/anatomy_set.sh` runs it
+over a set; `tools/bench/reread.sh` runs `creature-rig`'s body reading
+alone over a set and puts each rig through it (for changes to the
+reading).
+
+## The video-to-motion exam
+
+Video to motion is judged before any paid clip, by motionforge's exam
+(its `docs/creature.md`): a made-up motion (every joint moving at random
+within its limits) filmed by the same two cameras as the start picture,
+read back and compared joint by joint with the motion that was made.
+`tools/bench/exam.sh NAME RIG.glb ...` runs it on a route's skeleton:
+
+1. `motionforge creature-profile`, `creature-poses` (3,000 poses, half
+   blurred by motion), `render.py`, `train.py`: a joint finder for that
+   creature (DINOv2 ViT-S/14, Apache-2.0, and a small head; about 20
+   minutes of f's GPU).
+2. `exam.py`: three made-up motions, read through the finder, two rays
+   crossed, solved onto the skeleton, compared bone by bone.
+3. The baseline row: the same motions filmed from the side alone and
+   followed by `creature-bench follow` (outline fitting).
+4. `creature-bench joints TRUTH.glb OTHER.glb`: each answer's joints
+   against the made-up motion, per joint (mm and share of height), and
+   a rig that does not move at all, for scale.
+
+A change to the reader passes only if no creature's exam gets worse
+(`exam.py --check` against a baseline). The exam is synthetic: the
+pictures are our own renders made worse, not a video model's.
+
 ## Why not the creature score
 
 - It multiplies the bend checker's 0 to 100 score (half of which is the
