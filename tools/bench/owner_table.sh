@@ -18,6 +18,8 @@
 # OLD_PATTERN (with %n for the name) adds the same tears numbers for an
 # earlier rig of each creature, where there is one.
 # Writes $BENCH/owner/TAG.table.md, TAG.table.json and TAG.sheets/<name>.jpg.
+# ONLY="name ..." redoes the checks and sheets of those creatures alone and
+# makes the table from everything on disk.
 set -uo pipefail
 BENCH=${BENCH:?set BENCH}; TAG=$1; SET=$2; OLD=${3:-}
 TOOLS=${TOOLS:-/home/f/rigwork/creatures}
@@ -37,6 +39,8 @@ one() {
 export -f one; export CR CB WF
 while IFS=$'\t' read -r n kind model; do
   [ -z "$n" ] && continue
+  # ONLY="a b": redo just these creatures (the table is still made from all)
+  if [ -n "${ONLY:-}" ] && ! printf '%s\n' $ONLY | grep -qx "$n"; then continue; fi
   rig=$O/$n/$n.glb
   [ -f "$rig" ] || { echo "$n: no rig"; continue; }
   one "$n" "$rig" "$O/$n/check"
