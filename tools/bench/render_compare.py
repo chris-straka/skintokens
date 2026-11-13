@@ -53,12 +53,30 @@ def opaque_paint(path, before):
     with open(path, "rb") as f:
         b = f.read()
     n = _struct.unpack("<I", b[12:16])[0]
-    mats = {m.get("name"): m for m in _json.loads(b[20:20 + n]).get("materials", [])}
+    doc = _json.loads(b[20:20 + n])
+    mats = {m.get("name"): m for m in doc.get("materials", [])}
+    # Which of the file's materials a Blender material is: by its slot on
+    # the mesh when the file has one mesh (Blender renames a material
+    # whose name is taken: "Material.003" comes in as "Material.004"),
+    # else by its name.
+    by_slot = {}
+    new_meshes = [o for o in bpy.data.objects if o.type == "MESH" and any(s.material and s.material not in before for s in o.material_slots)]
+    if len(doc.get("meshes", [])) == 1 and len(new_meshes) == 1:
+        order = []
+        for pr in doc["meshes"][0].get("primitives", []):
+            k = pr.get("material")
+            if k is not None and k not in order:
+                order.append(k)
+        for slot, k in zip(new_meshes[0].material_slots, order):
+            if slot.material:
+                by_slot[slot.material.name] = doc["materials"][k]
     for m in bpy.data.materials:
         if m in before:
             continue
         name = m.name if m.name in mats else m.name.rsplit(".", 1)[0]
-        src = mats.get(name)
+        src = by_slot.get(m.name) or mats.get(name)
+        if m.name in by_slot:
+            name = src.get("name", name)
         c = list(m.diffuse_color)
         f4 = src.get("pbrMetallicRoughness", {}).get("baseColorFactor") if src else None
         if f4:

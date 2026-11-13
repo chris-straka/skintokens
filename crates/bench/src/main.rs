@@ -57,7 +57,7 @@ score  TRUTH is the artist's rig with its clips; ROUTE is a rig of the same
        feet      while one of the artist's feet is on the ground, how far
                  the route's foot is from it.
        --clips writes ROUTE with those clips on it (for the bend checker
-       and for pictures). --roles: {\"BoneName\": \"trunk|neck|head|jaw|leg|
+       and for pictures), standing where TRUTH stands. --roles: {\"BoneName\": \"trunk|neck|head|jaw|leg|
        toe|tail|wing|other\"} for bones whose names don't say what they are.
 rigid  a control: the artist's skeleton and clips with each vertex held
        wholly by its nearest bone. What crude weights on a perfect
@@ -211,16 +211,36 @@ fn score(a: &Args) -> Result<()> {
                     .collect::<Vec<_>>(),
             ));
         }
-        let g = route.with_clips(&clips)?;
+        let mut g = route.with_clips(&clips)?;
+        // The file stands where the artist's file stands: a route may have
+        // turned, scaled or moved the mesh, and a node above everything
+        // undoes that, so both files can be looked at through one camera.
+        let back_to_artist = geom::inverse(&al.m);
+        if !geom::is_identity(&al.m) {
+            let scene = g.json["scene"].as_u64().unwrap_or(0) as usize;
+            let roots = g.json["scenes"][scene]["nodes"].clone();
+            let flat: Vec<f64> = back_to_artist
+                .iter()
+                .flat_map(|c| c.iter().copied())
+                .collect();
+            let nodes = g.json["nodes"]
+                .as_array_mut()
+                .ok_or_else(|| anyhow!("no nodes"))?;
+            nodes.push(json!({"name": "as_the_artist_stands", "children": roots, "matrix": flat}));
+            let top = nodes.len() - 1;
+            g.json["scenes"][scene]["nodes"] = json!([top]);
+        }
         g.write(Path::new(out))?;
         // read it back: the file must put the skin where the measurement did
         let back = Rig::read(Path::new(out))?;
+        let turn_back = |p: V3| geom::apply(&al.m, p);
         let mut worst = 0.0f64;
         for (ci, clip) in back.clips.iter().enumerate() {
             for f in (0..fr.time.len()).filter(|&f| fr.clip[f] == ci) {
                 let skin = back.skin_nodes(&back.pose_nodes(clip, fr.time[f]));
                 for (v, p) in skin.iter().enumerate() {
-                    worst = worst.max(geom::norm(geom::sub(*p, turn.skins[f][v])) / truth.len);
+                    worst = worst
+                        .max(geom::norm(geom::sub(turn_back(*p), turn.skins[f][v])) / truth.len);
                 }
             }
         }
