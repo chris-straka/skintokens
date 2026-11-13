@@ -3,7 +3,7 @@
 hand-made animals (stdlib only).
 
     python3 tools/creature_bench.py BENCH [names...] [--routes new,old]
-        [--out DIR] [--creature-bench BIN] [--weights BIN] [--no-score]
+        [--out DIR] [--creature-bench BIN] [--weights BIN] [--no-score] [--pictures]
 
 BENCH holds `animals/<name>/` with `truth.glb` and `truth.json` (from
 `tools/bench/prep_truth.py`: the artist's rig and clips) and one folder
@@ -22,6 +22,9 @@ and the artist's skeleton with every vertex on its nearest bone):
 
 Writes `<out>/table.md`, `<out>/summary.json` and, per animal,
 `animals/<name>/score/<route>.json`, `.clips.glb` and `.tears.json`.
+`--pictures` adds `<out>/<name>.png` (the artist's rig and each route's,
+painted, at the frame where the first route is farthest from the
+artist), `<out>/<name>.mp4` (a loop of one clip) and `<out>/all.jpg`.
 What each number means: `docs/creature-bench.md`.
 """
 
@@ -176,6 +179,41 @@ def table(summary, routes, kinds):
     return "\n".join(lines) + "\n", meds
 
 
+def pictures(bench, out, summary, routes, blender, repo):
+    """Per animal: the artist's rig and each route's at the frame where the
+    first route is farthest from the artist (`<name>.png`), and a loop of
+    one clip (`<name>.mp4`); then every sheet in one picture (`all.jpg`)."""
+    script = os.path.join(repo, "tools/bench/render_compare.py")
+    sheets = []
+    for name, rows in summary.items():
+        sd = os.path.join(bench, "animals", name, "score")
+        rigs = [("artist", os.path.join(sd, "artist.clips.glb"))]
+        rigs += [({"new": "today", "old": "old"}.get(r, r), os.path.join(sd, r + ".clips.glb")) for r in routes if "error" not in rows.get(r, {"error": 1})]
+        lead = next((r for r in routes if "error" not in rows.get(r, {"error": 1})), None)
+        if lead is None:
+            continue
+        worst = rows[lead]["worst"]
+        with open(os.path.join(sd, lead + ".json")) as f:
+            clips = [c["clip"] for c in json.load(f)["skin"]["clips"]]
+        low = [c.lower() for c in clips]
+        pick = next((clips[i] for i, c in enumerate(low) if "walk" in c and "slow" not in c), None) \
+            or next((clips[i] for i, c in enumerate(low) if "run" in c or "fly" in c), None) or clips[0]
+        png, mp4 = os.path.join(out, name + ".png"), os.path.join(out, name + ".mp4")
+        cmd = [blender, "-b", "--factory-startup", "-P", script, "--", "--out", png, "--clip", worst["clip"], "--time", str(worst["time"]),
+               "--loop", mp4, "--loop-clip", pick, "--loop-frames", "72"]
+        for label, path in rigs:
+            cmd += ["--rig", f"{label}={path}"]
+        code, text, err = run(cmd)
+        if code != 0 or not os.path.exists(png):
+            print(f"  {name}: no picture: {(err or text).strip()[-200:]}")
+            continue
+        rows["picture"] = {"sheet": os.path.basename(png), "frame": f"{worst['clip']} at {worst['time']} s", "loop": os.path.basename(mp4), "loop_clip": pick}
+        sheets.append(png)
+        print(f"  {name}: {os.path.basename(png)} ({worst['clip']} at {worst['time']} s), {os.path.basename(mp4)} ({pick})")
+    if sheets and shutil.which("convert"):
+        run(["convert"] + sheets + ["-resize", "1500x", "-append", "-quality", "82", os.path.join(out, "all.jpg")])
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("bench")
@@ -185,6 +223,8 @@ def main():
     ap.add_argument("--creature-bench", default="")
     ap.add_argument("--weights", default="")
     ap.add_argument("--no-score", action="store_true", help="only rebuild the table from the scores already there")
+    ap.add_argument("--pictures", action="store_true", help="also render each animal's sheet and loop (Blender, ffmpeg)")
+    ap.add_argument("--blender", default="")
     a = ap.parse_args()
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     out = a.out or os.path.join(a.bench, "out")
@@ -217,6 +257,9 @@ def main():
                 continue
             summary[n] = score_animal(cb, wf, d, n, routes, empty)
     summary = {n: summary[n] for n in (order or sorted(summary)) if n in summary}
+    if a.pictures:
+        blender = find("blender", a.blender, "BLENDER", ["/Applications/Blender.app/Contents/MacOS/Blender"])
+        pictures(a.bench, out, summary, routes, blender, repo)
     text, meds = table(summary, routes, kinds)
     with open(os.path.join(out, "table.md"), "w") as f:
         f.write(text)

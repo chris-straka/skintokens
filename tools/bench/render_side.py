@@ -41,7 +41,7 @@ def main():
     o = options()
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
-    scene.render.fps = int(o["fps"])
+    scene.render.fps = max(1, int(round(float(o["fps"]))))
     known = set(bpy.ops.import_scene.gltf.get_rna_type().properties.keys())
     kw = {"disable_bone_shape": True} if "disable_bone_shape" in known else {}
     bpy.ops.import_scene.gltf(filepath=o["rig"], **kw)
