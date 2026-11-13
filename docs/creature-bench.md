@@ -125,7 +125,8 @@ fitted frames, with no pose set: the vertices in failing stretch
 share of all vertices. `D_NOISE` (speckled weights) is left out: it
 flags the hand-painted weights of these low-poly animals on 5 to 15% of
 their vertices and says nothing about motion. The artist's own rig is
-checked on the same frames: that row is the line to beat.
+checked on the same frames: that row is the line to beat. (The checker
+looks at six moments of each clip, not at every frame.)
 
 **Feet.** Skin held by a leg bone that stands within 5% of the ground in
 the rest pose, gathered into feet. While the artist's foot is on the

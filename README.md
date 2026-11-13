@@ -164,6 +164,20 @@ failing bend findings 53 and 33. Higher on 25, lower on 3.
 What was tried and what it scored:
 [docs/creature-rig-log.md](docs/creature-rig-log.md).
 
+That score was made beside the route it scores. The number a creature
+route is judged by is the benchmark in
+[docs/creature-bench.md](docs/creature-bench.md) (`creature-bench`,
+`tools/creature_bench.py`, `tools/creature_follow.py`): a route's rig
+against a hand-made rig of the same animal playing the artist's own
+clips, and against a reference video for a creature no artist rigged. On
+its first run (twelve hand-made animals) this route lands farther from
+the artist than the model's rig alone on 11 of 12: median skin error
+1.6% of the body's length against 0.7%, leg and neck joints 9.0% off
+against 2.9%, a chain of the artist's with no bone along it on 10 of 12
+against 3. It reads four of the six four-legged animals as two-legged or
+legless and its own checks pass them. (The model has probably seen
+these public animals, so its side of that is an upper bound.)
+
 ## How it is built
 
 - `crates/skintokens` (MIT): CLI, GLB I/O (`gltf` crate to read; edits on
@@ -179,6 +193,8 @@ What was tried and what it scored:
 - `crates/skintokens-nn` (MIT): shared layers, attention, FPS.
 - `crates/creature` (MIT): `creature-rig`; uses the skintokens crate for
   GLB I/O only (it links it, so its binary is GPL-3.0 as well).
+- `crates/bench` (MIT): `creature-bench`, the benchmark's measurements;
+  the same GLB I/O and the same note about its binary.
 
 Upstream details kept on purpose (all verified against the Python run):
 the 54k-point cloud is surface samples only; the VAE embedder and rotary
