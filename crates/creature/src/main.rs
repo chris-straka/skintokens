@@ -7,6 +7,7 @@ mod poses;
 mod roles;
 mod skeleton;
 mod solid;
+mod symmetry;
 #[cfg(test)]
 mod tests;
 mod weights;
@@ -39,9 +40,11 @@ rig    lays a skeleton along those parts (hips and spine, a chain down
        every limb, the tail, the neck and head, the wings), weights the
        mesh to it by distance through the body, and writes the rigged GLB
        (MESH's own rig, if it has one, is replaced). --rom writes this
-       body's range of motion as a weightforge pose set. A body whose toes
-       say it faces -Z is turned half a turn first, so a rig always faces
-       +Z (--turn no leaves it). --hint: a rig of the same mesh from
+       body's range of motion as a weightforge pose set. A body whose own
+       mirror plane is not x = 0 (the clean step could not tell which way
+       it faces) is turned onto it first, and one whose toes say it faces
+       -Z is turned half a turn, so a rig always faces +Z (--turn no
+       leaves it). --hint: a rig of the same mesh from
        `skintokens rig`; where its joints lie along a leg or an arm, the
        knees and elbows are put there instead of at the line's bends.";
 
@@ -53,7 +56,11 @@ fn load_mesh(path: &Path) -> Result<(Vec<V3>, Vec<[u32; 3]>)> {
     for p in g.parts(Frame::World)? {
         let base = verts.len() as u32;
         verts.extend_from_slice(&p.positions);
-        tris.extend(p.triangles.iter().map(|t| [t[0] + base, t[1] + base, t[2] + base]));
+        tris.extend(
+            p.triangles
+                .iter()
+                .map(|t| [t[0] + base, t[1] + base, t[2] + base]),
+        );
     }
     if tris.is_empty() {
         bail!("{} has no triangles", path.display());
@@ -74,7 +81,9 @@ fn parse(args: &[String]) -> Result<Args> {
     let mut k = 0;
     while k < args.len() {
         if let Some(name) = args[k].strip_prefix("--") {
-            let v = args.get(k + 1).ok_or_else(|| anyhow!("--{name} needs a value"))?;
+            let v = args
+                .get(k + 1)
+                .ok_or_else(|| anyhow!("--{name} needs a value"))?;
             flags.insert(name.to_string(), v.clone());
             k += 2;
         } else {
@@ -90,9 +99,27 @@ fn r3(p: V3) -> [f64; 3] {
 }
 
 fn cmd_parts(a: &Args) -> Result<()> {
-    let input = PathBuf::from(a.pos.first().ok_or_else(|| anyhow!("parts needs MESH.glb"))?);
-    let res: usize = a.flags.get("res").map(|s| s.parse()).transpose()?.unwrap_or(128);
-    let (verts, tris) = load_mesh(&input)?;
+    let input = PathBuf::from(
+        a.pos
+            .first()
+            .ok_or_else(|| anyhow!("parts needs MESH.glb"))?,
+    );
+    let res: usize = a
+        .flags
+        .get("res")
+        .map(|s| s.parse())
+        .transpose()?
+        .unwrap_or(128);
+    let (mut verts, tris) = load_mesh(&input)?;
+    // read about the body's own mirror plane, as `rig` does
+    if a.flags.get("turn").map(|s| s.as_str()) != Some("no") {
+        if let Some((yaw, shift, _)) = mirror_turn(&verts) {
+            for v in verts.iter_mut() {
+                *v = symmetry::turn(*v, yaw, shift);
+            }
+            println!("turned {yaw:.0} degrees onto its own mirror plane");
+        }
+    }
     let body = parts::Body::build(&verts, &tris, res);
     let doc = json!({
         "format": "creature-parts/1",
@@ -137,11 +164,46 @@ fn cmd_parts(a: &Args) -> Result<()> {
             v.dot(l.at(l.start).0, 3.5, [255, 255, 255]);
             v.label(l.tip(), &l.name, [255, 255, 0]);
         }
-        v.canvas.text(8, 8, 3, &format!("{}{}{}", anatomy.kind.name(), if anatomy.upright { " upright" } else { "" }, if anatomy.forward < 0.0 { " faces -Z" } else { "" }), [255, 255, 255]);
+        v.canvas.text(
+            8,
+            8,
+            3,
+            &format!(
+                "{}{}{}",
+                anatomy.kind.name(),
+                if anatomy.upright { " upright" } else { "" },
+                if anatomy.forward < 0.0 {
+                    " faces -Z"
+                } else {
+                    ""
+                }
+            ),
+            [255, 255, 255],
+        );
         v.canvas.write_png(Path::new(p))?;
     }
-    println!("{}{}{}: {}", anatomy.kind.name(), if anatomy.upright { ", upright" } else { "" }, if anatomy.forward < 0.0 { ", faces -Z" } else { "" }, anatomy.limbs.iter().map(|l| format!("{} ({:.2})", l.name, l.length)).collect::<Vec<_>>().join(", "));
-    println!("{} parts, {} cells inside, cell {:.4}", body.parts.len(), body.solid.inside.iter().filter(|&&b| b).count(), body.solid.cell);
+    println!(
+        "{}{}{}: {}",
+        anatomy.kind.name(),
+        if anatomy.upright { ", upright" } else { "" },
+        if anatomy.forward < 0.0 {
+            ", faces -Z"
+        } else {
+            ""
+        },
+        anatomy
+            .limbs
+            .iter()
+            .map(|l| format!("{} ({:.2})", l.name, l.length))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    println!(
+        "{} parts, {} cells inside, cell {:.4}",
+        body.parts.len(),
+        body.solid.inside.iter().filter(|&&b| b).count(),
+        body.solid.cell
+    );
     for (i, p) in body.parts.iter().enumerate() {
         println!(
             "  part {i}: parent {:?}, length {:.3}, cells {}, base {:?}, tip {:?}, spread {:?}",
@@ -157,8 +219,17 @@ fn cmd_parts(a: &Args) -> Result<()> {
 }
 
 fn cmd_check(a: &Args) -> Result<bool> {
-    let input = PathBuf::from(a.pos.first().ok_or_else(|| anyhow!("check needs RIG.glb"))?);
-    let res: usize = a.flags.get("res").map(|s| s.parse()).transpose()?.unwrap_or(128);
+    let input = PathBuf::from(
+        a.pos
+            .first()
+            .ok_or_else(|| anyhow!("check needs RIG.glb"))?,
+    );
+    let res: usize = a
+        .flags
+        .get("res")
+        .map(|s| s.parse())
+        .transpose()?
+        .unwrap_or(128);
     let (verts, tris) = load_mesh(&input)?;
     let body = parts::Body::build(&verts, &tris, res);
     let an = roles::Anatomy::read(&body);
@@ -184,30 +255,49 @@ fn cmd_check(a: &Args) -> Result<bool> {
         });
         for b in &v.skeleton.bones {
             // white: along a part; red: along nothing
-            let c = if b.trunk || b.limb.is_some() { [255, 255, 255] } else { [255, 60, 60] };
+            let c = if b.trunk || b.limb.is_some() {
+                [255, 255, 255]
+            } else {
+                [255, 60, 60]
+            };
             vw.polyline(&[b.head, b.tail], 3.0, c);
         }
         for b in &v.skeleton.bones {
             vw.dot(b.head, 4.0, [255, 230, 0]);
         }
-        vw.canvas.text(8, 8, 3, &format!("skeleton {:.0}  {} bones  {}", v.score, v.skeleton.bones.len(), an.kind.name()), [255, 255, 255]);
+        vw.canvas.text(
+            8,
+            8,
+            3,
+            &format!(
+                "skeleton {:.0}  {} bones  {}",
+                v.score,
+                v.skeleton.bones.len(),
+                an.kind.name()
+            ),
+            [255, 255, 255],
+        );
         vw.canvas.write_png(Path::new(p))?;
     }
     println!("{}", serde_json::to_string_pretty(&v.report)?);
     Ok(v.failing == 0)
 }
 
-/// Turns every mesh of the file half a turn about the vertical, in place
-/// (positions, normals and tangents: x and z negated), for a body the
-/// clean step left facing -Z. The file must not be rigged or carry node
-/// transforms that would turn with it (a cleaned mesh has neither).
-fn turn_half(g: &mut Glb) -> Result<()> {
+/// Turns every mesh of the file about the vertical, in place (positions,
+/// normals and tangents), and moves it along x: x' = cos * x + sin * z -
+/// shift, z' = -sin * x + cos * z. For a body the clean step left facing
+/// the wrong way. The file must not be rigged or carry node transforms
+/// that would turn with it (a cleaned mesh has neither).
+fn turn_about_up(g: &mut Glb, yaw_deg: f64, shift: f64) -> Result<()> {
+    let (sn, cs) = yaw_deg.to_radians().sin_cos();
     let mut done = std::collections::HashSet::new();
     let meshes = g.json["meshes"].as_array().cloned().unwrap_or_default();
     for m in &meshes {
         for p in m["primitives"].as_array().into_iter().flatten() {
             for name in ["POSITION", "NORMAL", "TANGENT"] {
-                let Some(acc) = p["attributes"][name].as_u64() else { continue };
+                let Some(acc) = p["attributes"][name].as_u64() else {
+                    continue;
+                };
                 if !done.insert(acc) {
                     continue;
                 }
@@ -215,25 +305,47 @@ fn turn_half(g: &mut Glb) -> Result<()> {
                 if a["componentType"].as_u64() != Some(5126) || a.get("sparse").is_some() {
                     bail!("{name} is not a plain float accessor");
                 }
-                let bv = &g.json["bufferViews"][a["bufferView"].as_u64().ok_or_else(|| anyhow!("accessor without a buffer view"))? as usize];
+                let bv = &g.json["bufferViews"][a["bufferView"]
+                    .as_u64()
+                    .ok_or_else(|| anyhow!("accessor without a buffer view"))?
+                    as usize];
                 let comps = if a["type"] == "VEC4" { 4 } else { 3 };
-                let start = bv["byteOffset"].as_u64().unwrap_or(0) as usize + a["byteOffset"].as_u64().unwrap_or(0) as usize;
-                let stride = bv["byteStride"].as_u64().map(|s| s as usize).unwrap_or(4 * comps);
+                let start = bv["byteOffset"].as_u64().unwrap_or(0) as usize
+                    + a["byteOffset"].as_u64().unwrap_or(0) as usize;
+                let stride = bv["byteStride"]
+                    .as_u64()
+                    .map(|s| s as usize)
+                    .unwrap_or(4 * comps);
                 let count = a["count"].as_u64().unwrap_or(0) as usize;
+                let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
                 for k in 0..count {
-                    for c in [0usize, 2] {
-                        let o = start + k * stride + 4 * c;
-                        let b = g.bin.get_mut(o..o + 4).ok_or_else(|| anyhow!("accessor out of range"))?;
-                        let v = -f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
-                        b.copy_from_slice(&v.to_le_bytes());
+                    let o = start + k * stride;
+                    let rd = |bin: &[u8], c: usize| -> Result<f32> {
+                        let b = bin
+                            .get(o + 4 * c..o + 4 * c + 4)
+                            .ok_or_else(|| anyhow!("accessor out of range"))?;
+                        Ok(f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                    };
+                    let (x, y, z) = (
+                        rd(&g.bin, 0)? as f64,
+                        rd(&g.bin, 1)? as f64,
+                        rd(&g.bin, 2)? as f64,
+                    );
+                    let off = if name == "POSITION" { shift } else { 0.0 };
+                    let (nx, nz) = (cs * x + sn * z - off, -sn * x + cs * z);
+                    g.bin[o..o + 4].copy_from_slice(&(nx as f32).to_le_bytes());
+                    g.bin[o + 8..o + 12].copy_from_slice(&(nz as f32).to_le_bytes());
+                    for (c, v) in [nx as f32 as f64, y, nz as f32 as f64]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        lo[c] = lo[c].min(v);
+                        hi[c] = hi[c].max(v);
                     }
                 }
-                for c in [0usize, 2] {
-                    let (lo, hi) = (a["min"][c].as_f64(), a["max"][c].as_f64());
-                    if let (Some(lo), Some(hi)) = (lo, hi) {
-                        g.json["accessors"][acc as usize]["min"][c] = json!(-hi);
-                        g.json["accessors"][acc as usize]["max"][c] = json!(-lo);
-                    }
+                if name == "POSITION" && count > 0 {
+                    g.json["accessors"][acc as usize]["min"] = json!(lo);
+                    g.json["accessors"][acc as usize]["max"] = json!(hi);
                 }
             }
         }
@@ -241,13 +353,46 @@ fn turn_half(g: &mut Glb) -> Result<()> {
     Ok(())
 }
 
+/// The turn (degrees about the up axis) and the move along x that put a
+/// body's own mirror plane on x = 0, when the plane it has as a mesh is
+/// clearly not it: more than 10 degrees off and a quarter better mirrored.
+fn mirror_turn(verts: &[V3]) -> Option<(f64, f64, symmetry::Mirror)> {
+    let m = symmetry::mirror_plane(verts);
+    if m.yaw_deg.abs() > 10.0 && m.score < 0.75 * m.score_as_is {
+        Some((m.yaw_deg, m.offset, m))
+    } else {
+        None
+    }
+}
+
 fn cmd_rig(a: &Args) -> Result<()> {
-    let input = PathBuf::from(a.pos.first().ok_or_else(|| anyhow!("rig needs MESH.glb OUT.glb"))?);
-    let output = PathBuf::from(a.pos.get(1).ok_or_else(|| anyhow!("rig needs MESH.glb OUT.glb"))?);
-    let res: usize = a.flags.get("res").map(|s| s.parse()).transpose()?.unwrap_or(128);
-    let blend: f64 = a.flags.get("blend").map(|s| s.parse()).transpose()?.unwrap_or(weights::BLEND);
+    let input = PathBuf::from(
+        a.pos
+            .first()
+            .ok_or_else(|| anyhow!("rig needs MESH.glb OUT.glb"))?,
+    );
+    let output = PathBuf::from(
+        a.pos
+            .get(1)
+            .ok_or_else(|| anyhow!("rig needs MESH.glb OUT.glb"))?,
+    );
+    let res: usize = a
+        .flags
+        .get("res")
+        .map(|s| s.parse())
+        .transpose()?
+        .unwrap_or(128);
+    let blend: f64 = a
+        .flags
+        .get("blend")
+        .map(|s| s.parse())
+        .transpose()?
+        .unwrap_or(weights::BLEND);
     let src = Glb::read(&input)?;
-    let mut g = Glb { json: src.json.clone(), bin: src.bin.clone() };
+    let mut g = Glb {
+        json: src.json.clone(),
+        bin: src.bin.clone(),
+    };
     skintokens::pipeline::strip_rig(&mut g);
     let read = |g: &Glb| -> Result<(Vec<V3>, Vec<[u32; 3]>)> {
         let mut verts = vec![];
@@ -255,27 +400,54 @@ fn cmd_rig(a: &Args) -> Result<()> {
         for p in g.parts(Frame::World)? {
             let base = verts.len() as u32;
             verts.extend_from_slice(&p.positions);
-            tris.extend(p.triangles.iter().map(|t| [t[0] + base, t[1] + base, t[2] + base]));
+            tris.extend(
+                p.triangles
+                    .iter()
+                    .map(|t| [t[0] + base, t[1] + base, t[2] + base]),
+            );
         }
         Ok((verts, tris))
     };
     let (mut verts, mut tris) = read(&g)?;
+    let may_turn = a.flags.get("turn").map(|s| s.as_str()) != Some("no");
+    // Left and right are read about x = 0. A body whose own mirror plane
+    // is somewhere else (the clean step could not tell which way it
+    // faces) is first turned onto it.
+    let mut turned_deg = 0.0;
+    let mut mirror_note = serde_json::Value::Null;
+    if may_turn {
+        if let Some((yaw, shift, m)) = mirror_turn(&verts) {
+            turn_about_up(&mut g, yaw, shift)?;
+            (verts, tris) = read(&g)?;
+            turned_deg = yaw;
+            mirror_note = json!({"turned_deg": yaw, "moved_x": (shift * 1e4).round() / 1e4,
+                "off_its_mirror_image": (m.score * 1e4).round() / 1e4, "as_given": (m.score_as_is * 1e4).round() / 1e4});
+        }
+    }
     let mut body = parts::Body::build(&verts, &tris, res);
     let mut an = roles::Anatomy::read(&body);
-    // a rig faces +Z: a body the clean step left facing -Z is turned round
-    let turned = an.forward < 0.0 && a.flags.get("turn").map(|s| s.as_str()) != Some("no");
+    // a rig faces +Z: a body left facing -Z is turned round
+    let turned = an.forward < 0.0 && may_turn;
     if turned {
-        turn_half(&mut g)?;
+        turn_about_up(&mut g, 180.0, 0.0)?;
         (verts, tris) = read(&g)?;
         body = parts::Body::build(&verts, &tris, res);
         an = roles::Anatomy::read(&body);
+        turned_deg += 180.0;
     }
     // --hint: another rig of this mesh (the model's), for where knees and elbows go
     let hint = match a.flags.get("hint") {
         Some(p) => {
             let mut bones = check::read_rig(&Glb::read(Path::new(p))?)?;
+            // the hint was made on the mesh as given
+            if let Some(shift) = mirror_note["moved_x"].as_f64() {
+                let yaw = mirror_note["turned_deg"].as_f64().unwrap_or(0.0);
+                for b in bones.iter_mut() {
+                    b.head = symmetry::turn(b.head, yaw, shift);
+                    b.tail = symmetry::turn(b.tail, yaw, shift);
+                }
+            }
             if turned {
-                // the hint was made on the mesh as given
                 for b in bones.iter_mut() {
                     b.head = [-b.head[0], b.head[1], -b.head[2]];
                     b.tail = [-b.tail[0], b.tail[1], -b.tail[2]];
@@ -294,15 +466,31 @@ fn cmd_rig(a: &Args) -> Result<()> {
         .map(|b| {
             let d = skintokens::geom::sub(b.tail, b.head);
             let l = skintokens::geom::norm(d);
-            let d = if l > 0.0 { skintokens::geom::scale(d, 1.0 / l) } else { [0.0, 1.0, 0.0] };
+            let d = if l > 0.0 {
+                skintokens::geom::scale(d, 1.0 / l)
+            } else {
+                [0.0, 1.0, 0.0]
+            };
             let cols = skintokens::geom::bone_rotation(skintokens::mesh::to_model(d));
             skintokens::geom::from_rt(cols.map(skintokens::mesh::from_model), b.head)
         })
         .collect();
     let gparts = g.parts(Frame::World)?;
     let names: Vec<String> = sk.bones.iter().map(|b| b.name.clone()).collect();
-    let parents: Vec<i64> = sk.bones.iter().map(|b| b.parent.map(|p| p as i64).unwrap_or(-1)).collect();
-    skintokens::pipeline::attach_skeleton(&mut g, &gparts, &names, &parents, &worlds, &skin.joints, &skin.weights)?;
+    let parents: Vec<i64> = sk
+        .bones
+        .iter()
+        .map(|b| b.parent.map(|p| p as i64).unwrap_or(-1))
+        .collect();
+    skintokens::pipeline::attach_skeleton(
+        &mut g,
+        &gparts,
+        &names,
+        &parents,
+        &worlds,
+        &skin.joints,
+        &skin.weights,
+    )?;
     g.doc()?;
     g.write(&output)?;
     if let Some(p) = a.flags.get("rom") {
@@ -314,6 +502,8 @@ fn cmd_rig(a: &Args) -> Result<()> {
         "upright": an.upright,
         "faces": if an.forward > 0.0 { "+z" } else { "-z" },
         "turned_half_a_turn": turned,
+        "turned_deg": turned_deg,
+        "turned_onto_its_mirror_plane": mirror_note,
         "limbs": an.limbs.iter().enumerate().map(|(i, l)| json!({
             "name": l.name,
             "role": format!("{:?}", l.role).to_lowercase(),
@@ -343,7 +533,19 @@ fn cmd_rig(a: &Args) -> Result<()> {
         for b in &sk.bones {
             v.dot(b.head, 4.0, [255, 230, 0]);
         }
-        v.canvas.text(8, 8, 3, &format!("{}{}{} {} bones", an.kind.name(), if an.upright { " upright" } else { "" }, if an.forward < 0.0 { " faces -Z" } else { "" }, sk.bones.len()), [255, 255, 255]);
+        v.canvas.text(
+            8,
+            8,
+            3,
+            &format!(
+                "{}{}{} {} bones",
+                an.kind.name(),
+                if an.upright { " upright" } else { "" },
+                if an.forward < 0.0 { " faces -Z" } else { "" },
+                sk.bones.len()
+            ),
+            [255, 255, 255],
+        );
         v.canvas.write_png(Path::new(p))?;
     }
     println!(
@@ -352,7 +554,16 @@ fn cmd_rig(a: &Args) -> Result<()> {
         if an.upright { ", upright" } else { "" },
         if an.forward < 0.0 { ", faces -Z" } else { "" },
         sk.bones.len(),
-        an.limbs.iter().enumerate().map(|(i, l)| format!("{} {}", l.name, sk.bones.iter().filter(|b| b.limb == Some(i)).count())).collect::<Vec<_>>().join(", ")
+        an.limbs
+            .iter()
+            .enumerate()
+            .map(|(i, l)| format!(
+                "{} {}",
+                l.name,
+                sk.bones.iter().filter(|b| b.limb == Some(i)).count()
+            ))
+            .collect::<Vec<_>>()
+            .join(", ")
     );
     Ok(())
 }

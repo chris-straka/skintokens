@@ -92,7 +92,11 @@ pub fn at(line: &[V3], radius: &[f64], s: f64) -> (V3, f64) {
     for k in 1..line.len() {
         let seg = geom::norm(geom::sub(line[k], line[k - 1]));
         if left <= seg || k + 1 == line.len() {
-            let t = if seg > 0.0 { (left / seg).min(1.0) } else { 0.0 };
+            let t = if seg > 0.0 {
+                (left / seg).min(1.0)
+            } else {
+                0.0
+            };
             let p = geom::add(line[k - 1], geom::scale(geom::sub(line[k], line[k - 1]), t));
             return (p, radius[k - 1] + (radius[k] - radius[k - 1]) * t);
         }
@@ -102,7 +106,9 @@ pub fn at(line: &[V3], radius: &[f64], s: f64) -> (V3, f64) {
 }
 
 pub fn length(line: &[V3]) -> f64 {
-    (1..line.len()).map(|k| geom::norm(geom::sub(line[k], line[k - 1]))).sum()
+    (1..line.len())
+        .map(|k| geom::norm(geom::sub(line[k], line[k - 1])))
+        .sum()
 }
 
 pub struct Anatomy {
@@ -136,18 +142,36 @@ const EXTRA_LENGTH: f64 = 0.22;
 /// limb's line runs out through the straightest one.
 const DIGIT_LENGTH: f64 = 0.12;
 
+/// A branch the body stands on is a leg however short it is against the
+/// body's length (a long, low animal's legs are a tenth of it): it counts
+/// as a limb when it reaches the ground and is this fraction of the
+/// body's height ...
+const STANDING_LENGTH: f64 = 0.18;
+/// ... and holds this fraction of the body's cells.
+const STANDING_VOLUME: f64 = 0.003;
+
 struct Tree<'a> {
     body: &'a Body,
     /// Longest way down from each part's base to a tip.
     reach: Vec<f64>,
     /// Cells in each part and everything below it.
     volume: Vec<usize>,
+    /// Lowest point of each part and everything below it.
+    low: Vec<f64>,
     total: usize,
 }
 
 impl Tree<'_> {
     fn major(&self, p: usize) -> bool {
-        self.reach[p] >= MAJOR_LENGTH * self.body.size && self.volume[p] as f64 >= MAJOR_VOLUME * self.total as f64
+        let height = self.body.hi[1] - self.body.lo[1];
+        let long = self.reach[p] >= MAJOR_LENGTH * self.body.size
+            && self.volume[p] as f64 >= MAJOR_VOLUME * self.total as f64;
+        let stands = self.low[p] <= self.body.lo[1] + 0.07 * height
+            && self.reach[p] >= STANDING_LENGTH * height
+            && self.volume[p] as f64 >= STANDING_VOLUME * self.total as f64
+            // off the midline: a hem or a tail on the ground is not a leg
+            && self.body.parts[p].tip()[0].abs() > (0.015 * self.body.size).max(0.06 * (self.body.hi[0] - self.body.lo[0]));
+        long || stands
     }
 }
 
@@ -156,15 +180,39 @@ impl Anatomy {
         let np = body.parts.len();
         let mut reach = vec![0.0; np];
         let mut volume = vec![0usize; np];
+        let mut low = vec![f64::INFINITY; np];
         // children come after their parents in `parts`
         for p in (0..np).rev() {
             let own = body.parts[p].length;
-            let below = body.parts[p].children.iter().map(|&c| reach[c]).fold(0.0, f64::max);
+            let below = body.parts[p]
+                .children
+                .iter()
+                .map(|&c| reach[c])
+                .fold(0.0, f64::max);
             reach[p] = own + below;
-            volume[p] = body.parts[p].cells + body.parts[p].children.iter().map(|&c| volume[c]).sum::<usize>();
+            volume[p] = body.parts[p].cells
+                + body.parts[p]
+                    .children
+                    .iter()
+                    .map(|&c| volume[c])
+                    .sum::<usize>();
+            low[p] = body.parts[p]
+                .children
+                .iter()
+                .map(|&c| low[c])
+                .fold(body.parts[p].lo_y, f64::min);
         }
-        let total: usize = (0..np).filter(|&p| body.parts[p].parent.is_none()).map(|p| volume[p]).sum();
-        let t = Tree { body, reach, volume, total };
+        let total: usize = (0..np)
+            .filter(|&p| body.parts[p].parent.is_none())
+            .map(|p| volume[p])
+            .sum();
+        let t = Tree {
+            body,
+            reach,
+            volume,
+            low,
+            total,
+        };
 
         // trunk: the root, and every part on the way to a fork of two or
         // more major branches (the fork itself, and what joins it to the
@@ -172,7 +220,9 @@ impl Anatomy {
         // body, however short). Every other major or long branch is a limb.
         let mut is_trunk = vec![false; np];
         let mut chains: Vec<Vec<usize>> = vec![];
-        let mut todo: Vec<usize> = (0..np).filter(|&p| body.parts[p].parent.is_none()).collect();
+        let mut todo: Vec<usize> = (0..np)
+            .filter(|&p| body.parts[p].parent.is_none())
+            .collect();
         for &r in &todo {
             is_trunk[r] = true;
         }
@@ -182,7 +232,12 @@ impl Anatomy {
             let mut path = vec![c];
             let mut cur = c;
             loop {
-                let majors: Vec<usize> = body.parts[cur].children.iter().copied().filter(|&k| t.major(k)).collect();
+                let majors: Vec<usize> = body.parts[cur]
+                    .children
+                    .iter()
+                    .copied()
+                    .filter(|&k| t.major(k))
+                    .collect();
                 match majors.len() {
                     0 => return None,
                     1 => {
@@ -226,8 +281,23 @@ impl Anatomy {
                 }
                 let length = length(&line);
                 // it has left the body where the line passes the first piece of its own
-                let start = if line.len() > 1 { geom::norm(geom::sub(line[1], line[0])) } else { 0.0 };
-                let mut l = Limb { role: Role::Extra, side: Side::Centre, front: false, name: String::new(), parts, line, radius, length, start: start.min(0.4 * length), emerge: 0.0 };
+                let start = if line.len() > 1 {
+                    geom::norm(geom::sub(line[1], line[0]))
+                } else {
+                    0.0
+                };
+                let mut l = Limb {
+                    role: Role::Extra,
+                    side: Side::Centre,
+                    front: false,
+                    name: String::new(),
+                    parts,
+                    line,
+                    radius,
+                    length,
+                    start: start.min(0.4 * length),
+                    emerge: 0.0,
+                };
                 l.emerge = l.start.max(emerges(&l)).min(0.4 * length);
                 l
             })
@@ -236,8 +306,14 @@ impl Anatomy {
         // --- what each limb is
         let mid = 0.07 * size;
         let grounded = |l: &Limb| {
-            let low = l.parts.iter().map(|&p| body.parts[p].lo_y).fold(f64::INFINITY, f64::min);
-            low <= ground + 0.07 * height && l.tip()[1] <= ground + 0.18 * height && l.base()[1] - l.tip()[1] >= 0.12 * height
+            let low = l
+                .parts
+                .iter()
+                .map(|&p| body.parts[p].lo_y)
+                .fold(f64::INFINITY, f64::min);
+            low <= ground + 0.07 * height
+                && l.tip()[1] <= ground + 0.18 * height
+                && l.base()[1] - l.tip()[1] >= 0.12 * height
         };
         let flat = |l: &Limb| {
             let p = &body.parts[*l.parts.last().unwrap()];
@@ -249,7 +325,11 @@ impl Anatomy {
         let off = (0.015 * size).max(0.06 * width);
         for l in limbs.iter_mut() {
             let own: Vec<f64> = l.line.iter().skip(1).map(|p| p[0]).collect();
-            let x = if own.is_empty() { l.tip()[0] } else { own.iter().sum::<f64>() / own.len() as f64 };
+            let x = if own.is_empty() {
+                l.tip()[0]
+            } else {
+                own.iter().sum::<f64>() / own.len() as f64
+            };
             l.side = if x > off {
                 Side::Left
             } else if x < -off {
@@ -272,21 +352,37 @@ impl Anatomy {
         }
         // wings come in pairs: one flat thing on one side is carried, not flown with
         for side in [Side::Left, Side::Right] {
-            let other = if side == Side::Left { Side::Right } else { Side::Left };
-            if !limbs.iter().any(|l| l.role == Role::Wing && l.side == other) {
-                for l in limbs.iter_mut().filter(|l| l.role == Role::Wing && l.side == side) {
+            let other = if side == Side::Left {
+                Side::Right
+            } else {
+                Side::Left
+            };
+            if !limbs
+                .iter()
+                .any(|l| l.role == Role::Wing && l.side == other)
+            {
+                for l in limbs
+                    .iter_mut()
+                    .filter(|l| l.role == Role::Wing && l.side == side)
+                {
                     l.role = Role::Extra;
                 }
             }
         }
-        let legs: Vec<usize> = (0..limbs.len()).filter(|&i| limbs[i].role == Role::Leg).collect();
+        let legs: Vec<usize> = (0..limbs.len())
+            .filter(|&i| limbs[i].role == Role::Leg)
+            .collect();
         // posture: the line from where the hind (or lower) legs leave the
         // body to where the front (or upper) legs or the head do
         let mut upright = body.hi[1] - body.lo[1] > body.hi[2] - body.lo[2];
         if legs.len() >= 4 {
             let mut by_z = legs.clone();
             // (the toes are read after this, so front and hind are swapped below if it faces -Z)
-            by_z.sort_by(|&a, &b| limbs[a].at(limbs[a].emerge).0[2].partial_cmp(&limbs[b].at(limbs[b].emerge).0[2]).unwrap());
+            by_z.sort_by(|&a, &b| {
+                limbs[a].at(limbs[a].emerge).0[2]
+                    .partial_cmp(&limbs[b].at(limbs[b].emerge).0[2])
+                    .unwrap()
+            });
             let mean = |ids: &[usize]| {
                 let mut c = [0.0; 3];
                 for &i in ids {
@@ -300,7 +396,11 @@ impl Anatomy {
             if upright && legs.len() == 4 {
                 // standing up with its hands on the ground: the upper pair are arms
                 let mut by_y = legs.clone();
-                by_y.sort_by(|&a, &b| limbs[a].at(limbs[a].emerge).0[1].partial_cmp(&limbs[b].at(limbs[b].emerge).0[1]).unwrap());
+                by_y.sort_by(|&a, &b| {
+                    limbs[a].at(limbs[a].emerge).0[1]
+                        .partial_cmp(&limbs[b].at(limbs[b].emerge).0[1])
+                        .unwrap()
+                });
                 for &i in &by_y[2..] {
                     limbs[i].role = Role::Arm;
                 }
@@ -319,7 +419,11 @@ impl Anatomy {
             let d = geom::sub(l.tip(), l.at(0.85 * l.length).0);
             toes += d[2] / l.length.max(1e-9);
         }
-        let fwd = if !legs.is_empty() && toes < -0.03 * legs.len() as f64 { -1.0 } else { 1.0 };
+        let fwd = if !legs.is_empty() && toes < -0.03 * legs.len() as f64 {
+            -1.0
+        } else {
+            1.0
+        };
         if fwd < 0.0 {
             for l in limbs.iter_mut().filter(|l| l.role == Role::Leg) {
                 l.front = !l.front && !upright && legs.len() >= 4;
@@ -333,36 +437,100 @@ impl Anatomy {
             }
         }
         // head and tail: limbs on the midline
-        let centre: Vec<usize> = (0..limbs.len()).filter(|&i| limbs[i].role == Role::Extra && limbs[i].side == Side::Centre && limbs[i].base()[0].abs() <= 2.0 * mid).collect();
+        let centre: Vec<usize> = (0..limbs.len())
+            .filter(|&i| {
+                limbs[i].role == Role::Extra
+                    && limbs[i].side == Side::Centre
+                    && limbs[i].base()[0].abs() <= 2.0 * mid
+            })
+            .collect();
         // the head: on a body that stands up, the midline limb that starts
         // highest and goes up or forward (a head may hang); on a level body
         // the one that reaches farthest forward
-        let ahead_of: Vec<f64> = limbs.iter().map(|l| fwd * (l.tip()[2] - l.base()[2])).collect();
+        let ahead_of: Vec<f64> = limbs
+            .iter()
+            .map(|l| fwd * (l.tip()[2] - l.base()[2]))
+            .collect();
         let ahead = |i: usize| ahead_of[i];
         let head = if upright {
             centre
                 .iter()
                 .copied()
-                .filter(|&i| limbs[i].base()[1] > ground + 0.5 * height && (limbs[i].tip()[1] > limbs[i].base()[1] || ahead(i) > 0.05 * size))
+                .filter(|&i| {
+                    limbs[i].base()[1] > ground + 0.5 * height
+                        && (limbs[i].tip()[1] > limbs[i].base()[1] || ahead(i) > 0.05 * size)
+                })
                 .max_by(|&a, &b| limbs[a].base()[1].partial_cmp(&limbs[b].base()[1]).unwrap())
         } else {
-            centre.iter().copied().filter(|&i| ahead(i) > 0.05 * size).max_by(|&a, &b| (fwd * limbs[a].tip()[2]).partial_cmp(&(fwd * limbs[b].tip()[2])).unwrap())
+            centre
+                .iter()
+                .copied()
+                .filter(|&i| ahead(i) > 0.05 * size)
+                .max_by(|&a, &b| {
+                    (fwd * limbs[a].tip()[2])
+                        .partial_cmp(&(fwd * limbs[b].tip()[2]))
+                        .unwrap()
+                })
         };
+        // A body that stands and holds its head to one side (a hunched
+        // creature in no clear pose) has no limb on the midline up there:
+        // its head is then the bulkiest unnamed limb that starts in the
+        // upper half and has no like limb on the other side.
+        let head = head.or_else(|| {
+            if !upright {
+                return None;
+            }
+            let vol = |i: usize| {
+                limbs[i]
+                    .parts
+                    .iter()
+                    .map(|&p| t.volume[p])
+                    .max()
+                    .unwrap_or(0)
+            };
+            let alone = |i: usize| {
+                !(0..limbs.len()).any(|k| {
+                    k != i
+                        && limbs[k].role == Role::Extra
+                        && limbs[k].side != Side::Centre
+                        && limbs[k].side != limbs[i].side
+                        && (limbs[k].length - limbs[i].length).abs() < 0.35 * limbs[i].length
+                        && (limbs[k].base()[1] - limbs[i].base()[1]).abs() < 0.1 * height
+                })
+            };
+            (0..limbs.len())
+                .filter(|&i| {
+                    limbs[i].role == Role::Extra
+                        && limbs[i].base()[1] > ground + 0.5 * height
+                        && (limbs[i].tip()[1] > limbs[i].base()[1] || ahead(i) > 0.05 * size)
+                        && alone(i)
+                })
+                .max_by_key(|&i| vol(i))
+        });
         if let Some(h) = head {
             limbs[h].role = Role::Head;
+            limbs[h].side = Side::Centre;
         }
         let tail = centre
             .iter()
             .copied()
             .filter(|&i| Some(i) != head && ahead(i) < -0.05 * size)
-            .min_by(|&a, &b| (fwd * limbs[a].tip()[2]).partial_cmp(&(fwd * limbs[b].tip()[2])).unwrap());
+            .min_by(|&a, &b| {
+                (fwd * limbs[a].tip()[2])
+                    .partial_cmp(&(fwd * limbs[b].tip()[2]))
+                    .unwrap()
+            });
         if let Some(tl) = tail {
             limbs[tl].role = Role::Tail;
         }
         // arms: a left and a right limb high on a body that stands up
         if upright {
             for l in limbs.iter_mut() {
-                if l.role == Role::Extra && l.side != Side::Centre && l.at(l.emerge).0[1] > ground + 0.45 * height && l.length >= 0.2 * height {
+                if l.role == Role::Extra
+                    && l.side != Side::Centre
+                    && l.at(l.emerge).0[1] > ground + 0.45 * height
+                    && l.length >= 0.2 * height
+                {
                     l.role = Role::Arm;
                 }
             }
@@ -371,7 +539,9 @@ impl Anatomy {
         // tendrils hanging off the shoulders are extras
         for side in [Side::Left, Side::Right] {
             let vol = |l: &Limb| l.parts.iter().map(|&p| t.volume[p]).max().unwrap_or(0);
-            let best = (0..limbs.len()).filter(|&i| limbs[i].role == Role::Arm && limbs[i].side == side).max_by_key(|&i| vol(&limbs[i]));
+            let best = (0..limbs.len())
+                .filter(|&i| limbs[i].role == Role::Arm && limbs[i].side == side)
+                .max_by_key(|&i| vol(&limbs[i]));
             for i in 0..limbs.len() {
                 if limbs[i].role == Role::Arm && limbs[i].side == side && Some(i) != best {
                     limbs[i].role = Role::Extra;
@@ -385,11 +555,22 @@ impl Anatomy {
         // thickest unnamed limb on the midline, if it is body-thick, is
         // trunk, and the spine runs through it.
         if !limbs.iter().any(|l| l.role == Role::Leg) {
-            let root_radius = body.parts.iter().filter(|p| p.parent.is_none()).map(|p| p.radius.iter().cloned().fold(0.0, f64::max)).fold(0.0, f64::max);
-            let mean_radius = |l: &Limb| l.radius.iter().sum::<f64>() / l.radius.len().max(1) as f64;
+            let root_radius = body
+                .parts
+                .iter()
+                .filter(|p| p.parent.is_none())
+                .map(|p| p.radius.iter().cloned().fold(0.0, f64::max))
+                .fold(0.0, f64::max);
+            let mean_radius =
+                |l: &Limb| l.radius.iter().sum::<f64>() / l.radius.len().max(1) as f64;
             let vol = |l: &Limb| l.parts.iter().map(|&p| t.volume[p]).max().unwrap_or(0);
             let body_like = (0..limbs.len())
-                .filter(|&i| (limbs[i].role == Role::Extra || limbs[i].role == Role::Tail) && limbs[i].side == Side::Centre && mean_radius(&limbs[i]) >= 0.4 * root_radius && vol(&limbs[i]) as f64 >= 0.1 * t.total as f64)
+                .filter(|&i| {
+                    (limbs[i].role == Role::Extra || limbs[i].role == Role::Tail)
+                        && limbs[i].side == Side::Centre
+                        && mean_radius(&limbs[i]) >= 0.4 * root_radius
+                        && vol(&limbs[i]) as f64 >= 0.1 * t.total as f64
+                })
                 .max_by_key(|&i| vol(&limbs[i]));
             if let Some(i) = body_like {
                 limbs.remove(i);
@@ -432,7 +613,11 @@ impl Anatomy {
             };
             let n = seen.entry(format!("{stem}{side}")).or_insert(0);
             *n += 1;
-            l.name = if *n == 1 { format!("{stem}{side}") } else { format!("{stem}{}{side}", *n) };
+            l.name = if *n == 1 {
+                format!("{stem}{side}")
+            } else {
+                format!("{stem}{}{side}", *n)
+            };
         }
         let mut limb_of_part = vec![None; np];
         for (i, l) in limbs.iter().enumerate() {
@@ -442,7 +627,18 @@ impl Anatomy {
         }
         let trunk: Vec<usize> = (0..np).filter(|&p| limb_of_part[p].is_none()).collect();
         let (spine, spine_radius) = spine_line(body, &limbs, &limb_of_part, upright, fwd);
-        Anatomy { kind, upright, limbs, trunk, spine, spine_radius, ground, height, limb_of_part, forward: fwd }
+        Anatomy {
+            kind,
+            upright,
+            limbs,
+            trunk,
+            spine,
+            spine_radius,
+            ground,
+            height,
+            limb_of_part,
+            forward: fwd,
+        }
     }
 }
 
@@ -452,7 +648,9 @@ impl Anatomy {
 /// the trunk; a leg's first joint belongs at the shoulder, not there.)
 fn emerges(l: &Limb) -> f64 {
     let n = 40;
-    let mut outer: Vec<f64> = (n * 2 / 5..=n * 9 / 10).map(|k| l.at(l.length * k as f64 / n as f64).1).collect();
+    let mut outer: Vec<f64> = (n * 2 / 5..=n * 9 / 10)
+        .map(|k| l.at(l.length * k as f64 / n as f64).1)
+        .collect();
     outer.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let typical = outer[outer.len() / 2];
     for k in 0..=n * 2 / 5 {
@@ -497,12 +695,17 @@ fn chain_from(t: &Tree, first: usize) -> Vec<usize> {
         if line.len() < 2 {
             break;
         }
-        let dir = geom::sub(line[line.len() - 1], line[line.len().saturating_sub(4).min(line.len() - 2)]);
+        let dir = geom::sub(
+            line[line.len() - 1],
+            line[line.len().saturating_sub(4).min(line.len() - 2)],
+        );
         let dl = geom::norm(dir);
         let best = kids
             .iter()
             .copied()
-            .filter(|&c| body.parts[c].children.is_empty() && body.parts[c].length < DIGIT_LENGTH * body.size)
+            .filter(|&c| {
+                body.parts[c].children.is_empty() && body.parts[c].length < DIGIT_LENGTH * body.size
+            })
             .map(|c| {
                 let d = geom::sub(body.parts[c].tip(), body.parts[c].base());
                 (geom::dot(d, dir) / (geom::norm(d) * dl).max(1e-12), c)
@@ -521,11 +724,25 @@ fn chain_from(t: &Tree, first: usize) -> Vec<usize> {
 /// the only) legs leave the body to where the neck does, else the front
 /// legs or arms, else the far end of the trunk. Legless: from the lowest
 /// (upright) or rearmost point of the trunk to its highest or foremost.
-fn spine_line(body: &Body, limbs: &[Limb], limb_of_part: &[Option<usize>], upright: bool, fwd: f64) -> (Vec<V3>, Vec<f64>) {
+fn spine_line(
+    body: &Body,
+    limbs: &[Limb],
+    limb_of_part: &[Option<usize>],
+    upright: bool,
+    fwd: f64,
+) -> (Vec<V3>, Vec<f64>) {
     // attachment: the trunk part a limb grows from and the point where it does
     let attach = |l: &Limb| (body.parts[l.parts[0]].parent.unwrap_or(0), l.base());
     let legs: Vec<&Limb> = limbs.iter().filter(|l| l.role == Role::Leg).collect();
-    let trunk_leaves: Vec<usize> = (0..body.parts.len()).filter(|&p| limb_of_part[p].is_none() && body.parts[p].children.iter().all(|&c| limb_of_part[c].is_some())).collect();
+    let trunk_leaves: Vec<usize> = (0..body.parts.len())
+        .filter(|&p| {
+            limb_of_part[p].is_none()
+                && body.parts[p]
+                    .children
+                    .iter()
+                    .all(|&c| limb_of_part[c].is_some())
+        })
+        .collect();
     let end_of = |p: usize| *body.parts[p].line.last().unwrap();
     let score_far = |p: usize, sign: f64| {
         let e = end_of(p);
@@ -533,19 +750,41 @@ fn spine_line(body: &Body, limbs: &[Limb], limb_of_part: &[Option<usize>], uprig
     };
     let low: (usize, V3) = if !legs.is_empty() {
         // the hind pair: the legs that leave the body lowest (upright) or rearmost
-        let key = |l: &&Limb| if upright { l.base()[1] } else { fwd * l.base()[2] };
-        let l = legs.iter().min_by(|a, b| key(a).partial_cmp(&key(b)).unwrap()).unwrap();
+        let key = |l: &&Limb| {
+            if upright {
+                l.base()[1]
+            } else {
+                fwd * l.base()[2]
+            }
+        };
+        let l = legs
+            .iter()
+            .min_by(|a, b| key(a).partial_cmp(&key(b)).unwrap())
+            .unwrap();
         attach(l)
     } else {
-        let p = trunk_leaves.iter().copied().min_by(|&a, &b| score_far(a, 1.0).partial_cmp(&score_far(b, 1.0)).unwrap()).unwrap_or(0);
+        let p = trunk_leaves
+            .iter()
+            .copied()
+            .min_by(|&a, &b| score_far(a, 1.0).partial_cmp(&score_far(b, 1.0)).unwrap())
+            .unwrap_or(0);
         (p, end_of(p))
     };
     let high: (usize, V3) = if let Some(h) = limbs.iter().find(|l| l.role == Role::Head) {
         attach(h)
-    } else if let Some(a) = limbs.iter().filter(|l| l.role == Role::Arm || (l.role == Role::Leg && l.front)).next() {
+    } else if let Some(a) = limbs
+        .iter()
+        .filter(|l| l.role == Role::Arm || (l.role == Role::Leg && l.front))
+        .next()
+    {
         attach(a)
     } else {
-        let p = trunk_leaves.iter().copied().filter(|&p| p != low.0 || trunk_leaves.len() == 1).max_by(|&a, &b| score_far(a, 1.0).partial_cmp(&score_far(b, 1.0)).unwrap()).unwrap_or(0);
+        let p = trunk_leaves
+            .iter()
+            .copied()
+            .filter(|&p| p != low.0 || trunk_leaves.len() == 1)
+            .max_by(|&a, &b| score_far(a, 1.0).partial_cmp(&score_far(b, 1.0)).unwrap())
+            .unwrap_or(0);
         (p, end_of(p))
     };
     // path through the part tree: up from `low` to the common ancestor, down to `high`
@@ -563,13 +802,23 @@ fn spine_line(body: &Body, limbs: &[Limb], limb_of_part: &[Option<usize>], uprig
     let mut radius: Vec<f64> = vec![];
     let push = |pts: Vec<(V3, f64)>, line: &mut Vec<V3>, radius: &mut Vec<f64>| {
         for (p, r) in pts {
-            if line.last().is_none_or(|q| geom::norm(geom::sub(*q, p)) > 1e-9) {
+            if line
+                .last()
+                .is_none_or(|q| geom::norm(geom::sub(*q, p)) > 1e-9)
+            {
                 line.push(p);
                 radius.push(r);
             }
         }
     };
-    let pts = |p: usize| -> Vec<(V3, f64)> { body.parts[p].line.iter().copied().zip(body.parts[p].radius.iter().copied()).collect() };
+    let pts = |p: usize| -> Vec<(V3, f64)> {
+        body.parts[p]
+            .line
+            .iter()
+            .copied()
+            .zip(body.parts[p].radius.iter().copied())
+            .collect()
+    };
     // going up toward the seed: each part's line reversed
     for &p in a.iter().take_while(|&&p| p != meet) {
         let mut v = pts(p);
@@ -587,9 +836,17 @@ fn spine_line(body: &Body, limbs: &[Limb], limb_of_part: &[Option<usize>], uprig
     } else if low.0 == meet {
         // the low end sits in an ancestor of the high end: start where the
         // low limbs leave it, which is that part's end
-        push(vec![(end_of(meet), *body.parts[meet].radius.last().unwrap())], &mut line, &mut radius);
+        push(
+            vec![(end_of(meet), *body.parts[meet].radius.last().unwrap())],
+            &mut line,
+            &mut radius,
+        );
     } else if high.0 == meet {
-        push(vec![(end_of(meet), *body.parts[meet].radius.last().unwrap())], &mut line, &mut radius);
+        push(
+            vec![(end_of(meet), *body.parts[meet].radius.last().unwrap())],
+            &mut line,
+            &mut radius,
+        );
     }
     let down: Vec<usize> = b.iter().copied().take_while(|&p| p != meet).collect();
     for &p in down.iter().rev() {
@@ -601,7 +858,14 @@ fn spine_line(body: &Body, limbs: &[Limb], limb_of_part: &[Option<usize>], uprig
         line = vec![s, high.1];
         radius = vec![body.solid.depth[body.seed] as f64 * body.solid.cell; 2];
         if geom::norm(geom::sub(line[1], line[0])) < 1e-6 {
-            line[1] = geom::add(line[0], if upright { [0.0, 0.1 * body.size, 0.0] } else { [0.0, 0.0, fwd * 0.1 * body.size] });
+            line[1] = geom::add(
+                line[0],
+                if upright {
+                    [0.0, 0.1 * body.size, 0.0]
+                } else {
+                    [0.0, 0.0, fwd * 0.1 * body.size]
+                },
+            );
         }
     }
     (line, radius)

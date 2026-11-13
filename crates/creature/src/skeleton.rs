@@ -64,7 +64,9 @@ fn bends_min(l: &Limb, most: usize, defaults: &[f64], min_turn: f64) -> Vec<f64>
         return vec![];
     }
     let n = 48usize;
-    let pts: Vec<V3> = (0..=n).map(|k| l.at(l.emerge + own * k as f64 / n as f64).0).collect();
+    let pts: Vec<V3> = (0..=n)
+        .map(|k| l.at(l.emerge + own * k as f64 / n as f64).0)
+        .collect();
     let w = 5usize; // about a tenth of the limb each way
     let mut turn = vec![0.0f64; n + 1];
     for k in w..=n - w {
@@ -120,7 +122,11 @@ fn limb_joints(l: &Limb, body: &Body, kind: Kind) -> Vec<f64> {
     };
     match l.role {
         Role::Leg => {
-            let most = if kind == Kind::FourLegged || kind == Kind::ManyLimbed { 3 } else { 2 };
+            let most = if kind == Kind::FourLegged || kind == Kind::ManyLimbed {
+                3
+            } else {
+                2
+            };
             // the foot: a joint where the leg comes within a tenth of the
             // body's height of the ground (an ankle, a pastern), so the last
             // bone is the foot and stands on the ground
@@ -131,7 +137,11 @@ fn limb_joints(l: &Limb, body: &Body, kind: Kind) -> Vec<f64> {
                 .find(|&f| l.at(l.emerge + own * f).0[1] <= ground + 0.1 * height)
                 .unwrap_or(0.93);
             let mut v = upper();
-            v.extend(bends(l, 1, most, &[0.45, 0.25]).into_iter().filter(|&f| f <= foot - 0.12));
+            v.extend(
+                bends(l, 1, most, &[0.45, 0.25])
+                    .into_iter()
+                    .filter(|&f| f <= foot - 0.12),
+            );
             v.push(foot);
             v
         }
@@ -160,7 +170,10 @@ fn limb_joints(l: &Limb, body: &Body, kind: Kind) -> Vec<f64> {
                     at = f;
                 }
             }
-            if let Some(&turn) = bends_min(l, 1, &[], 25.0).iter().find(|f| (0.3..=0.8).contains(*f)) {
+            if let Some(&turn) = bends_min(l, 1, &[], 25.0)
+                .iter()
+                .find(|f| (0.3..=0.8).contains(*f))
+            {
                 at = turn;
             }
             if at * own >= 0.2 * size {
@@ -183,7 +196,13 @@ fn stem_and_side(l: &Limb) -> (String, &'static str) {
         Side::Right => ".R",
         Side::Centre => "",
     };
-    (l.name.trim_end_matches(".L").trim_end_matches(".R").to_string(), side)
+    (
+        l.name
+            .trim_end_matches(".L")
+            .trim_end_matches(".R")
+            .to_string(),
+        side,
+    )
 }
 
 /// Where another rig of this body (the model's prediction) puts its
@@ -204,7 +223,11 @@ fn hinted(l: &Limb, body: &Body, hint: &[Bone], most: usize) -> Option<Vec<f64>>
             let (p, q) = (l.line[k - 1], l.line[k]);
             let pq = geom::sub(q, p);
             let len = geom::norm(pq);
-            let t = if len > 0.0 { (geom::dot(geom::sub(b.head, p), pq) / (len * len)).clamp(0.0, 1.0) } else { 0.0 };
+            let t = if len > 0.0 {
+                (geom::dot(geom::sub(b.head, p), pq) / (len * len)).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
             let d = geom::norm(geom::sub(b.head, geom::add(p, geom::scale(pq, t))));
             if d < best {
                 best = d;
@@ -231,7 +254,13 @@ fn hinted(l: &Limb, body: &Body, hint: &[Bone], most: usize) -> Option<Vec<f64>>
     while out.len() > most {
         // drop the joint nearest to a neighbour
         let k = (0..out.len()).min_by(|&a, &b| {
-            let gap = |i: usize| (if i > 0 { out[i] - out[i - 1] } else { out[i] }).min(if i + 1 < out.len() { out[i + 1] - out[i] } else { 1.0 - out[i] });
+            let gap = |i: usize| {
+                (if i > 0 { out[i] - out[i - 1] } else { out[i] }).min(if i + 1 < out.len() {
+                    out[i + 1] - out[i]
+                } else {
+                    1.0 - out[i]
+                })
+            };
             gap(a).partial_cmp(&gap(b)).unwrap()
         });
         out.remove(k.unwrap());
@@ -266,7 +295,11 @@ impl Skeleton {
             let head = roles::at(&an.spine, &an.spine_radius, k as f64 * step).0;
             let tail = roles::at(&an.spine, &an.spine_radius, (k + 1) as f64 * step).0;
             bones.push(Bone {
-                name: if k == 0 { "DEF-hips".into() } else { format!("DEF-spine.{k:03}") },
+                name: if k == 0 {
+                    "DEF-hips".into()
+                } else {
+                    format!("DEF-spine.{k:03}")
+                },
                 parent: if k == 0 { None } else { Some(k - 1) },
                 head,
                 tail,
@@ -278,29 +311,40 @@ impl Skeleton {
             });
         }
         // --- limbs: joint fractions, the same on a left and its right
-        let mut fracs: Vec<Vec<f64>> = an.limbs.iter().map(|l| limb_joints(l, body, an.kind)).collect();
+        let mut fracs: Vec<Vec<f64>> = an
+            .limbs
+            .iter()
+            .map(|l| limb_joints(l, body, an.kind))
+            .collect();
         let hinted_fracs = |fracs: &mut Vec<Vec<f64>>| {
-        if let Some(h) = hint {
-            for (li, l) in an.limbs.iter().enumerate() {
-                if l.role != Role::Leg && l.role != Role::Arm {
-                    continue;
-                }
-                let most = if l.role == Role::Leg && (an.kind == Kind::FourLegged || an.kind == Kind::ManyLimbed) { 3 } else { 2 };
-                if let Some(mid) = hinted(l, body, h, most) {
-                    // keep what comes before the limb is out of the body (the
-                    // shoulder or hip) and, on a leg, the foot joint
-                    let mut v: Vec<f64> = fracs[li].iter().copied().filter(|&f| f <= 0.0).collect();
-                    if l.role == Role::Leg {
-                        let foot = *fracs[li].last().unwrap();
-                        v.extend(mid.into_iter().filter(|&f| f <= foot - 0.12));
-                        v.push(foot);
-                    } else {
-                        v.extend(mid);
+            if let Some(h) = hint {
+                for (li, l) in an.limbs.iter().enumerate() {
+                    if l.role != Role::Leg && l.role != Role::Arm {
+                        continue;
                     }
-                    fracs[li] = v;
+                    let most = if l.role == Role::Leg
+                        && (an.kind == Kind::FourLegged || an.kind == Kind::ManyLimbed)
+                    {
+                        3
+                    } else {
+                        2
+                    };
+                    if let Some(mid) = hinted(l, body, h, most) {
+                        // keep what comes before the limb is out of the body (the
+                        // shoulder or hip) and, on a leg, the foot joint
+                        let mut v: Vec<f64> =
+                            fracs[li].iter().copied().filter(|&f| f <= 0.0).collect();
+                        if l.role == Role::Leg {
+                            let foot = *fracs[li].last().unwrap();
+                            v.extend(mid.into_iter().filter(|&f| f <= foot - 0.12));
+                            v.push(foot);
+                        } else {
+                            v.extend(mid);
+                        }
+                        fracs[li] = v;
+                    }
                 }
             }
-        }
         };
         hinted_fracs(&mut fracs);
         // no bone shorter than 6% of the body's longest side: a short leg
@@ -328,7 +372,11 @@ impl Skeleton {
         for i in 0..an.limbs.len() {
             for j in i + 1..an.limbs.len() {
                 let (a, b) = (&an.limbs[i], &an.limbs[j]);
-                if stem_and_side(a).0 == stem_and_side(b).0 && a.side != b.side && a.side != Side::Centre && b.side != Side::Centre {
+                if stem_and_side(a).0 == stem_and_side(b).0
+                    && a.side != b.side
+                    && a.side != Side::Centre
+                    && b.side != Side::Centre
+                {
                     let (fa, fb) = (fracs[i].clone(), fracs[j].clone());
                     let both = if fa.len() == fb.len() {
                         fa.iter().zip(&fb).map(|(x, y)| 0.5 * (x + y)).collect()
@@ -349,7 +397,12 @@ impl Skeleton {
         for (li, l) in an.limbs.iter().enumerate() {
             let mut base = l.base();
             for (lj, m) in an.limbs.iter().enumerate() {
-                if lj != li && stem_and_side(m).0 == stem_and_side(l).0 && m.side != l.side && m.side != Side::Centre && l.side != Side::Centre {
+                if lj != li
+                    && stem_and_side(m).0 == stem_and_side(l).0
+                    && m.side != l.side
+                    && m.side != Side::Centre
+                    && l.side != Side::Centre
+                {
                     base = geom::scale(geom::add(l.base(), m.base()), 0.5);
                 }
             }
@@ -368,7 +421,11 @@ impl Skeleton {
             let mut prev = parent;
             for (k, &fk) in f.iter().enumerate() {
                 let head = l.at(l.emerge + own * fk).0;
-                let tail = if k + 1 < f.len() { l.at(l.emerge + own * f[k + 1]).0 } else { l.tip() };
+                let tail = if k + 1 < f.len() {
+                    l.at(l.emerge + own * f[k + 1]).0
+                } else {
+                    l.tip()
+                };
                 let name = if l.role == Role::Head && k + 1 == f.len() {
                     "DEF-head".to_string()
                 } else if f.len() == 1 || (l.role == Role::Head && f.len() == 2) {
@@ -376,7 +433,17 @@ impl Skeleton {
                 } else {
                     format!("DEF-{stem}.{:03}{side}", k + 1)
                 };
-                bones.push(Bone { name, parent: Some(prev), head, tail, limb: Some(li), trunk: false, index: k, inside: fk < -1e-9, radius: thick(head) });
+                bones.push(Bone {
+                    name,
+                    parent: Some(prev),
+                    head,
+                    tail,
+                    limb: Some(li),
+                    trunk: false,
+                    index: k,
+                    inside: fk < -1e-9,
+                    radius: thick(head),
+                });
                 prev = bones.len() - 1;
             }
         }
@@ -390,7 +457,9 @@ impl Skeleton {
     }
 
     pub fn children(&self, b: usize) -> Vec<usize> {
-        (0..self.bones.len()).filter(|&i| self.bones[i].parent == Some(b)).collect()
+        (0..self.bones.len())
+            .filter(|&i| self.bones[i].parent == Some(b))
+            .collect()
     }
 }
 

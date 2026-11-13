@@ -70,9 +70,19 @@ impl Part {
         for k in 1..self.line.len() {
             let seg = geom::norm(geom::sub(self.line[k], self.line[k - 1]));
             if left <= seg || k + 1 == self.line.len() {
-                let t = if seg > 0.0 { (left / seg).min(1.0) } else { 0.0 };
-                let p = geom::add(self.line[k - 1], geom::scale(geom::sub(self.line[k], self.line[k - 1]), t));
-                return (p, self.radius[k - 1] + (self.radius[k] - self.radius[k - 1]) * t);
+                let t = if seg > 0.0 {
+                    (left / seg).min(1.0)
+                } else {
+                    0.0
+                };
+                let p = geom::add(
+                    self.line[k - 1],
+                    geom::scale(geom::sub(self.line[k], self.line[k - 1]), t),
+                );
+                return (
+                    p,
+                    self.radius[k - 1] + (self.radius[k] - self.radius[k - 1]) * t,
+                );
             }
             left -= seg;
         }
@@ -112,7 +122,15 @@ impl Body {
     pub fn build(verts: &[V3], tris: &[[u32; 3]], res: usize) -> Body {
         let solid = Solid::build(verts, tris, res);
         let n = solid.len();
-        let seed = (0..n).filter(|&i| solid.inside[i]).max_by(|&a, &b| solid.depth[a].partial_cmp(&solid.depth[b]).unwrap().then(b.cmp(&a))).expect("an empty solid");
+        let seed = (0..n)
+            .filter(|&i| solid.inside[i])
+            .max_by(|&a, &b| {
+                solid.depth[a]
+                    .partial_cmp(&solid.depth[b])
+                    .unwrap()
+                    .then(b.cmp(&a))
+            })
+            .expect("an empty solid");
         let dist = geodesic(&solid, &[seed]);
         let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
         for v in verts {
@@ -122,7 +140,17 @@ impl Body {
             }
         }
         let size = (0..3).map(|a| hi[a] - lo[a]).fold(0.0, f64::max);
-        let mut b = Body { solid, dist, seed, nodes: vec![], parts: vec![], part_of: vec![u32::MAX; n], size, lo, hi };
+        let mut b = Body {
+            solid,
+            dist,
+            seed,
+            nodes: vec![],
+            parts: vec![],
+            part_of: vec![u32::MAX; n],
+            size,
+            lo,
+            hi,
+        };
         b.shells();
         b.branches();
         b
@@ -135,7 +163,12 @@ impl Body {
         let band_of = |i: usize| (self.dist[i] / BAND) as usize;
         let mut node_of = vec![u32::MAX; n];
         let mut order: Vec<usize> = (0..n).filter(|&i| self.dist[i].is_finite()).collect();
-        order.sort_by(|&a, &b| self.dist[a].partial_cmp(&self.dist[b]).unwrap().then(a.cmp(&b)));
+        order.sort_by(|&a, &b| {
+            self.dist[a]
+                .partial_cmp(&self.dist[b])
+                .unwrap()
+                .then(a.cmp(&b))
+        });
         let mut stack = vec![];
         for &st in &order {
             if node_of[st] != u32::MAX {
@@ -150,7 +183,8 @@ impl Body {
                 cells.push(i as u32);
                 for d in NEIGHBOURS {
                     if let Some(j) = s.step(i, d) {
-                        if node_of[j] == u32::MAX && self.dist[j].is_finite() && band_of(j) == band {
+                        if node_of[j] == u32::MAX && self.dist[j].is_finite() && band_of(j) == band
+                        {
                             node_of[j] = id;
                             stack.push(j);
                         }
@@ -200,7 +234,10 @@ impl Body {
                     }
                 }
             }
-            if let Some(&(p, _)) = touch.iter().max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0))) {
+            if let Some(&(p, _)) = touch
+                .iter()
+                .max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0)))
+            {
                 self.nodes[id].parent = Some(p as usize);
                 self.nodes[p as usize].children.push(id);
             }
@@ -208,7 +245,11 @@ impl Body {
         // subtree reach and volume, leaves first (nodes are in distance order)
         for id in (0..self.nodes.len()).rev() {
             if let Some(p) = self.nodes[id].parent {
-                let (far, far_cell, vol) = (self.nodes[id].far, self.nodes[id].far_cell, self.nodes[id].volume);
+                let (far, far_cell, vol) = (
+                    self.nodes[id].far,
+                    self.nodes[id].far_cell,
+                    self.nodes[id].volume,
+                );
                 let pn = &mut self.nodes[p];
                 pn.volume += vol;
                 if far > pn.far {
@@ -227,15 +268,24 @@ impl Body {
         let Some(p) = c.parent else { return true };
         let cell = self.solid.cell;
         let reach = (c.far - c.band as f32 * BAND) as f64 * cell;
-        let total = self.nodes.iter().filter(|n| n.parent.is_none()).map(|n| n.volume).sum::<usize>();
-        reach >= MIN_LENGTH * self.size && c.volume as f64 >= MIN_VOLUME * total as f64 && reach >= MIN_REACH_IN_RADII * self.nodes[p].radius
+        let total = self
+            .nodes
+            .iter()
+            .filter(|n| n.parent.is_none())
+            .map(|n| n.volume)
+            .sum::<usize>();
+        reach >= MIN_LENGTH * self.size
+            && c.volume as f64 >= MIN_VOLUME * total as f64
+            && reach >= MIN_REACH_IN_RADII * self.nodes[p].radius
     }
 
     /// Walks the tree from the seed and cuts it into parts at its forks.
     fn branches(&mut self) {
         let node_of = std::mem::replace(&mut self.part_of, vec![]);
         let mut part_of_node = vec![u32::MAX; self.nodes.len()];
-        let roots: Vec<usize> = (0..self.nodes.len()).filter(|&i| self.nodes[i].parent.is_none()).collect();
+        let roots: Vec<usize> = (0..self.nodes.len())
+            .filter(|&i| self.nodes[i].parent.is_none())
+            .collect();
         let mut parts: Vec<Part> = vec![];
         // (first node, parent part)
         let mut todo: Vec<(usize, Option<usize>)> = roots.iter().map(|&r| (r, None)).collect();
@@ -247,9 +297,19 @@ impl Body {
             loop {
                 nodes.push(cur);
                 part_of_node[cur] = id as u32;
-                let kids: Vec<usize> = self.nodes[cur].children.iter().copied().filter(|&k| self.is_part(k)).collect();
+                let kids: Vec<usize> = self.nodes[cur]
+                    .children
+                    .iter()
+                    .copied()
+                    .filter(|&k| self.is_part(k))
+                    .collect();
                 // bumps: everything below a child that is not a part stays with this one
-                let mut bumps: Vec<usize> = self.nodes[cur].children.iter().copied().filter(|k| !kids.contains(k)).collect();
+                let mut bumps: Vec<usize> = self.nodes[cur]
+                    .children
+                    .iter()
+                    .copied()
+                    .filter(|k| !kids.contains(k))
+                    .collect();
                 while let Some(b) = bumps.pop() {
                     part_of_node[b] = id as u32;
                     bumps.extend(self.nodes[b].children.iter().copied());
@@ -269,20 +329,51 @@ impl Body {
             for f in forks {
                 todo.push((f, Some(id)));
             }
-            parts.push(Part { parent, children: vec![], nodes, line: vec![], radius: vec![], length: 0.0, cells: 0, lo_y: 0.0, hi_y: 0.0, spread: [0.0; 3] });
+            parts.push(Part {
+                parent,
+                children: vec![],
+                nodes,
+                line: vec![],
+                radius: vec![],
+                length: 0.0,
+                cells: 0,
+                lo_y: 0.0,
+                hi_y: 0.0,
+                spread: [0.0; 3],
+            });
         }
-        self.part_of = node_of.iter().map(|&nd| if nd == u32::MAX { u32::MAX } else { part_of_node[nd as usize] }).collect();
+        self.part_of = node_of
+            .iter()
+            .map(|&nd| {
+                if nd == u32::MAX {
+                    u32::MAX
+                } else {
+                    part_of_node[nd as usize]
+                }
+            })
+            .collect();
         // centre lines
         for id in 0..parts.len() {
-            let mut line: Vec<V3> = parts[id].nodes.iter().map(|&n| self.nodes[n].centroid).collect();
-            let mut radius: Vec<f64> = parts[id].nodes.iter().map(|&n| self.nodes[n].radius).collect();
+            let mut line: Vec<V3> = parts[id]
+                .nodes
+                .iter()
+                .map(|&n| self.nodes[n].centroid)
+                .collect();
+            let mut radius: Vec<f64> = parts[id]
+                .nodes
+                .iter()
+                .map(|&n| self.nodes[n].radius)
+                .collect();
             let last = *parts[id].nodes.last().unwrap();
             if parts[id].children.is_empty() {
                 // a tip: run the line out to the farthest cell
                 let tip = self.solid.center(self.nodes[last].far_cell as usize);
                 if geom::norm(geom::sub(tip, *line.last().unwrap())) > 0.5 * self.solid.cell {
                     line.push(tip);
-                    radius.push(self.solid.depth[self.nodes[last].far_cell as usize] as f64 * self.solid.cell);
+                    radius.push(
+                        self.solid.depth[self.nodes[last].far_cell as usize] as f64
+                            * self.solid.cell,
+                    );
                 }
             }
             if let Some(p) = parts[id].parent {
@@ -294,10 +385,15 @@ impl Body {
             for _ in 0..2 {
                 let old = line.clone();
                 for k in 1..line.len().saturating_sub(1) {
-                    line[k] = geom::scale(geom::add(geom::add(old[k - 1], geom::scale(old[k], 2.0)), old[k + 1]), 0.25);
+                    line[k] = geom::scale(
+                        geom::add(geom::add(old[k - 1], geom::scale(old[k], 2.0)), old[k + 1]),
+                        0.25,
+                    );
                 }
             }
-            parts[id].length = (1..line.len()).map(|k| geom::norm(geom::sub(line[k], line[k - 1]))).sum();
+            parts[id].length = (1..line.len())
+                .map(|k| geom::norm(geom::sub(line[k], line[k - 1])))
+                .sum();
             parts[id].line = line;
             parts[id].radius = radius;
         }
@@ -324,7 +420,10 @@ impl Body {
             if p == u32::MAX {
                 continue;
             }
-            let d = geom::sub(self.solid.center(i), geom::scale(sum[p as usize], 1.0 / cnt[p as usize] as f64));
+            let d = geom::sub(
+                self.solid.center(i),
+                geom::scale(sum[p as usize], 1.0 / cnt[p as usize] as f64),
+            );
             for a in 0..3 {
                 for b in 0..3 {
                     cov[p as usize][a][b] += d[a] * d[b];
@@ -389,7 +488,9 @@ pub fn eigenvalues_sym3(m: [[f64; 3]; 3]) -> [f64; 3] {
         return [q, q, q];
     }
     let b = |i: usize, j: usize| (m[i][j] - if i == j { q } else { 0.0 }) / p;
-    let det = b(0, 0) * (b(1, 1) * b(2, 2) - b(1, 2) * b(2, 1)) - b(0, 1) * (b(1, 0) * b(2, 2) - b(1, 2) * b(2, 0)) + b(0, 2) * (b(1, 0) * b(2, 1) - b(1, 1) * b(2, 0));
+    let det = b(0, 0) * (b(1, 1) * b(2, 2) - b(1, 2) * b(2, 1))
+        - b(0, 1) * (b(1, 0) * b(2, 2) - b(1, 2) * b(2, 0))
+        + b(0, 2) * (b(1, 0) * b(2, 1) - b(1, 1) * b(2, 0));
     let phi = (det / 2.0).clamp(-1.0, 1.0).acos() / 3.0;
     let e1 = q + 2.0 * p * phi.cos();
     let e3 = q + 2.0 * p * (phi + 2.0 * std::f64::consts::PI / 3.0).cos();

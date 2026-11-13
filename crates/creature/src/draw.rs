@@ -32,7 +32,11 @@ pub const PALETTE: [Rgb; 14] = [
 
 impl Canvas {
     pub fn new(w: usize, h: usize, bg: Rgb) -> Canvas {
-        Canvas { w, h, rgb: (0..w * h).flat_map(|_| bg).collect() }
+        Canvas {
+            w,
+            h,
+            rgb: (0..w * h).flat_map(|_| bg).collect(),
+        }
     }
     pub fn set(&mut self, x: i64, y: i64, c: Rgb) {
         if x >= 0 && y >= 0 && (x as usize) < self.w && (y as usize) < self.h {
@@ -163,7 +167,14 @@ impl Views {
         let widths = [ext[2], ext[0], ext[0]].map(|e| e * scale + 2.0 * margin);
         let x0 = [0.0, widths[0], widths[0] + widths[1]];
         let w = (widths[0] + widths[1] + widths[2]).ceil() as usize;
-        Views { canvas: Canvas::new(w, height_px, [28, 28, 32]), scale, lo, hi, x0, margin }
+        Views {
+            canvas: Canvas::new(w, height_px, [28, 28, 32]),
+            scale,
+            lo,
+            hi,
+            x0,
+            margin,
+        }
     }
 
     pub fn project(&self, panel: usize, p: V3) -> (f64, f64) {
@@ -190,7 +201,13 @@ impl Views {
                 let c = c.map(|x| (x as f64 * shade) as u8);
                 let p = s.center(i);
                 let (x, y) = self.project(panel, p);
-                self.canvas.rect((x - px as f64 / 2.0).round() as i64, (y - px as f64 / 2.0).round() as i64, px, px, c);
+                self.canvas.rect(
+                    (x - px as f64 / 2.0).round() as i64,
+                    (y - px as f64 / 2.0).round() as i64,
+                    px,
+                    px,
+                    c,
+                );
             }
         }
     }

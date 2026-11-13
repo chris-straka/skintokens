@@ -30,7 +30,10 @@ fn bone_cells(body: &Body, head: V3, tail: V3) -> Vec<usize> {
     let n = ((len / (0.5 * s.cell)).ceil() as usize).max(1);
     let mut out = vec![];
     for k in 0..=n {
-        let p = geom::add(head, geom::scale(geom::sub(tail, head), k as f64 / n as f64));
+        let p = geom::add(
+            head,
+            geom::scale(geom::sub(tail, head), k as f64 / n as f64),
+        );
         if let Some(c) = s.nearest_inside(p, 4) {
             if out.last() != Some(&c) {
                 out.push(c);
@@ -60,7 +63,10 @@ impl Fields {
             }
         }
         let nb = sk.bones.len();
-        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(nb.max(1));
+        let threads = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .min(nb.max(1));
         let mut dist: Vec<Vec<f32>> = vec![vec![]; nb];
         let chunk = nb.div_ceil(threads).max(1);
         std::thread::scope(|sc| {
@@ -152,7 +158,9 @@ pub fn skin(body: &Body, sk: &Skeleton, verts: &[V3], tris: &[[u32; 3]], blend: 
     let mut d = vec![0f32; nb];
     for &p in &reps {
         fields.at(body, p, &mut d);
-        let a = (0..nb).min_by(|&x, &y| d[x].partial_cmp(&d[y]).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or(0);
+        let a = (0..nb)
+            .min_by(|&x, &y| d[x].partial_cmp(&d[y]).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap_or(0);
         let mut row: Vec<(u16, f32)> = vec![(a as u16, 1.0)];
         if d[a].is_finite() {
             for &b in &near[a] {
@@ -194,24 +202,24 @@ pub fn skin(body: &Body, sk: &Skeleton, verts: &[V3], tris: &[[u32; 3]], blend: 
         ns.dedup();
     }
     for _ in 0..SMOOTH_PASSES {
-    let old = w.clone();
-    for (v, ns) in nbrs.iter().enumerate() {
-        if ns.is_empty() {
-            continue;
-        }
-        let mut acc: Vec<(u16, f32)> = old[v].iter().map(|&(j, x)| (j, 0.5 * x)).collect();
-        let share = 0.5 / ns.len() as f32;
-        for &n in ns.iter() {
-            for &(j, x) in &old[n as usize] {
-                match acc.iter_mut().find(|a| a.0 == j) {
-                    Some(a) => a.1 += share * x,
-                    None => acc.push((j, share * x)),
+        let old = w.clone();
+        for (v, ns) in nbrs.iter().enumerate() {
+            if ns.is_empty() {
+                continue;
+            }
+            let mut acc: Vec<(u16, f32)> = old[v].iter().map(|&(j, x)| (j, 0.5 * x)).collect();
+            let share = 0.5 / ns.len() as f32;
+            for &n in ns.iter() {
+                for &(j, x) in &old[n as usize] {
+                    match acc.iter_mut().find(|a| a.0 == j) {
+                        Some(a) => a.1 += share * x,
+                        None => acc.push((j, share * x)),
+                    }
                 }
             }
+            norm(&mut acc);
+            w[v] = acc;
         }
-        norm(&mut acc);
-        w[v] = acc;
-    }
     }
     let mut joints = Vec::with_capacity(verts.len());
     let mut weights = Vec::with_capacity(verts.len());

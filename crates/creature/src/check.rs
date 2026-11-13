@@ -18,10 +18,16 @@ use crate::skeleton::{seg_dist, Bone, Skeleton};
 /// A bone runs to the child that carries its chain on (the one farthest
 /// along the way it came), a leaf 0.6 of its parent's length further.
 pub fn read_rig(g: &Glb) -> anyhow::Result<Vec<Bone>> {
-    let joints: Vec<usize> = g.json["skins"][0]["joints"].as_array().ok_or_else(|| anyhow::anyhow!("the file has no skin"))?.iter().filter_map(|v| v.as_u64().map(|x| x as usize)).collect();
+    let joints: Vec<usize> = g.json["skins"][0]["joints"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("the file has no skin"))?
+        .iter()
+        .filter_map(|v| v.as_u64().map(|x| x as usize))
+        .collect();
     let worlds = g.world_matrices();
     let node_parent = g.parents();
-    let slot: std::collections::HashMap<usize, usize> = joints.iter().enumerate().map(|(k, &n)| (n, k)).collect();
+    let slot: std::collections::HashMap<usize, usize> =
+        joints.iter().enumerate().map(|(k, &n)| (n, k)).collect();
     let parent: Vec<Option<usize>> = joints
         .iter()
         .map(|&n| {
@@ -35,11 +41,18 @@ pub fn read_rig(g: &Glb) -> anyhow::Result<Vec<Bone>> {
             None
         })
         .collect();
-    let head: Vec<V3> = joints.iter().map(|&n| geom::translation(&worlds[n])).collect();
+    let head: Vec<V3> = joints
+        .iter()
+        .map(|&n| geom::translation(&worlds[n]))
+        .collect();
     let n = joints.len();
     let mut tail = head.clone();
     let mut len = vec![0.0; n];
-    let kids = |j: usize| (0..n).filter(|&k| parent[k] == Some(j) && geom::norm(geom::sub(head[k], head[j])) > 1e-9).collect::<Vec<_>>();
+    let kids = |j: usize| {
+        (0..n)
+            .filter(|&k| parent[k] == Some(j) && geom::norm(geom::sub(head[k], head[j])) > 1e-9)
+            .collect::<Vec<_>>()
+    };
     // Blender's convention (a bone runs along its joint's local +Y): held
     // when four in five joints with one child point their +Y at it. Then a
     // leaf runs along its own +Y, as weightforge reads it.
@@ -73,7 +86,10 @@ pub fn read_rig(g: &Glb) -> anyhow::Result<Vec<Bone>> {
             continue;
         }
         if y_convention {
-            let l = ch.iter().map(|&k| geom::dot(geom::sub(head[k], head[j]), yaxis[j])).fold(0.0, f64::max);
+            let l = ch
+                .iter()
+                .map(|&k| geom::dot(geom::sub(head[k], head[j]), yaxis[j]))
+                .fold(0.0, f64::max);
             if l > 1e-9 {
                 tail[j] = geom::add(head[j], geom::scale(yaxis[j], l));
                 len[j] = l;
@@ -81,11 +97,21 @@ pub fn read_rig(g: &Glb) -> anyhow::Result<Vec<Bone>> {
             }
         }
         let dir = match parent[j] {
-            Some(p) if geom::norm(geom::sub(head[j], head[p])) > 1e-9 => geom::scale(geom::sub(head[j], head[p]), 1.0 / geom::norm(geom::sub(head[j], head[p]))),
+            Some(p) if geom::norm(geom::sub(head[j], head[p])) > 1e-9 => geom::scale(
+                geom::sub(head[j], head[p]),
+                1.0 / geom::norm(geom::sub(head[j], head[p])),
+            ),
             _ => [0.0; 3],
         };
-        let key = |k: usize| geom::dot(geom::sub(head[k], head[j]), dir) + 1e-3 * geom::norm(geom::sub(head[k], head[j]));
-        let best = ch.iter().copied().max_by(|&a, &b| key(a).partial_cmp(&key(b)).unwrap()).unwrap();
+        let key = |k: usize| {
+            geom::dot(geom::sub(head[k], head[j]), dir)
+                + 1e-3 * geom::norm(geom::sub(head[k], head[j]))
+        };
+        let best = ch
+            .iter()
+            .copied()
+            .max_by(|&a, &b| key(a).partial_cmp(&key(b)).unwrap())
+            .unwrap();
         tail[j] = head[best];
         len[j] = geom::norm(geom::sub(tail[j], head[j]));
     }
@@ -97,14 +123,20 @@ pub fn read_rig(g: &Glb) -> anyhow::Result<Vec<Bone>> {
         let l = if plen > 1e-9 { 0.6 * plen } else { 0.05 };
         let dir = match parent[j] {
             _ if y_convention => yaxis[j],
-            Some(p) if geom::norm(geom::sub(head[j], head[p])) > 1e-9 => geom::scale(geom::sub(head[j], head[p]), 1.0 / geom::norm(geom::sub(head[j], head[p]))),
+            Some(p) if geom::norm(geom::sub(head[j], head[p])) > 1e-9 => geom::scale(
+                geom::sub(head[j], head[p]),
+                1.0 / geom::norm(geom::sub(head[j], head[p])),
+            ),
             _ => yaxis[j],
         };
         tail[j] = geom::add(head[j], geom::scale(dir, l));
     }
     Ok((0..n)
         .map(|j| Bone {
-            name: g.nodes()[joints[j]]["name"].as_str().unwrap_or("joint").to_string(),
+            name: g.nodes()[joints[j]]["name"]
+                .as_str()
+                .unwrap_or("joint")
+                .to_string(),
             parent: parent[j],
             head: head[j],
             tail: tail[j],
@@ -125,7 +157,11 @@ fn line_dist(p: V3, line: &[V3]) -> (f64, f64) {
         let (a, b) = (line[k - 1], line[k]);
         let ab = geom::sub(b, a);
         let l = geom::norm(ab);
-        let t = if l > 0.0 { (geom::dot(geom::sub(p, a), ab) / (l * l)).clamp(0.0, 1.0) } else { 0.0 };
+        let t = if l > 0.0 {
+            (geom::dot(geom::sub(p, a), ab) / (l * l)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         let d = geom::norm(geom::sub(p, geom::add(a, geom::scale(ab, t))));
         if d < best.0 {
             best = (d, s + t * l);
@@ -163,10 +199,20 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
         }
         let (h, t) = (bones[b].head, bones[b].tail);
         let steps = 12;
-        let inside = |k: usize| body.solid.nearest_inside(geom::add(h, geom::scale(geom::sub(t, h), k as f64 / steps as f64)), 1).is_some();
+        let inside = |k: usize| {
+            body.solid
+                .nearest_inside(
+                    geom::add(h, geom::scale(geom::sub(t, h), k as f64 / steps as f64)),
+                    1,
+                )
+                .is_some()
+        };
         if let Some(out) = (1..=steps).find(|&k| !inside(k)) {
             if out >= 4 {
-                bones[b].tail = geom::add(h, geom::scale(geom::sub(t, h), (out - 1) as f64 / steps as f64));
+                bones[b].tail = geom::add(
+                    h,
+                    geom::scale(geom::sub(t, h), (out - 1) as f64 / steps as f64),
+                );
             }
         }
     }
@@ -176,7 +222,14 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
     const SAMPLES: usize = 7;
     let mut along = vec![0.0f64; nb]; // arc length of the bone's middle on its limb
     for (bi, b) in bones.iter_mut().enumerate() {
-        let pts: Vec<V3> = (0..SAMPLES).map(|k| geom::add(b.head, geom::scale(geom::sub(b.tail, b.head), (k as f64 + 0.5) / SAMPLES as f64))).collect();
+        let pts: Vec<V3> = (0..SAMPLES)
+            .map(|k| {
+                geom::add(
+                    b.head,
+                    geom::scale(geom::sub(b.tail, b.head), (k as f64 + 0.5) / SAMPLES as f64),
+                )
+            })
+            .collect();
         // votes[0] = spine, votes[1 + limb]
         let mut votes = vec![0usize; an.limbs.len() + 1];
         let mut arc = vec![0.0f64; an.limbs.len() + 1];
@@ -240,7 +293,10 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
         for k in 0..n {
             let s = from + (to - from) * (k as f64 + 0.5) / n as f64;
             let (p, r) = roles::at(line, radius, s);
-            if ids.iter().any(|&b| seg_dist(p, bones[b].head, bones[b].tail) <= reach(r)) {
+            if ids
+                .iter()
+                .any(|&b| seg_dist(p, bones[b].head, bones[b].tail) <= reach(r))
+            {
                 hit += 1;
             }
         }
@@ -258,7 +314,9 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
         let s = (cov / 0.8).min(1.0) * if enough { 1.0 } else { 0.5 };
         let weight = if l.role == Role::Extra { 0.3 } else { 1.0 };
         limb_scores.push((s, weight));
-        limb_rows.push(json!({"limb": l.name, "bones": ids.len(), "covered": (cov * 100.0).round() / 100.0}));
+        limb_rows.push(
+            json!({"limb": l.name, "bones": ids.len(), "covered": (cov * 100.0).round() / 100.0}),
+        );
         if cov < 0.5 || ids.is_empty() {
             findings.push(json!({"code": "S_NO_CHAIN", "severity": if l.role == Role::Extra { "warn" } else { "fail" }, "part": l.name,
                 "detail": format!("bones run along {:.0}% of it", cov * 100.0)}));
@@ -268,8 +326,18 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
         }
     }
     let wsum: f64 = limb_scores.iter().map(|x| x.1).sum();
-    let limbs = if wsum > 0.0 { limb_scores.iter().map(|x| x.0 * x.1).sum::<f64>() / wsum } else { 1.0 };
-    let spine_cov = covered(&an.spine, &an.spine_radius, 0.0, roles::length(&an.spine), &trunk);
+    let limbs = if wsum > 0.0 {
+        limb_scores.iter().map(|x| x.0 * x.1).sum::<f64>() / wsum
+    } else {
+        1.0
+    };
+    let spine_cov = covered(
+        &an.spine,
+        &an.spine_radius,
+        0.0,
+        roles::length(&an.spine),
+        &trunk,
+    );
     if spine_cov < 0.5 {
         findings.push(json!({"code": "S_NO_CHAIN", "severity": "fail", "part": "spine", "detail": format!("bones run along {:.0}% of it", spine_cov * 100.0)}));
     }
@@ -279,7 +347,10 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
     for b in &bones {
         let mut inn = 0;
         for k in 0..SAMPLES {
-            let p = geom::add(b.head, geom::scale(geom::sub(b.tail, b.head), (k as f64 + 0.5) / SAMPLES as f64));
+            let p = geom::add(
+                b.head,
+                geom::scale(geom::sub(b.tail, b.head), (k as f64 + 0.5) / SAMPLES as f64),
+            );
             if body.solid.nearest_inside(p, 1).is_some() {
                 inn += 1;
             }
@@ -300,8 +371,16 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
     let mut pairs = (0usize, 0usize);
     for (i, a) in an.limbs.iter().enumerate() {
         for (j, b) in an.limbs.iter().enumerate().skip(i + 1) {
-            if a.side != Side::Centre && b.side != Side::Centre && a.side != b.side && stem(&a.name) == stem(&b.name) && a.role != Role::Extra {
-                let (na, nb_) = ((0..nb).filter(|&x| bones[x].limb == Some(i)).count(), (0..nb).filter(|&x| bones[x].limb == Some(j)).count());
+            if a.side != Side::Centre
+                && b.side != Side::Centre
+                && a.side != b.side
+                && stem(&a.name) == stem(&b.name)
+                && a.role != Role::Extra
+            {
+                let (na, nb_) = (
+                    (0..nb).filter(|&x| bones[x].limb == Some(i)).count(),
+                    (0..nb).filter(|&x| bones[x].limb == Some(j)).count(),
+                );
                 pairs.1 += 1;
                 if na == nb_ {
                     pairs.0 += 1;
@@ -311,9 +390,16 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
             }
         }
     }
-    let symmetry = if pairs.1 > 0 { pairs.0 as f64 / pairs.1 as f64 } else { 1.0 };
-    let stray = (0..nb).filter(|&b| !bones[b].trunk && bones[b].limb.is_none()).count();
-    let score = 100.0 * (0.55 * limbs + 0.15 * (spine_cov / 0.8).min(1.0) + 0.15 * inside + 0.15 * symmetry);
+    let symmetry = if pairs.1 > 0 {
+        pairs.0 as f64 / pairs.1 as f64
+    } else {
+        1.0
+    };
+    let stray = (0..nb)
+        .filter(|&b| !bones[b].trunk && bones[b].limb.is_none())
+        .count();
+    let score = 100.0
+        * (0.55 * limbs + 0.15 * (spine_cov / 0.8).min(1.0) + 0.15 * inside + 0.15 * symmetry);
     let failing = findings.iter().filter(|f| f["severity"] == "fail").count();
     let report = json!({
         "format": "creature-skeleton-check/1",
@@ -330,5 +416,10 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
         "bones_along_nothing": stray,
         "findings": findings,
     });
-    Verdict { score, report, skeleton: Skeleton { bones }, failing }
+    Verdict {
+        score,
+        report,
+        skeleton: Skeleton { bones },
+        failing,
+    }
 }

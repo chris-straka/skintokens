@@ -49,7 +49,11 @@ impl Solid {
         (c[2] * self.dims[1] + c[1]) * self.dims[0] + c[0]
     }
     pub fn coords(&self, i: usize) -> [usize; 3] {
-        [i % self.dims[0], (i / self.dims[0]) % self.dims[1], i / (self.dims[0] * self.dims[1])]
+        [
+            i % self.dims[0],
+            (i / self.dims[0]) % self.dims[1],
+            i / (self.dims[0] * self.dims[1]),
+        ]
     }
     pub fn center(&self, i: usize) -> V3 {
         let c = self.coords(i);
@@ -57,7 +61,9 @@ impl Solid {
     }
     /// The cell holding `p`, clamped into the grid.
     pub fn cell_of(&self, p: V3) -> [usize; 3] {
-        [0, 1, 2].map(|a| (((p[a] - self.origin[a]) / self.cell).floor().max(0.0) as usize).min(self.dims[a] - 1))
+        [0, 1, 2].map(|a| {
+            (((p[a] - self.origin[a]) / self.cell).floor().max(0.0) as usize).min(self.dims[a] - 1)
+        })
     }
     /// Neighbour of cell `i` by `d`, if in the grid.
     pub fn step(&self, i: usize, d: [i32; 3]) -> Option<usize> {
@@ -73,7 +79,9 @@ impl Solid {
         Some(self.idx(o))
     }
     pub fn is_inside(&self, p: V3) -> bool {
-        (0..3).all(|a| p[a] >= self.origin[a] && p[a] < self.origin[a] + self.dims[a] as f64 * self.cell) && self.inside[self.idx(self.cell_of(p))]
+        (0..3).all(|a| {
+            p[a] >= self.origin[a] && p[a] < self.origin[a] + self.dims[a] as f64 * self.cell
+        }) && self.inside[self.idx(self.cell_of(p))]
     }
     /// The inside cell nearest to `p` (itself if inside), searching outward
     /// up to `reach` cells.
@@ -130,17 +138,31 @@ impl Solid {
         let pad = 2.0;
         let origin = [0, 1, 2].map(|a| lo[a] - pad * cell);
         let dims = [0, 1, 2].map(|a| (ext[a] / cell).ceil() as usize + 2 * pad as usize + 1);
-        let mut s = Solid { dims, origin, cell, inside: vec![], depth: vec![] };
+        let mut s = Solid {
+            dims,
+            origin,
+            cell,
+            inside: vec![],
+            depth: vec![],
+        };
         let n = s.len();
         let mut surface = vec![false; n];
         for t in tris {
             let [a, b, c] = t.map(|i| verts[i as usize]);
-            let longest = geom::norm(geom::sub(b, a)).max(geom::norm(geom::sub(c, a))).max(geom::norm(geom::sub(c, b)));
+            let longest = geom::norm(geom::sub(b, a))
+                .max(geom::norm(geom::sub(c, a)))
+                .max(geom::norm(geom::sub(c, b)));
             let k = ((longest / (0.5 * cell)).ceil() as usize).max(1);
             for i in 0..=k {
                 for j in 0..=(k - i) {
                     let (u, v) = (i as f64 / k as f64, j as f64 / k as f64);
-                    let p = geom::add(a, geom::add(geom::scale(geom::sub(b, a), u), geom::scale(geom::sub(c, a), v)));
+                    let p = geom::add(
+                        a,
+                        geom::add(
+                            geom::scale(geom::sub(b, a), u),
+                            geom::scale(geom::sub(c, a), v),
+                        ),
+                    );
                     let ci = s.idx(s.cell_of(p));
                     surface[ci] = true;
                 }
@@ -173,20 +195,43 @@ impl Solid {
                 continue;
             }
             let sign: i8 = if n[axis] < 0.0 { 1 } else { -1 };
-            let q = p.map(|x| [(x[u] - self.origin[u]) / self.cell, (x[v] - self.origin[v]) / self.cell, (x[axis] - self.origin[axis]) / self.cell]);
-            let (ulo, uhi) = (q.iter().map(|x| x[0]).fold(f64::INFINITY, f64::min), q.iter().map(|x| x[0]).fold(f64::NEG_INFINITY, f64::max));
-            let (vlo, vhi) = (q.iter().map(|x| x[1]).fold(f64::INFINITY, f64::min), q.iter().map(|x| x[1]).fold(f64::NEG_INFINITY, f64::max));
-            let d = (q[1][0] - q[0][0]) * (q[2][1] - q[0][1]) - (q[2][0] - q[0][0]) * (q[1][1] - q[0][1]);
+            let q = p.map(|x| {
+                [
+                    (x[u] - self.origin[u]) / self.cell,
+                    (x[v] - self.origin[v]) / self.cell,
+                    (x[axis] - self.origin[axis]) / self.cell,
+                ]
+            });
+            let (ulo, uhi) = (
+                q.iter().map(|x| x[0]).fold(f64::INFINITY, f64::min),
+                q.iter().map(|x| x[0]).fold(f64::NEG_INFINITY, f64::max),
+            );
+            let (vlo, vhi) = (
+                q.iter().map(|x| x[1]).fold(f64::INFINITY, f64::min),
+                q.iter().map(|x| x[1]).fold(f64::NEG_INFINITY, f64::max),
+            );
+            let d = (q[1][0] - q[0][0]) * (q[2][1] - q[0][1])
+                - (q[2][0] - q[0][0]) * (q[1][1] - q[0][1]);
             if d.abs() < 1e-14 {
                 continue;
             }
-            let (i0, i1) = (((ulo - ju).ceil().max(0.0)) as usize, ((uhi - ju).floor().min(nu as f64 - 1.0)).max(-1.0) as i64);
-            let (j0, j1) = (((vlo - jv).ceil().max(0.0)) as usize, ((vhi - jv).floor().min(nv as f64 - 1.0)).max(-1.0) as i64);
+            let (i0, i1) = (
+                ((ulo - ju).ceil().max(0.0)) as usize,
+                ((uhi - ju).floor().min(nu as f64 - 1.0)).max(-1.0) as i64,
+            );
+            let (j0, j1) = (
+                ((vlo - jv).ceil().max(0.0)) as usize,
+                ((vhi - jv).floor().min(nv as f64 - 1.0)).max(-1.0) as i64,
+            );
             for j in j0 as i64..=j1 {
                 for i in i0 as i64..=i1 {
                     let (x, y) = (i as f64 + ju, j as f64 + jv);
-                    let w1 = ((x - q[0][0]) * (q[2][1] - q[0][1]) - (q[2][0] - q[0][0]) * (y - q[0][1])) / d;
-                    let w2 = ((q[1][0] - q[0][0]) * (y - q[0][1]) - (x - q[0][0]) * (q[1][1] - q[0][1])) / d;
+                    let w1 = ((x - q[0][0]) * (q[2][1] - q[0][1])
+                        - (q[2][0] - q[0][0]) * (y - q[0][1]))
+                        / d;
+                    let w2 = ((q[1][0] - q[0][0]) * (y - q[0][1])
+                        - (x - q[0][0]) * (q[1][1] - q[0][1]))
+                        / d;
                     if w1 < 0.0 || w2 < 0.0 || w1 + w2 > 1.0 {
                         continue;
                     }
@@ -269,14 +314,26 @@ impl Solid {
     fn chamfer(&self) -> Vec<f32> {
         let n = self.len();
         let big = i32::MAX / 2;
-        let mut d: Vec<i32> = self.inside.iter().map(|&b| if b { big } else { 0 }).collect();
+        let mut d: Vec<i32> = self
+            .inside
+            .iter()
+            .map(|&b| if b { big } else { 0 })
+            .collect();
         let cost = |o: [i32; 3]| match o[0].abs() + o[1].abs() + o[2].abs() {
             1 => 3,
             2 => 4,
             _ => 5,
         };
-        let before: Vec<[i32; 3]> = NEIGHBOURS.iter().copied().filter(|o| (o[2], o[1], o[0]) < (0, 0, 0)).collect();
-        let after: Vec<[i32; 3]> = NEIGHBOURS.iter().copied().filter(|o| (o[2], o[1], o[0]) > (0, 0, 0)).collect();
+        let before: Vec<[i32; 3]> = NEIGHBOURS
+            .iter()
+            .copied()
+            .filter(|o| (o[2], o[1], o[0]) < (0, 0, 0))
+            .collect();
+        let after: Vec<[i32; 3]> = NEIGHBOURS
+            .iter()
+            .copied()
+            .filter(|o| (o[2], o[1], o[0]) > (0, 0, 0))
+            .collect();
         for i in 0..n {
             if d[i] == 0 {
                 continue;
@@ -309,8 +366,23 @@ pub mod tests {
 
     /// A closed box from `lo` to `hi`, faces outward.
     pub fn cuboid(lo: V3, hi: V3, base: u32) -> (Vec<V3>, Vec<[u32; 3]>) {
-        let v: Vec<V3> = (0..8).map(|i| [if i & 1 == 0 { lo[0] } else { hi[0] }, if i & 2 == 0 { lo[1] } else { hi[1] }, if i & 4 == 0 { lo[2] } else { hi[2] }]).collect();
-        let quads = [[0, 4, 6, 2], [1, 3, 7, 5], [0, 1, 5, 4], [2, 6, 7, 3], [0, 2, 3, 1], [4, 5, 7, 6]];
+        let v: Vec<V3> = (0..8)
+            .map(|i| {
+                [
+                    if i & 1 == 0 { lo[0] } else { hi[0] },
+                    if i & 2 == 0 { lo[1] } else { hi[1] },
+                    if i & 4 == 0 { lo[2] } else { hi[2] },
+                ]
+            })
+            .collect();
+        let quads = [
+            [0, 4, 6, 2],
+            [1, 3, 7, 5],
+            [0, 1, 5, 4],
+            [2, 6, 7, 3],
+            [0, 2, 3, 1],
+            [4, 5, 7, 6],
+        ];
         let mut f = vec![];
         for q in quads {
             f.push([base + q[0], base + q[1], base + q[2]]);

@@ -182,6 +182,17 @@ pub fn check(rig: &Rig) -> Value {
         )
     };
 
+    let step = (rig.rest_pos.len() / 4000).max(1);
+    let tree = geom::KdTree::new(rig.rest_pos.clone());
+    let sample: Vec<V3> = rig.rest_pos.iter().step_by(step).copied().collect();
+    let asym = sample
+        .iter()
+        .map(|p| tree.knn([2.0 * x0 - p[0], p[1], p[2]], 1)[0].0)
+        .sum::<f64>()
+        / sample.len() as f64
+        / len;
+    let lopsided_body = asym > 0.02;
+
     // left and right: each limb has a partner that joins the trunk at the
     // mirrored place, with as many joints (one more or less) and about
     // the same length
@@ -200,7 +211,11 @@ pub fn check(rig: &Rig) -> Value {
     }
     cand.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
     for (d, a, b) in cand {
-        if d > 0.15 * len || limbs[a].partner.is_some() || limbs[b].partner.is_some() {
+        // a body in a lopsided pose holds its shoulders unevenly
+        if d > (if lopsided_body { 0.25 } else { 0.15 }) * len
+            || limbs[a].partner.is_some()
+            || limbs[b].partner.is_some()
+        {
             continue;
         }
         limbs[a].partner = Some(b);
@@ -224,14 +239,9 @@ pub fn check(rig: &Rig) -> Value {
             );
         }
     }
-    for l in &limbs {
-        if l.partner.is_none() {
-            fail(
-                "B_LOPSIDED",
-                format!("{} has no partner on the other side", label(l)),
-            );
-        }
-    }
+    let mut unpaired: Vec<usize> = (0..limbs.len())
+        .filter(|&i| limbs[i].partner.is_none())
+        .collect();
 
     // the centre line and which way the body stands
     let centre: Vec<usize> = (0..n).filter(|&j| live[j] && !side[j]).collect();
@@ -282,6 +292,36 @@ pub fn check(rig: &Rig) -> Value {
         if mass >= 0.01 * verts && (pairs.is_empty() || mid[axis] > jmax - 0.1 * len) {
             has_head = true;
         }
+    }
+    // A body in a lopsided pose may hold its head to one side: then the
+    // head is the one limb without a partner that joins the centre line
+    // past the last pair and holds a head's worth of skin.
+    let mut leaning_head = None;
+    if !has_head && lopsided_body {
+        leaning_head = unpaired
+            .iter()
+            .copied()
+            .filter(|&i| {
+                let (_, mass) = skin_of(&below(limbs[i].root));
+                mass >= 0.01 * verts
+                    && (pairs.is_empty() || limbs[i].attach[axis] > jmax - 0.1 * len)
+            })
+            .max_by(|&a, &b| {
+                limbs[a].attach[axis]
+                    .partial_cmp(&limbs[b].attach[axis])
+                    .unwrap()
+            });
+        if let Some(h) = leaning_head {
+            has_head = true;
+            limbs[h].kind = "head";
+            unpaired.retain(|&i| i != h);
+        }
+    }
+    for &i in &unpaired {
+        fail(
+            "B_LOPSIDED",
+            format!("{} has no partner on the other side", label(&limbs[i])),
+        );
     }
     if !has_head && !pairs.is_empty() {
         fail(
@@ -406,7 +446,10 @@ pub fn check(rig: &Rig) -> Value {
     }
 
     // names against places
-    for l in &limbs {
+    for (i, l) in limbs.iter().enumerate() {
+        if Some(i) == leaning_head {
+            continue;
+        }
         let Some(name) = named(&rig.names[l.root]) else {
             continue;
         };
@@ -444,16 +487,6 @@ pub fn check(rig: &Rig) -> Value {
     // under a cloak) cannot have a left for every right: how far the
     // mesh is from its own mirror image says so, and its lopsided
     // findings are then warnings.
-    let step = (rig.rest_pos.len() / 4000).max(1);
-    let tree = geom::KdTree::new(rig.rest_pos.clone());
-    let sample: Vec<V3> = rig.rest_pos.iter().step_by(step).copied().collect();
-    let asym = sample
-        .iter()
-        .map(|p| tree.knn([2.0 * x0 - p[0], p[1], p[2]], 1)[0].0)
-        .sum::<f64>()
-        / sample.len() as f64
-        / len;
-    let lopsided_body = asym > 0.02;
     if lopsided_body {
         for f in findings.iter_mut() {
             if f["code"] == json!("B_LOPSIDED") {
@@ -468,8 +501,14 @@ pub fn check(rig: &Rig) -> Value {
         // a pose can move a limb off its mirror place; it cannot change
         // how many limbs a side has
         let (right, left) = (
-            limbs.iter().filter(|l| l.side > 0).count(),
-            limbs.iter().filter(|l| l.side < 0).count(),
+            limbs
+                .iter()
+                .filter(|l| l.side > 0 && l.kind != "head")
+                .count(),
+            limbs
+                .iter()
+                .filter(|l| l.side < 0 && l.kind != "head")
+                .count(),
         );
         if right != left {
             findings.push(json!({"code": "B_LOPSIDED", "severity": "fail",
@@ -483,7 +522,7 @@ pub fn check(rig: &Rig) -> Value {
         "body_off_its_mirror_image_pct": (asym * 1e4).round() / 1e2,
         "stands": if upright { "upright" } else { "level" },
         "limb_pairs": pairs.len(),
-        "limbs_without_a_partner": limbs.iter().filter(|l| l.partner.is_none()).count(),
+        "limbs_without_a_partner": unpaired.len(),
         "head": has_head,
         "ground_patches_off_the_plane": feet,
         "centre_joints": centre.len(),
