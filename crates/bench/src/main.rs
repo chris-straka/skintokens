@@ -81,7 +81,8 @@ anatomy a skeleton judged with nothing to hold it against but itself: no
        its left-and-right findings as warnings. Exit 1 when any fails.
 joints two files of one skeleton, each with a clip: how far OTHER's joints
        are from TRUTH's on every frame of TRUTH's clip (joints matched by
-       name; millimetres, and shares of the body's height). For a motion
+       name; millimetres, and shares of the body's height; each file's
+       last clip unless --clip / --other-clip name one). For a motion
        read back from pictures of a known motion: the reader's error,
        joint by joint. --rest yes holds OTHER in its rest pose instead: what
        a reader that sees no motion at all would score.
@@ -489,7 +490,8 @@ fn joints_cmd(a: &Args) -> Result<()> {
                 .position(|c| &c.name == n)
                 .ok_or_else(|| anyhow!("{path} has no clip {n}")),
             None if rig.clips.is_empty() => bail!("{path} has no clips"),
-            None => Ok(0),
+            // the last clip: a reader appends its answer to the clips a rig already has
+            None => Ok(rig.clips.len() - 1),
         }
     };
     let ct = pick(&truth, "clip", &a.pos[0])?;

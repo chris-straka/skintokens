@@ -48,7 +48,7 @@ while [ $# -ge 2 ]; do
   [ -f "$D/finder.pt" ] || "$PY" "$C/train.py" --renders "$D/renders" --out "$D" --epochs "${EPOCHS:-12}" --batch 16 > "$D/train.log" 2>&1 || { echo "$NAME: training failed: $(tail -3 "$D/train.log")"; continue; }
   step "$NAME: exam"
   "$PY" "$C/exam.py" --creature "$NAME=$D" --out "$D/exam" --seeds 1,2,3 --frames 48 --video --motionforge "$MF" --python "$PY" > "$D/exam.log" 2>&1
-  tail -2 "$D/exam.log"
+  tail -n 2 "$D/exam.log"
   step "$NAME: the outline follower on the same motions"
   [ -f "$D/camera.json" ] || blender -b --factory-startup -P "$HERE/render_side.py" -- "$D/clean.glb" --out "$D/start.png" --camera-out "$D/camera.json" > /dev/null 2>&1
   for s in 1 2 3; do
@@ -61,8 +61,8 @@ while [ $# -ge 2 ]; do
     rm -rf "$E/side_film" "$E/overlays"
     blender -b --factory-startup -P "$HERE/render_side.py" -- "$E/truth.glb" --camera "$D/camera.json" --clip truth --frames "$E/side_film" --fps 24 > /dev/null 2>&1
     "$CB" follow "$D/clean.glb" --camera "$D/camera.json" --frames "$E/side_film" --out "$E/followed.glb" --json "$E/follow.json" --name followed --fps 24 --step 1 --overlays "$E/overlays" | cut -c1-160
-    "$CB" joints "$E/truth.glb" "$E/solved.glb" --json "$E/joints_finder.json" | cut -c1-200
-    "$CB" joints "$E/truth.glb" "$E/followed.glb" --json "$E/joints_outline.json" | cut -c1-200
-    "$CB" joints "$E/truth.glb" "$D/clean.glb" --rest yes --json "$E/joints_rest.json" | cut -c1-200
+    "$CB" joints "$E/truth.glb" "$E/solved.glb" --clip truth --other-clip "exam_$s" --json "$E/joints_finder.json" | cut -c1-200
+    "$CB" joints "$E/truth.glb" "$E/followed.glb" --clip truth --other-clip followed --json "$E/joints_outline.json" | cut -c1-200
+    "$CB" joints "$E/truth.glb" "$D/clean.glb" --clip truth --rest yes --json "$E/joints_rest.json" | cut -c1-200
   done
 done
