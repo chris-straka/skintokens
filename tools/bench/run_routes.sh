@@ -11,13 +11,15 @@
 # (creature-rig, skintokens or its wrapper, motionforge, weights,
 # rfcheck). A route that already wrote its report is not run again
 # (REDO=1 runs it anyway). ONLY=new or ONLY=old runs one route.
+# NEW_DIR names the new route's folder (default new): a later version of
+# the route goes beside the earlier one, so both can be scored.
 set -uo pipefail
 BENCH=${BENCH:?set BENCH}
 TOOLS=${TOOLS:-/home/f/rigwork/creatures}
 OLD_ROUTE=${OLD_ROUTE:-$TOOLS/src/motionforge/tools/tripo_rig.py}
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 export PATH=$HOME/.local/bin:$HOME/.cargo/bin:$PATH
-export CREATURE_RIG_BIN=$TOOLS/bin/creature-rig SKINTOKENS_BIN=${SKINTOKENS_BIN:-$TOOLS/bin/sk_wrap.sh} \
+export CREATURE_RIG_BIN=${CREATURE_RIG_BIN:-$TOOLS/bin/creature-rig} SKINTOKENS_BIN=${SKINTOKENS_BIN:-$TOOLS/bin/sk_wrap.sh} \
   MOTIONFORGE_BIN=$TOOLS/bin/motionforge WEIGHTS_BIN=$TOOLS/bin/weights RFCHECK_BIN=$TOOLS/bin/rfcheck \
   BLENDER=$(which blender) TRIPO_TO_GLB=$TOOLS/src/motionforge/tools/tripo_to_glb.py
 names=("$@")
@@ -25,10 +27,11 @@ names=("$@")
 for n in "${names[@]}"; do
   d=$BENCH/animals/$n
   [ -f "$d/bare.glb" ] || { echo "$n: no bare.glb"; continue; }
-  if [ "${ONLY:-new}" = new ] && { [ -n "${REDO:-}" ] || ! grep -qs best_seed "$d/new/report.json"; }; then
+  N=${NEW_DIR:-new}
+  if [ "${ONLY:-new}" = new ] && { [ -n "${REDO:-}" ] || ! grep -qs best_seed "$d/$N/report.json"; }; then
     t0=$(date +%s)
-    python3 "$REPO/tools/creature_route.py" "$d/bare.glb" "$d/new" --name "$n" --convention none --keep-tries > "$d/new.log" 2>&1
-    echo "new $n: exit $? in $(( $(date +%s) - t0 )) s: $(tail -1 "$d/new.log" | cut -c1-260)"
+    python3 "$REPO/tools/creature_route.py" "$d/bare.glb" "$d/$N" --name "$n" --convention none --keep-tries > "$d/$N.log" 2>&1
+    echo "$N $n: exit $? in $(( $(date +%s) - t0 )) s: $(tail -1 "$d/$N.log" | cut -c1-260)"
   fi
   if [ "${ONLY:-old}" = old ] && { [ -n "${REDO:-}" ] || ! grep -qs best_seed "$d/old/report.json"; }; then
     t0=$(date +%s)

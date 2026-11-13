@@ -38,7 +38,8 @@ import sys
 
 TEARS = ("D_STRETCH", "D_VOLUME", "D_BLEED")
 CONTROLS = ["artist", "crude"]
-LABEL = {"artist": "the artist's rig", "crude": "artist's skeleton, crude weights", "new": "today's route", "old": "old route"}
+LABEL = {"artist": "the artist's rig", "crude": "artist's skeleton, crude weights", "new": "today's route", "old": "old route",
+         "new2": "today's route, mirror-plane reading"}
 
 
 def find(name, explicit, env, fallbacks):
