@@ -316,6 +316,15 @@ A change to the reader passes only if no creature's exam gets worse
 (`exam.py --check` against a baseline). The exam is synthetic: the
 pictures are our own renders made worse, not a video model's.
 
+First run (three generated creatures: a wolf, a hunched long-armed beast,
+a cloaked figure): the finder reads joints 6 to 13 mm off (0.6 to 1.6%
+of the height); outline fitting 61 to 107 mm, worse than a rig that does
+not move on two of the three, at 0.81 to 0.85 outline overlap. So
+outline fitting stays only as the row to beat, and part B's single-side
+clips are not read for motion. Decided here, not asked: the exam uses
+the route's own skeleton (the body-read one where the route's picker had
+kept a misread rig), because that is the skeleton a clip will be put on.
+
 ## Why not the creature score
 
 - It multiplies the bend checker's 0 to 100 score (half of which is the
