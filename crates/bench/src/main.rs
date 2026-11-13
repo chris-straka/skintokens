@@ -25,6 +25,7 @@ const HELP: &str =
     creature-bench rigid TRUTH.glb OUT.glb
     creature-bench info  RIG.glb [--roles ROLES.json]
     creature-bench anatomy RIG.glb [--json OUT.json]
+    creature-bench joints TRUTH.glb OTHER.glb [--clip NAME] [--other-clip NAME] [--rest yes] [--json OUT.json]
     creature-bench follow RIG.glb --camera CAM.json --frames DIR --out FOLLOWED.glb
                          [--json OUT.json] [--name CLIP] [--fps 24] [--step 2] [--down 4]
                          [--steady 0.001] [--overlays DIR] [--camera-out CAM.json]
@@ -78,6 +79,12 @@ anatomy a skeleton judged with nothing to hold it against but itself: no
        at the hips, not by reaching the ground). A body that is itself
        lopsided (more than 2% of its length from its mirror image) gets
        its left-and-right findings as warnings. Exit 1 when any fails.
+joints two files of one skeleton, each with a clip: how far OTHER's joints
+       are from TRUTH's on every frame of TRUTH's clip (joints matched by
+       name; millimetres, and shares of the body's height). For a motion
+       read back from pictures of a known motion: the reader's error,
+       joint by joint. --rest yes holds OTHER in its rest pose instead: what
+       a reader that sees no motion at all would score.
 follow a rig with no hand-made truth, judged against a video of the same
        creature filmed from the side by a still camera (CAM.json: the
        camera `tools/bench/render_side.py` wrote for the video's first
@@ -468,6 +475,110 @@ fn follow_cmd(a: &Args) -> Result<()> {
     Ok(())
 }
 
+fn joints_cmd(a: &Args) -> Result<()> {
+    if a.pos.len() != 2 {
+        bail!("joints TRUTH.glb OTHER.glb");
+    }
+    let truth = Rig::read(Path::new(&a.pos[0]))?;
+    let other = Rig::read(Path::new(&a.pos[1]))?;
+    let pick = |rig: &Rig, flag: &str, path: &str| -> Result<usize> {
+        match a.flags.get(flag) {
+            Some(n) => rig
+                .clips
+                .iter()
+                .position(|c| &c.name == n)
+                .ok_or_else(|| anyhow!("{path} has no clip {n}")),
+            None if rig.clips.is_empty() => bail!("{path} has no clips"),
+            None => Ok(0),
+        }
+    };
+    let ct = pick(&truth, "clip", &a.pos[0])?;
+    let rest = a.flags.get("rest").map(|s| s == "yes").unwrap_or(false);
+    let co = if rest {
+        0
+    } else {
+        pick(&other, "other-clip", &a.pos[1])?
+    };
+    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for p in &truth.rest_pos {
+        lo = lo.min(p[1]);
+        hi = hi.max(p[1]);
+    }
+    let height = (hi - lo).max(1e-9);
+    let pairs: Vec<(usize, usize)> = (0..truth.joints.len())
+        .filter_map(|j| {
+            other
+                .names
+                .iter()
+                .position(|n| *n == truth.names[j])
+                .map(|k| (j, k))
+        })
+        .collect();
+    if pairs.is_empty() {
+        bail!("the two files share no joint names");
+    }
+    let times = Rig::frame_times(&truth.clips[ct], usize::MAX);
+    let mut sum = vec![0.0f64; pairs.len()];
+    let mut worst = vec![0.0f64; pairs.len()];
+    let mut per_frame = vec![];
+    for &t in &times {
+        let wt = truth.pose_nodes(&truth.clips[ct], t);
+        let wo = if rest {
+            other.rest_world.clone()
+        } else {
+            other.pose_nodes(&other.clips[co], t)
+        };
+        let mut frame = 0.0;
+        for (i, &(j, k)) in pairs.iter().enumerate() {
+            let d = geom::norm(geom::sub(
+                geom::translation(&wt[truth.joints[j]]),
+                geom::translation(&wo[other.joints[k]]),
+            ));
+            sum[i] += d;
+            worst[i] = worst[i].max(d);
+            frame += d;
+        }
+        per_frame.push(frame / pairs.len() as f64);
+    }
+    let n = times.len().max(1) as f64;
+    let mm = |x: f64| (x * 1e4).round() / 10.0;
+    let mean = sum.iter().sum::<f64>() / n / pairs.len() as f64;
+    let max = worst.iter().cloned().fold(0.0, f64::max);
+    let mut joints: Vec<Value> = pairs
+        .iter()
+        .enumerate()
+        .map(|(i, &(j, _))| json!({"joint": truth.names[j], "mean_mm": mm(sum[i] / n), "max_mm": mm(worst[i]), "mean_pct_of_height": ((sum[i] / n / height) * 1e4).round() / 1e2}))
+        .collect();
+    joints.sort_by(|x, y| {
+        y["mean_mm"]
+            .as_f64()
+            .partial_cmp(&x["mean_mm"].as_f64())
+            .unwrap()
+    });
+    let report = json!({
+        "format": "creature-bench-joints/1",
+        "truth": a.pos[0], "other": if rest { format!("{} at rest", a.pos[1]) } else { a.pos[1].clone() },
+        "frames": times.len(), "joints_compared": pairs.len(), "height_m": (height * 1e4).round() / 1e4,
+        "mean_mm": mm(mean), "max_mm": mm(max), "mean_pct_of_height": ((mean / height) * 1e4).round() / 1e2,
+        "worst_frame_mean_mm": mm(per_frame.iter().cloned().fold(0.0, f64::max)),
+        "joints": joints,
+    });
+    if let Some(p) = a.flags.get("json") {
+        std::fs::write(p, serde_json::to_string_pretty(&report)?)
+            .with_context(|| format!("writing {p}"))?;
+    }
+    println!(
+        "{}: joints {} mm from the truth on average ({}% of the height), {} mm at worst; farthest {} ({} mm)",
+        report["other"].as_str().unwrap_or(""),
+        report["mean_mm"],
+        report["mean_pct_of_height"],
+        report["max_mm"],
+        report["joints"][0]["joint"].as_str().unwrap_or(""),
+        report["joints"][0]["mean_mm"]
+    );
+    Ok(())
+}
+
 fn anatomy_cmd(a: &Args) -> Result<()> {
     if a.pos.len() != 1 {
         bail!("anatomy RIG.glb");
@@ -524,6 +635,7 @@ fn main() -> ExitCode {
             "info" => info(&a),
             "follow" => follow_cmd(&a),
             "anatomy" => anatomy_cmd(&a),
+            "joints" => joints_cmd(&a),
             other => bail!("unknown command {other}\n\n{HELP}"),
         }
     };
