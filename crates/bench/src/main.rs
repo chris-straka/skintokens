@@ -1,6 +1,7 @@
 //! creature-bench: a creature rig measured against a hand-made rig of
 //! the same mesh.
 
+mod anatomy;
 mod bench;
 mod follow;
 mod rig;
@@ -23,6 +24,7 @@ const HELP: &str =
                          [--max-frames 48] [--sweeps 6] [--roles ROLES.json] [--label NAME]
     creature-bench rigid TRUTH.glb OUT.glb
     creature-bench info  RIG.glb [--roles ROLES.json]
+    creature-bench anatomy RIG.glb [--json OUT.json]
     creature-bench follow RIG.glb --camera CAM.json --frames DIR --out FOLLOWED.glb
                          [--json OUT.json] [--name CLIP] [--fps 24] [--step 2] [--down 4]
                          [--steady 0.001] [--overlays DIR] [--camera-out CAM.json]
@@ -61,6 +63,19 @@ rigid  a control: the artist's skeleton and clips with each vertex held
        wholly by its nearest bone. What crude weights on a perfect
        skeleton score.
 info   the joints of a rig (role, parent, skin held) and its clips.
+anatomy a skeleton judged with nothing to hold it against but itself: no
+       artist's rig, and no reading of the body by the tool that made it.
+       From the rig's own joints, the skin they hold and the mirror plane:
+       every limb that branches off the centre line has a partner on the
+       other side (joined at the mirrored place, as many joints give or
+       take one, about as long); bones on the centre line stay near the
+       mirror plane; a bone past the last limbs holds a head's worth of
+       skin; a body whose trunk stands taller than it is long has a pair
+       of limbs on the upper part of the trunk (arms); where the body
+       stands on the ground off the mirror plane, the skin there is held
+       by a side limb and not by the trunk; and a limb's name
+       agrees with where it joins the trunk (a limb is a leg by joining
+       at the hips, not by reaching the ground). Exit 1 when any fails.
 follow a rig with no hand-made truth, judged against a video of the same
        creature filmed from the side by a still camera (CAM.json: the
        camera `tools/bench/render_side.py` wrote for the video's first
@@ -431,6 +446,47 @@ fn follow_cmd(a: &Args) -> Result<()> {
     Ok(())
 }
 
+fn anatomy_cmd(a: &Args) -> Result<()> {
+    if a.pos.len() != 1 {
+        bail!("anatomy RIG.glb");
+    }
+    let rig = Rig::read(Path::new(&a.pos[0]))?;
+    let mut report = anatomy::check(&rig);
+    report["rig"] = json!(a.pos[0]);
+    if let Some(p) = a.flags.get("json") {
+        std::fs::write(p, serde_json::to_string_pretty(&report)?)
+            .with_context(|| format!("writing {p}"))?;
+    }
+    let fails: Vec<String> = report["findings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|f| {
+            format!(
+                "{} {}",
+                f["code"].as_str().unwrap_or(""),
+                f["detail"].as_str().unwrap_or("")
+            )
+        })
+        .collect();
+    println!(
+        "{}: stands {}, {} ground patches off the plane, {} limb pairs, {} limbs without a partner, head {}: {}",
+        a.pos[0],
+        report["stands"].as_str().unwrap_or(""),
+        report["ground_patches_off_the_plane"],
+        report["limb_pairs"],
+        report["limbs_without_a_partner"],
+        if report["head"] == json!(true) { "yes" } else { "no" },
+        if fails.is_empty() { "PASSES".to_string() } else { format!("FAILS: {}", fails.join("; ")) }
+    );
+    if !fails.is_empty() {
+        FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+static FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() || args[0] == "-h" || args[0] == "--help" {
@@ -444,10 +500,12 @@ fn main() -> ExitCode {
             "rigid" => rigid(&a),
             "info" => info(&a),
             "follow" => follow_cmd(&a),
+            "anatomy" => anatomy_cmd(&a),
             other => bail!("unknown command {other}\n\n{HELP}"),
         }
     };
     match run() {
+        Ok(()) if FAILED.load(std::sync::atomic::Ordering::Relaxed) => ExitCode::from(1),
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("creature-bench: {e:#}");
