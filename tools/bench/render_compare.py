@@ -39,15 +39,50 @@ def options():
     return o
 
 
+PAINT = {}
+
+
+def opaque_paint(path, before):
+    """A file's flat material colours as Workbench shows them. Old FBX
+    files carry an alpha of 0 on every material, which a GLB keeps: the
+    colour is right and the model is invisible. The colour is read from
+    the file (the importer hides it behind nodes when the mesh also has
+    vertex colours) and made opaque."""
+    import json as _json
+    import struct as _struct
+    with open(path, "rb") as f:
+        b = f.read()
+    n = _struct.unpack("<I", b[12:16])[0]
+    mats = {m.get("name"): m for m in _json.loads(b[20:20 + n]).get("materials", [])}
+    for m in bpy.data.materials:
+        if m in before:
+            continue
+        name = m.name if m.name in mats else m.name.rsplit(".", 1)[0]
+        src = mats.get(name)
+        c = list(m.diffuse_color)
+        f4 = src.get("pbrMetallicRoughness", {}).get("baseColorFactor") if src else None
+        if f4:
+            # the file's colour is linear; the viewport colour is shown as it is
+            c = [x ** (1 / 2.2) for x in f4[:3]] + [1.0]
+            PAINT.setdefault(name, c)
+        elif name in PAINT and not (src or {}).get("pbrMetallicRoughness", {}).get("baseColorTexture"):
+            # a route's clean step can drop a flat colour: the first
+            # file's material of the same name is the same paint
+            c = PAINT[name]
+        m.diffuse_color = (c[0], c[1], c[2], 1.0)
+
+
 def load(path, clip_names):
     before_o = set(bpy.data.objects)
     before_a = set(bpy.data.actions)
+    before_m = set(bpy.data.materials)
     known = set(bpy.ops.import_scene.gltf.get_rna_type().properties.keys())
     kw = {"disable_bone_shape": True} if "disable_bone_shape" in known else {}
     bpy.ops.import_scene.gltf(filepath=path, **kw)
     # the importer's own bone-shape helper is not part of the model
     for x in [x for x in bpy.data.objects if x not in before_o and x.type == "MESH" and x.name.startswith("Icosphere")]:
         bpy.data.objects.remove(x)
+    opaque_paint(path, before_m)
     objs = [x for x in bpy.data.objects if x not in before_o]
     acts = [x for x in bpy.data.actions if x not in before_a]
     arms = [x for x in objs if x.type == "ARMATURE"]

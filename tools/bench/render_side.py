@@ -37,6 +37,31 @@ def options():
     return o
 
 
+def opaque_paint(path, before):
+    """A file's flat material colours as Workbench shows them. Old FBX
+    files carry an alpha of 0 on every material, which a GLB keeps: the
+    colour is right and the model is invisible. The colour is read from
+    the file (the importer hides it behind nodes when the mesh also has
+    vertex colours) and made opaque."""
+    import json as _json
+    import struct as _struct
+    with open(path, "rb") as f:
+        b = f.read()
+    n = _struct.unpack("<I", b[12:16])[0]
+    mats = {m.get("name"): m for m in _json.loads(b[20:20 + n]).get("materials", [])}
+    for m in bpy.data.materials:
+        if m in before:
+            continue
+        src = mats.get(m.name) or mats.get(m.name.rsplit(".", 1)[0])
+        c = list(m.diffuse_color)
+        if src:
+            f4 = src.get("pbrMetallicRoughness", {}).get("baseColorFactor")
+            if f4:
+                # the file's colour is linear; the viewport colour is shown as it is
+                c = [x ** (1 / 2.2) for x in f4[:3]] + [1.0]
+        m.diffuse_color = (c[0], c[1], c[2], 1.0)
+
+
 def main():
     o = options()
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -45,6 +70,7 @@ def main():
     known = set(bpy.ops.import_scene.gltf.get_rna_type().properties.keys())
     kw = {"disable_bone_shape": True} if "disable_bone_shape" in known else {}
     bpy.ops.import_scene.gltf(filepath=o["rig"], **kw)
+    opaque_paint(o["rig"], set())
     for x in [x for x in bpy.data.objects if x.type == "MESH" and x.name.startswith("Icosphere")]:
         bpy.data.objects.remove(x)
     arms = [x for x in bpy.data.objects if x.type == "ARMATURE"]

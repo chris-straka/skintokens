@@ -95,6 +95,18 @@ def main():
         bpy.ops.object.join()
     mesh = bpy.context.view_layer.objects.active
 
+    # Old FBX files carry an alpha of 0 on every material: the colour is
+    # right, and a viewer shows nothing. The paint is made opaque.
+    for mat in mesh.data.materials:
+        if mat is None:
+            continue
+        c = mat.diffuse_color
+        mat.diffuse_color = (c[0], c[1], c[2], 1.0)
+        if mat.use_nodes:
+            for nd in mat.node_tree.nodes:
+                if nd.type == "BSDF_PRINCIPLED" and not nd.inputs["Alpha"].is_linked:
+                    nd.inputs["Alpha"].default_value = 1.0
+
     # The rest pose, where the body is and which way it faces.
     actions = [x for x in bpy.data.actions]
     if arm.animation_data:
