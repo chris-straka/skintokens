@@ -75,7 +75,9 @@ anatomy a skeleton judged with nothing to hold it against but itself: no
        stands on the ground off the mirror plane, the skin there is held
        by a side limb and not by the trunk; and a limb's name
        agrees with where it joins the trunk (a limb is a leg by joining
-       at the hips, not by reaching the ground). Exit 1 when any fails.
+       at the hips, not by reaching the ground). A body that is itself
+       lopsided (more than 2% of its length from its mirror image) gets
+       its left-and-right findings as warnings. Exit 1 when any fails.
 follow a rig with no hand-made truth, judged against a video of the same
        creature filmed from the side by a still camera (CAM.json: the
        camera `tools/bench/render_side.py` wrote for the video's first
@@ -461,6 +463,7 @@ fn anatomy_cmd(a: &Args) -> Result<()> {
         .as_array()
         .into_iter()
         .flatten()
+        .filter(|f| f["severity"] == json!("fail"))
         .map(|f| {
             format!(
                 "{} {}",

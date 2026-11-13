@@ -440,10 +440,33 @@ pub fn check(rig: &Rig) -> Value {
             })
         })
         .collect();
-    let pass = findings.is_empty();
+    // A body that is itself lopsided (a hand, a figure with one arm
+    // under a cloak) cannot have a left for every right: how far the
+    // mesh is from its own mirror image says so, and its lopsided
+    // findings are then warnings.
+    let step = (rig.rest_pos.len() / 4000).max(1);
+    let tree = geom::KdTree::new(rig.rest_pos.clone());
+    let sample: Vec<V3> = rig.rest_pos.iter().step_by(step).copied().collect();
+    let asym = sample
+        .iter()
+        .map(|p| tree.knn([2.0 * x0 - p[0], p[1], p[2]], 1)[0].0)
+        .sum::<f64>()
+        / sample.len() as f64
+        / len;
+    let lopsided_body = asym > 0.02;
+    if lopsided_body {
+        for f in findings.iter_mut() {
+            if f["code"] == json!("B_LOPSIDED") {
+                f["severity"] = json!("warn");
+                f["detail"] = json!(format!("{} (the body itself is lopsided: it lies {:.1}% of its length from its mirror image)", f["detail"].as_str().unwrap_or(""), 100.0 * asym));
+            }
+        }
+    }
+    let pass = !findings.iter().any(|f| f["severity"] == json!("fail"));
     json!({
         "format": "creature-bench-anatomy/1",
         "pass": pass,
+        "body_off_its_mirror_image_pct": (asym * 1e4).round() / 1e2,
         "stands": if upright { "upright" } else { "level" },
         "limb_pairs": pairs.len(),
         "limbs_without_a_partner": limbs.iter().filter(|l| l.partner.is_none()).count(),
