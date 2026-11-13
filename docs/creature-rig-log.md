@@ -195,3 +195,29 @@ findings 53 to 45. Higher on 23, lower on 6.
   leg: 10.7 where the predicted rig scores 74.9. So the route now makes
   the predicted rig as well, judges both alike and keeps the better
   (`creature_route.py`, step 5b; `--no-predicted` turns it off).
+
+### The route keeps the better of two rigs (kept)
+
+`creature_route.py` step 5b: the model's own rig of the same mesh
+(three seeds, as the old route tried), judged exactly as ours, the best
+of them kept instead of ours when it ranks higher. Rank: creature
+score, 15 off for a failing skeleton finding, 5 on for passing both
+checks.
+
+- Dropped: "passes both checks" as the first key. A floating figure's
+  predicted rig passed both with bones along half its limbs (skeleton
+  70, creature score 44) and was kept over ours at 75 with one failing
+  finding.
+- One seed for the model's rig: 72.6 over the set, the model's rig kept
+  on 4. Three seeds: **73.3**, kept on 8; 13 rigs with no failing
+  finding (1 for the old route), failing bend findings 33 (53), failing
+  skeleton findings 8 (39). Higher than the old route on 25 of 29,
+  lower on 3: a human-shaped figure whose old rig came from the human
+  route (74.9 to 55.3; it belongs there), and two within two points.
+- Cost: 40 s to 7 minutes a creature on the GPU, about 3 typically;
+  1.5 GB peak.
+
+Leads not taken yet: two limbs in one mass (cut the solid along the
+mirror plane below the hips before reading parts); arms and legs
+through thick fur, which is most of what still fails; a jaw; the
+facing in the clean step itself.

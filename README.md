@@ -158,8 +158,9 @@ than by the model alone.
 On 29 generated creatures (four-legged, two-legged, winged, cloaked, a
 hand, a fish), judged alike (the body's range of motion on each rig's own
 bones and its clips, times the skeleton check): 52.8 for the model's rig
-alone (best of three seeds), 72.6 for this route; rigs with no failing
-finding in either check 1 and 10; failing skeleton findings 39 and 10.
+alone (best of three seeds), 73.3 for this route; rigs with no failing
+finding in either check 1 and 13; failing skeleton findings 39 and 8;
+failing bend findings 53 and 33. Higher on 25, lower on 3.
 What was tried and what it scored:
 [docs/creature-rig-log.md](docs/creature-rig-log.md).
 
