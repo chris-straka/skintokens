@@ -12,8 +12,9 @@
 #     with them: tears = vertices in failing stretch, volume and bleed
 #     findings as a share of all vertices;
 #   - the route's skeleton check and the no-artist check;
-#   - a sheet: the skeleton over the body's parts (three views) above the
-#     rig bent through its range of motion, failing skin red.
+#   - a sheet: the rig painted from the side and its skeleton over the
+#     body's parts (three views), above the rig bent through its range of
+#     motion, failing skin red.
 # OLD_PATTERN (with %n for the name) adds the same tears numbers for an
 # earlier rig of each creature, where there is one.
 # Writes $BENCH/owner/TAG.table.md, TAG.table.json and TAG.sheets/<name>.jpg.
@@ -23,6 +24,8 @@ TOOLS=${TOOLS:-/home/f/rigwork/creatures}
 CR=${CREATURE_RIG_BIN:-$BENCH/bin/creature-rig}; CB=${CREATURE_BENCH_BIN:-$BENCH/bin/creature-bench}
 WF=${WEIGHTS_BIN:-$TOOLS/bin/weights}
 O=$BENCH/owner/$TAG; S=$O.sheets; mkdir -p "$S"
+HERE=$(cd "$(dirname "$0")" && pwd)
+export PATH=$HOME/.local/bin:$PATH
 one() {
   n=$1; rig=$2; d=$3
   mkdir -p "$d"
@@ -38,8 +41,17 @@ while IFS=$'\t' read -r n kind model; do
   [ -f "$rig" ] || { echo "$n: no rig"; continue; }
   one "$n" "$rig" "$O/$n/check"
   "$WF" sheet "$rig" --out "$O/$n/check/posed.png" --poses "$O/$n/check/rom.ron" --cols 6 > /dev/null 2>&1
+  blender -b --factory-startup -P "$HERE/render_side.py" -- "$rig" --out "$O/$n/check/painted.png" --camera-out "$O/$n/check/painted_camera.json" \
+    --width 900 --height 640 --fill 0.8 --at 0.5 --ground 0.88 > /dev/null 2>&1
   if [ -f "$O/$n/check/skeleton.png" ] && [ -f "$O/$n/check/posed.png" ]; then
-    convert "$O/$n/check/skeleton.png" "$O/$n/check/posed.png" -resize 1400x -background "#1c1e22" -gravity center -extent 1400x \
+    top=$O/$n/check/skeleton.png
+    if [ -f "$O/$n/check/painted.png" ]; then
+      convert "$O/$n/check/painted.png" -resize x500 "$O/$n/check/painted_s.png"
+      convert "$O/$n/check/skeleton.png" -resize x500 "$O/$n/check/skeleton_s.png"
+      convert "$O/$n/check/painted_s.png" "$O/$n/check/skeleton_s.png" +append "$O/$n/check/top.png"
+      top=$O/$n/check/top.png
+    fi
+    convert "$top" "$O/$n/check/posed.png" -resize 1600x -background "#1c1e22" -gravity center -extent 1600x \
       -append -quality 80 "$S/$n.jpg" 2>/dev/null
   fi
   if [ -n "$OLD" ]; then
