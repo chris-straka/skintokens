@@ -458,8 +458,22 @@ pub fn check(rig: &Rig) -> Value {
         for f in findings.iter_mut() {
             if f["code"] == json!("B_LOPSIDED") {
                 f["severity"] = json!("warn");
-                f["detail"] = json!(format!("{} (the body itself is lopsided: it lies {:.1}% of its length from its mirror image)", f["detail"].as_str().unwrap_or(""), 100.0 * asym));
+                f["detail"] = json!(format!(
+                    "{} (the body itself is lopsided: it lies {:.1}% of its length from its mirror image)",
+                    f["detail"].as_str().unwrap_or(""),
+                    100.0 * asym
+                ));
             }
+        }
+        // a pose can move a limb off its mirror place; it cannot change
+        // how many limbs a side has
+        let (right, left) = (
+            limbs.iter().filter(|l| l.side > 0).count(),
+            limbs.iter().filter(|l| l.side < 0).count(),
+        );
+        if right != left {
+            findings.push(json!({"code": "B_LOPSIDED", "severity": "fail",
+                "detail": format!("{right} limbs on the +x side and {left} on the -x side")}));
         }
     }
     let pass = !findings.iter().any(|f| f["severity"] == json!("fail"));
