@@ -44,7 +44,9 @@ rig    lays a skeleton along those parts (hips and spine, a chain down
        mirror plane is not x = 0 (the clean step could not tell which way
        it faces) is turned onto it first, and one whose toes say it faces
        -Z is turned half a turn, so a rig always faces +Z (--turn no
-       leaves it). --hint: a rig of the same mesh from
+       leaves it). A body that stands on more feet than the legs read
+       (legs tucked against a tail merge in a coarse solid) is read again
+       on a grid twice as fine, at most 256 (--finer no leaves it). --hint: a rig of the same mesh from
        `skintokens rig`; where its joints lie along a leg or an arm, the
        knees and elbows are put there instead of at the line's bends.";
 
@@ -120,9 +122,15 @@ fn cmd_parts(a: &Args) -> Result<()> {
             println!("turned {yaw:.0} degrees onto its own mirror plane");
         }
     }
-    let body = parts::Body::build(&verts, &tris, res);
+    let (body, _, res) = read_body(
+        &verts,
+        &tris,
+        res,
+        a.flags.get("finer").map(|s| s.as_str()) != Some("no"),
+    );
     let doc = json!({
         "format": "creature-parts/1",
+        "grid": res,
         "source": input.display().to_string(),
         "cell": body.solid.cell,
         "size": body.size,
@@ -231,8 +239,12 @@ fn cmd_check(a: &Args) -> Result<bool> {
         .transpose()?
         .unwrap_or(128);
     let (verts, tris) = load_mesh(&input)?;
-    let body = parts::Body::build(&verts, &tris, res);
-    let an = roles::Anatomy::read(&body);
+    let (body, an, _) = read_body(
+        &verts,
+        &tris,
+        res,
+        a.flags.get("finer").map(|s| s.as_str()) != Some("no"),
+    );
     let bones = check::read_rig(&Glb::read(&input)?)?;
     let v = check::check(&body, &an, bones);
     if let Some(p) = a.flags.get("json") {
@@ -353,6 +365,106 @@ fn turn_about_up(g: &mut Glb, yaw_deg: f64, shift: f64) -> Result<()> {
     Ok(())
 }
 
+/// Where the body stands on the ground off its midline: the vertices
+/// within 4% of the height of the ground, gathered into patches 5% of
+/// the body's size apart, whose middle is off the midline. A body read
+/// with fewer legs than this was read too coarsely.
+fn feet_on_the_ground(verts: &[V3]) -> usize {
+    let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+    for p in verts {
+        for a in 0..3 {
+            lo[a] = lo[a].min(p[a]);
+            hi[a] = hi[a].max(p[a]);
+        }
+    }
+    let size = (0..3).map(|a| hi[a] - lo[a]).fold(0.0, f64::max);
+    let height = hi[1] - lo[1];
+    let width = hi[0] - lo[0];
+    let off = (0.015 * size).max(0.06 * width);
+    let low: Vec<V3> = verts
+        .iter()
+        .copied()
+        .filter(|p| p[1] - lo[1] < 0.04 * height)
+        .collect();
+    let cell = 0.05 * size;
+    let mut patch = vec![usize::MAX; low.len()];
+    let mut grid: std::collections::HashMap<(i64, i64), Vec<usize>> =
+        std::collections::HashMap::new();
+    for (i, p) in low.iter().enumerate() {
+        grid.entry(((p[0] / cell).floor() as i64, (p[2] / cell).floor() as i64))
+            .or_default()
+            .push(i);
+    }
+    let mut feet = 0;
+    for i in 0..low.len() {
+        if patch[i] != usize::MAX {
+            continue;
+        }
+        patch[i] = i;
+        let mut members = vec![i];
+        let mut k = 0;
+        while k < members.len() {
+            let p = low[members[k]];
+            let (gx, gz) = ((p[0] / cell).floor() as i64, (p[2] / cell).floor() as i64);
+            for dx in -1..=1 {
+                for dz in -1..=1 {
+                    for &m in grid.get(&(gx + dx, gz + dz)).into_iter().flatten() {
+                        let q = low[m];
+                        if patch[m] == usize::MAX
+                            && ((p[0] - q[0]).powi(2) + (p[2] - q[2]).powi(2)).sqrt() < cell
+                        {
+                            patch[m] = i;
+                            members.push(m);
+                        }
+                    }
+                }
+            }
+            k += 1;
+        }
+        let mid = members.iter().map(|&m| low[m][0]).sum::<f64>() / members.len() as f64;
+        if members.len() >= 3 && mid.abs() > off {
+            feet += 1;
+        }
+    }
+    feet
+}
+
+/// Reads a body; when it stands on more feet than the legs read (legs
+/// tucked against a tail or each other merge in a coarse solid), reads
+/// it again on a grid twice as fine, at most 256 cells a side, and keeps
+/// that reading if it finds more legs.
+fn read_body(
+    verts: &[V3],
+    tris: &[[u32; 3]],
+    res: usize,
+    finer: bool,
+) -> (parts::Body, roles::Anatomy, usize) {
+    let body = parts::Body::build(verts, tris, res);
+    let an = roles::Anatomy::read(&body);
+    // what stands on the ground: legs, and arms whose hands rest on it
+    let legs = |a: &roles::Anatomy| {
+        a.limbs
+            .iter()
+            .filter(|l| {
+                l.role == roles::Role::Leg
+                    || (l.role == roles::Role::Arm && l.tip()[1] < a.ground + 0.15 * a.height)
+            })
+            .count()
+    };
+    if finer && res < 256 {
+        let feet = feet_on_the_ground(verts);
+        if feet > legs(&an) {
+            let res2 = (res * 2).min(256);
+            let body2 = parts::Body::build(verts, tris, res2);
+            let an2 = roles::Anatomy::read(&body2);
+            if legs(&an2) > legs(&an) {
+                return (body2, an2, res2);
+            }
+        }
+    }
+    (body, an, res)
+}
+
 /// The turn (degrees about the up axis) and the move along x that put a
 /// body's own mirror plane on x = 0, when the plane it has as a mesh is
 /// clearly not it: more than 10 degrees off and a quarter better mirrored.
@@ -424,15 +536,14 @@ fn cmd_rig(a: &Args) -> Result<()> {
                 "off_its_mirror_image": (m.score * 1e4).round() / 1e4, "as_given": (m.score_as_is * 1e4).round() / 1e4});
         }
     }
-    let mut body = parts::Body::build(&verts, &tris, res);
-    let mut an = roles::Anatomy::read(&body);
+    let finer = a.flags.get("finer").map(|s| s.as_str()) != Some("no");
+    let (mut body, mut an, mut res) = read_body(&verts, &tris, res, finer);
     // a rig faces +Z: a body left facing -Z is turned round
     let turned = an.forward < 0.0 && may_turn;
     if turned {
         turn_about_up(&mut g, 180.0, 0.0)?;
         (verts, tris) = read(&g)?;
-        body = parts::Body::build(&verts, &tris, res);
-        an = roles::Anatomy::read(&body);
+        (body, an, res) = read_body(&verts, &tris, res, finer);
         turned_deg += 180.0;
     }
     // --hint: another rig of this mesh (the model's), for where knees and elbows go
@@ -503,6 +614,7 @@ fn cmd_rig(a: &Args) -> Result<()> {
         "faces": if an.forward > 0.0 { "+z" } else { "-z" },
         "turned_half_a_turn": turned,
         "turned_deg": turned_deg,
+        "grid": res,
         "turned_onto_its_mirror_plane": mirror_note,
         "limbs": an.limbs.iter().enumerate().map(|(i, l)| json!({
             "name": l.name,
