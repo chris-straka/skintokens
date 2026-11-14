@@ -158,6 +158,21 @@ pub fn skin(body: &Body, sk: &Skeleton, verts: &[V3], tris: &[[u32; 3]], blend: 
     let mut d = vec![0f32; nb];
     for &p in &reps {
         fields.at(body, p, &mut d);
+        // A piece the solid does not join to the body (horns, eyes, a jaw
+        // modelled apart with a gap) is reached by no bone through the
+        // inside. It goes to the nearest bone in a straight line, rather
+        // than to bone 0 (the hips) by default.
+        if d.iter().all(|x| !x.is_finite()) {
+            for (b, o) in d.iter_mut().enumerate() {
+                *o = (crate::skeleton::seg_dist(p, sk.bones[b].head, sk.bones[b].tail) / cell)
+                    as f32;
+            }
+            let a = (0..nb)
+                .min_by(|&x, &y| d[x].partial_cmp(&d[y]).unwrap_or(std::cmp::Ordering::Equal))
+                .unwrap_or(0);
+            w.push(vec![(a as u16, 1.0)]);
+            continue;
+        }
         let a = (0..nb)
             .min_by(|&x, &y| d[x].partial_cmp(&d[y]).unwrap_or(std::cmp::Ordering::Equal))
             .unwrap_or(0);

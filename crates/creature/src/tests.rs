@@ -231,3 +231,46 @@ fn a_hint_moves_the_knees() {
     let n = |li: usize| sk.bones.iter().filter(|b| b.limb == Some(li)).count();
     assert_eq!(n(leg), n(right));
 }
+
+/// A horn modelled as its own piece, floating a little above the head: no
+/// bone reaches it through the solid, so it goes to the nearest bone in a
+/// straight line (a neck or head bone), not to the hips.
+#[test]
+fn a_separate_piece_goes_to_its_nearest_bone() {
+    let (mut v, mut f) = box_dog();
+    // the head end of the box dog is +Z; put a small block just above it
+    let (lo, hi) = {
+        let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+        for p in &v {
+            for a in 0..3 {
+                lo[a] = lo[a].min(p[a]);
+                hi[a] = hi[a].max(p[a]);
+            }
+        }
+        (lo, hi)
+    };
+    let size = (hi[2] - lo[2]).max(hi[1] - lo[1]);
+    let at = [0.0, hi[1] + 0.05 * size, hi[2] - 0.08 * size];
+    let (hv, hf) = cuboid(
+        [at[0] - 0.04 * size, at[1], at[2] - 0.04 * size],
+        [
+            at[0] + 0.04 * size,
+            at[1] + 0.08 * size,
+            at[2] + 0.04 * size,
+        ],
+        v.len() as u32,
+    );
+    let horn: Vec<usize> = (v.len()..v.len() + hv.len()).collect();
+    v.extend(hv);
+    f.extend(hf);
+    let body = Body::build(&v, &f, 96);
+    let an = Anatomy::read(&body);
+    let sk = Skeleton::fit(&body, &an);
+    let skin = weights::skin(&body, &sk, &v, &f, weights::BLEND);
+    for &i in &horn {
+        let name = &sk.bones[skin.joints[i][0] as usize].name;
+        assert!(!name.contains("hips"), "the horn rides on {name}");
+        let sum: f32 = skin.weights[i].iter().sum();
+        assert!((sum - 1.0).abs() < 1e-4);
+    }
+}
