@@ -325,6 +325,20 @@ clips are not read for motion. Decided here, not asked: the exam uses
 the route's own skeleton (the body-read one where the route's picker had
 kept a misread rig), because that is the skeleton a clip will be put on.
 
+## The owner's set
+
+`tools/bench/route_set.sh TAG SET.tsv` runs the creature route over a
+list of generated models (name, kind, model file) one at a time and puts
+each rig through the no-artist check. `tools/bench/owner_table.sh TAG
+SET.tsv [OLD_PATTERN]` then makes the table: tears on the body's range of
+motion with and without the rig's clips, the route's skeleton check, the
+no-artist check, the same for an earlier rig of each creature, and a
+sheet per creature (painted side view, skeleton over the body's parts,
+the rig bent through its range of motion). `ONLY="name ..."` redoes named
+creatures and remakes the whole table. No creature has an artist's rig,
+so this table cannot say a rig moves right: it says where one is plainly
+wrong.
+
 ## Why not the creature score
 
 - It multiplies the bend checker's 0 to 100 score (half of which is the

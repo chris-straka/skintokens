@@ -263,3 +263,35 @@ tenth of the body's length from an artist's). The apatosaurus gets two
 legs of four; the dinosaurs no small arms; the bat and spider no head
 bone. The fused-root figure lost a leg (two to one). The full route
 (weights, the model's rig, the picker) was not rerun with these.
+
+## 2026-11-13
+
+### A finer grid when the body stands on more feet than it has legs (kept)
+
+A crouched, spiked four-legged model with its hind legs tucked against
+its tail read as two-legged: on the 128-cell grid the hind legs and the
+tail are one mass. The reader now counts where the body stands on the
+ground off its midline (vertices within 4% of the height of the ground,
+in patches); when that is more than the legs read, plus arms whose hands
+rest on the ground, it reads the body again at 256 cells and keeps that
+reading if it has more legs. That model: four legs, bend 82.1 with no
+failing finding. The other 33 generated creatures and the twelve
+hand-made animals read as before.
+
+### The full route with the mirror-plane reading (measured)
+
+Twelve hand-made animals: joints 9.0% to 5.0%, a missing chain on 10 to
+8, skin 1.6% to 1.1% (the model's rig alone: 2.9%, 3, 0.7%). 34
+generated creatures: tears on the range of motion median 0.0%, at or
+under 0.7% on 27; 21 pass the no-artist check, the five newest among
+them. Tears rose on six of the earlier 29 (cloaked, legless and odd
+bodies, where the reading now finds more or other limbs) and fell on
+two.
+
+### Not solved (added)
+
+A tail or head that lies a little off the mirror plane is called
+"extra" and gets no poses of its own (the spiked four-legged model).
+The picker still ranks by the bend score times this crate's skeleton
+check, which cannot see that hips and shoulders sit a tenth of the body
+from an artist's.
