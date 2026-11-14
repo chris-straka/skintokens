@@ -351,3 +351,39 @@ fn cli_joints_writes_doc() {
     assert_eq!(doc["joints"].as_array().unwrap().len(), 22);
     let _ = Path::new("");
 }
+
+#[test]
+fn strip_rig_keeps_nodes_hung_under_bones() {
+    // a hat (not a joint) parented to a bone of an already rigged file
+    let mut g = humanoid_glb(false, false);
+    let joint = g.json["skins"][0]["joints"][3].as_u64().unwrap() as usize;
+    let hat = g.json["nodes"].as_array().unwrap().len();
+    g.json["nodes"].as_array_mut().unwrap().push(json!({"name": "hat", "translation": [0.1, 0.2, 0.3], "rotation": [0.0, 0.3826834, 0.0, 0.9238795]}));
+    let kids = g.json["nodes"][joint]
+        .as_object_mut()
+        .unwrap()
+        .entry("children")
+        .or_insert(json!([]));
+    kids.as_array_mut().unwrap().push(json!(hat));
+    let before = g.world_matrices()[hat];
+    skintokens::pipeline::strip_rig(&mut g);
+    assert!(
+        g.scene_nodes().contains(&hat),
+        "the hat was cut off from the scene"
+    );
+    let after = g.world_matrices()[hat];
+    for c in 0..4 {
+        for r in 0..4 {
+            assert!(
+                (before[c][r] - after[c][r]).abs() < 1e-9,
+                "the hat moved: {before:?} -> {after:?}"
+            );
+        }
+    }
+    // no joint is left in the scene
+    let joints: Vec<u64> = vec![joint as u64];
+    assert!(g
+        .scene_nodes()
+        .iter()
+        .all(|n| !joints.contains(&(*n as u64))));
+}

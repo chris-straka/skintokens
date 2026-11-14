@@ -218,6 +218,9 @@ fn rot_to_gltf(c: [V3; 3]) -> [V3; 3] {
 
 /// Removes skins, animations, skinning attributes and detaches old joint
 /// nodes from the scene (an already rigged input is re-rigged from scratch).
+/// A node that is not a joint but hangs under one (eyes, a helmet, a weapon
+/// parented to a bone) is moved up to its nearest ancestor that is not a
+/// joint, or to the scene root, where it keeps its place in the world.
 pub fn strip_rig(g: &mut Glb) {
     let mut joints = std::collections::HashSet::new();
     for s in g.json["skins"].as_array().into_iter().flatten() {
@@ -226,6 +229,29 @@ pub fn strip_rig(g: &mut Glb) {
                 joints.insert(j);
             }
         }
+    }
+    // nodes that would be cut off with their joint: (node, new parent or
+    // None for the scene root, its matrix under that parent)
+    let worlds = g.world_matrices();
+    let parents = g.parents();
+    let mut rehome: Vec<(usize, Option<usize>, geom::M4)> = vec![];
+    for (i, p) in parents.iter().enumerate() {
+        let Some(p) = *p else { continue };
+        if joints.contains(&(i as u64)) || !joints.contains(&(p as u64)) {
+            continue;
+        }
+        let mut up = parents[p];
+        while let Some(a) = up {
+            if !joints.contains(&(a as u64)) {
+                break;
+            }
+            up = parents[a];
+        }
+        let local = match up {
+            Some(a) => geom::mul(&geom::inverse(&worlds[a]), &worlds[i]),
+            None => worlds[i],
+        };
+        rehome.push((i, up, local));
     }
     let obj = g.json.as_object_mut().unwrap();
     obj.remove("skins");
@@ -244,6 +270,36 @@ pub fn strip_rig(g: &mut Glb) {
     for sc in g.json["scenes"].as_array_mut().into_iter().flatten() {
         if let Some(c) = sc["nodes"].as_array_mut() {
             c.retain(|x| !x.as_u64().map(|v| joints.contains(&v)).unwrap_or(false));
+        }
+    }
+    let moved: std::collections::HashSet<u64> = rehome.iter().map(|r| r.0 as u64).collect();
+    for nd in g.json["nodes"].as_array_mut().into_iter().flatten() {
+        if let Some(c) = nd.get_mut("children").and_then(|c| c.as_array_mut()) {
+            c.retain(|x| !x.as_u64().map(|v| moved.contains(&v)).unwrap_or(false));
+        }
+    }
+    for (i, up, local) in rehome {
+        let flat: Vec<f64> = local.iter().flat_map(|c| c.iter().copied()).collect();
+        if let Some(o) = g.json["nodes"][i].as_object_mut() {
+            for k in ["translation", "rotation", "scale"] {
+                o.remove(k);
+            }
+            o.insert("matrix".into(), json!(flat));
+        }
+        match up {
+            Some(a) => {
+                let o = g.json["nodes"][a].as_object_mut().unwrap();
+                let c = o.entry("children").or_insert(json!([]));
+                if let Some(c) = c.as_array_mut() {
+                    c.push(json!(i));
+                }
+            }
+            None => {
+                let sc = g.json["scene"].as_u64().unwrap_or(0) as usize;
+                if let Some(c) = g.json["scenes"][sc]["nodes"].as_array_mut() {
+                    c.push(json!(i));
+                }
+            }
         }
     }
     for m in g.json["meshes"].as_array_mut().into_iter().flatten() {
