@@ -164,19 +164,23 @@ failing bend findings 53 and 33. Higher on 25, lower on 3.
 What was tried and what it scored:
 [docs/creature-rig-log.md](docs/creature-rig-log.md).
 
-That score was made beside the route it scores. The number a creature
-route is judged by is the benchmark in
-[docs/creature-bench.md](docs/creature-bench.md) (`creature-bench`,
-`tools/creature_bench.py`, `tools/creature_follow.py`): a route's rig
-against a hand-made rig of the same animal playing the artist's own
-clips, and against a reference video for a creature no artist rigged. On
-its first run (twelve hand-made animals) this route lands farther from
-the artist than the model's rig alone on 11 of 12: median skin error
-1.6% of the body's length against 0.7%, leg and neck joints 9.0% off
-against 2.9%, a chain of the artist's with no bone along it on 10 of 12
-against 3. It reads four of the six four-legged animals as two-legged or
-legless and its own checks pass them. (The model has probably seen
-these public animals, so its side of that is an upper bound.)
+That earlier creature score (`bend * skeleton / 100`) was made beside the
+route it scored, and reading skinned GLBs by node transform rather than
+skin rest pose (`Frame::Rest`) left hand-made animal rigs scoring 7.5 to
+24.2 out of 100. What a creature route is judged by now is the benchmark
+in [docs/creature-bench.md](docs/creature-bench.md) (`creature-bench`,
+`tools/creature_bench.py`, `tools/creature_blind.py`,
+`tools/creature_follow.py`): a route's rig against a hand-made rig of
+the same animal playing the artist's own clips, blind same-frame walk
+pairs at the game camera (with a `cant_tell` control and a planted
+swapped-limb bad case), and a reference video for a creature no artist
+rigged. With `Frame::Rest` and `tools/pick_score.py`, all 12 hand-made
+rigs score **92.4 to 99.3** (beating crude-weight and planted controls),
+and `creature_route.py`'s picker agrees with ground-truth skin/joint
+error on **12 of 12** animals (leave-one-out **12 of 12**, against 5 of
+12 for the old score) and **3 of 3** visually distinct blind game-camera
+walk pairs. (The model has probably seen these public animals, so its
+side of Part A remains an upper bound.)
 
 ## How it is built
 
@@ -206,15 +210,20 @@ skin pass, unused by any caller).
 
 ## Checks
 
-    cargo test --release
+    cargo test --release --workspace
+    python3 -m unittest discover -s tools -p "test_*.py"
 
-Fast tests, no model: GLB I/O, humanoid naming (both facings, rejects
-non-humanoids), helper-bone detection, joints doc, CLI exit codes,
-tokenizer round trip, k-d tree, trim, top-4 weights, and the weight
-transfer (two tubes 4 mm apart, each on its own bone: the straight copy
-mixes them, the surface and facing copies must not). Model-level parity
-was checked against the Python reference with `skintokens parity-net`
-(see docs/evaluation.md); the real-model numbers are there too.
+Fast tests, no model: GLB I/O (including `Frame::Rest` skin rest-pose
+reconstruction), `creature-rig` parts/skeleton/check, `creature-bench`
+fit/anatomy/loophole guards, calibrated `pick_score` leave-one-out and
+`creature_blind` control/planted gates, humanoid naming (both facings,
+rejects non-humanoids), helper-bone detection, joints doc, CLI exit
+codes, tokenizer round trip, k-d tree, trim, top-4 weights, and the
+weight transfer (two tubes 4 mm apart, each on its own bone: the
+straight copy mixes them, the surface and facing copies must not).
+Model-level parity was checked against the Python reference with
+`skintokens parity-net` (see docs/evaluation.md); the real-model numbers
+are there too.
 
 ## Layout
 

@@ -17,8 +17,11 @@ designed beside the route it scored, and the route's last step repairs
 exactly the findings it counts; see "Why not the creature score" below.
 
 Code: `crates/bench` (`creature-bench`, Rust), `tools/creature_bench.py`
-(part A), `tools/creature_follow.py` (part B), `tools/bench/*`
-(Blender scripts and the shell around the routes).
+(part A), `tools/creature_follow.py` (part B), `tools/creature_blind.py`
+and `tools/bench/render_gamecam.py` (blind same-frame game-camera walk
+benchmark), `tools/pick_score.py` and `tools/bench/score_artists.py`
+(artist calibration and candidate picker), `tools/bench/*` (Blender
+scripts and the shell around the routes).
 
 ## Part A: how to run it
 
@@ -78,9 +81,13 @@ which of the route's bones stands for which of the artist's:
 **Missing.** Chains of the artist's (bones of one kind joined through
 the hierarchy: a tail, a leg, a jaw) that none of the route's bones lies
 along. `short_chains` in the JSON lists chains the route covers with
-fewer bones; that is not counted as a fault. **Extra**: the route's
-skin-holding bones that lie along nothing of the artist's (farther than
-0.12 body lengths from every line).
+fewer bones; that is not counted as a fault. To close a chaff-bone
+loophole (sprinkling tiny bones everywhere to drive joint error toward
+zero), at most `k + 2` route bones by skin mass may match an artist
+chain of `k` bones (`oversegmented_bones` reports any excess).
+**Extra**: the route's skin-holding bones that lie along nothing of the
+artist's (plain segment distance farther than 0.12 body lengths from
+every line).
 
 **Skin.** The artist's clips are played on the artist's rig: that is
 where every vertex truly goes. The route's rig then follows each frame
@@ -96,8 +103,11 @@ as well as its bones allow, in two steps:
 2. *Fitted.* From there, six times over, each joint in turn (parents
    first) is rotated about its own place, everything below it turning
    with it, to the rotation that leaves the whole skin nearest to the
-   artist's (least squares; a joint with no parent may also move). A
-   step is kept only if the skin gets nearer.
+   artist's (least squares; only the single primary root joint holding
+   the most vertices may also translate, closing the flat-hierarchy
+   loophole where unparented joints could float independently — extra
+   roots are reported in `unparented_roots`). A step is kept only if the
+   skin gets nearer.
 
 What is left after step 2 is the **skin error**: per frame the mean and
 the 95th percentile over the vertices of the distance between the two
@@ -143,6 +153,11 @@ foot, and `motionforge motion check` reads human ankles.
   nearest bone (`creature-bench rigid`). A perfect skeleton with the
   worst sane weights. A route that scores worse than this on skin has a
   skeleton problem.
+- *the artist's skeleton, planted swapped-limb weights*: `+x` and `-x`
+  side-limb `JOINTS_0` bindings swapped across the farthest diagonal
+  joints (`creature-bench plant`). Limbs tear out of socket across the
+  body when walking, and both the numeric score and a blind judge must
+  reject it.
 
 ## Part A: what the first run says (2026-11-12)
 
@@ -278,11 +293,18 @@ sideways-read beast at 99.5). What fails:
   joined up there and holding that much counts as a head held to one
   side.
 - **B_NO_ARMS**: a body whose trunk is taller than it is long has no
-  pair of limbs on the upper part of its trunk.
+  pair of limbs on the upper part of its trunk (a 1-joint-only stub does
+  not count as an articulated limb).
 - **B_NO_LEG**: where the body stands on the ground off the mirror
-  plane, the skin there is held by a bone on the centre line: that leg
-  has no bones. A limb is a leg by where it joins, not by reaching the
-  ground: an arm that hangs to the ground still joins at the shoulders.
+  plane, the skin there is held by a bone on the centre line or a
+  1-joint stub: that leg has no bones. Left and right ground patches
+  separated by the mirror plane are never merged across `X = 0`, even on
+  a narrow stance (`apatosaurus`). A limb is a leg by where it joins,
+  not by reaching the ground: an arm that hangs to the ground still
+  joins at the shoulders.
+- **B_SWAPPED**: a side limb's joints hold skin whose centroid lies on
+  the opposite side of the mirror plane (`creature-bench plant` triggers
+  this on every animal).
 - **B_KIND**: a limb's name disagrees with where it joins (a "leg" on
   the upper part of a standing trunk, a "tail" hanging off the side).
 - **B_OFF_CENTRE**: a bone on the centre line far off the mirror plane.
@@ -291,6 +313,58 @@ All 12 hand-made animals' rigs pass. `tools/bench/anatomy_set.sh` runs it
 over a set; `tools/bench/reread.sh` runs `creature-rig`'s body reading
 alone over a set and puts each rig through it (for changes to the
 reading).
+
+## Blind game-camera walk benchmark and calibrated picker
+
+Any numeric rig score or candidate picker (`tools/pick_score.py`) has to
+pass two independent checks before it is trusted:
+
+1. **Hand-made artist calibration (`tools/bench/score_artists.py`).**
+   Previously, `creature-rig` read skinned GLBs through raw mesh-node
+   transforms instead of skin rest poses (`jointWorld * inverseBind * p`),
+   shrinking scaled armatures (`horse` 6x) against their joints so the
+   12 hand-made rigs scored **7.5 to 24.2** out of 100 (`bend * skeleton
+   / 100`). Reading skinned meshes in `Frame::Rest` and calibrating
+   `pick_score.rig_score` (`skeleton_score - 0.8 * tears_pct`, gated by
+   `creature-bench anatomy` and smooth-blend share):
+   - All 12 hand-made rigs pass both `creature-rig check` (93.9 to 100.0)
+     and `creature-bench anatomy`, scoring **92.4 to 99.3** (all `>= 90`).
+   - All 12 beat `crude` rigid controls (**77.2 to 86.7**) and `plant`ed
+     swapped-limb controls (**0.0 to 26.2**).
+   - Comparing `body` (`creature-rig`) against `predicted` (`skintokens`
+     3 seeds) on the 12 animals (`--picker-check`), `pick_score.py`
+     matches ground-truth `creature-bench score` on **12 of 12** (and
+     **12 of 12 leave-one-out**), against **5 of 12** for the old score.
+
+2. **Blind same-frame walk pairs at the game camera
+   (`tools/creature_blind.py` + `tools/bench/render_gamecam.py`).**
+
+   ```sh
+   CREATURE_RIG_BIN=... CREATURE_BENCH_BIN=... WEIGHTS_BIN=... BLENDER=... \
+     python3 tools/creature_blind.py bench $B --out /tmp/blind_pack --seed 20261117
+   # Judge inspects ONLY /tmp/blind_pack/pair_*.png and pairs.json;
+   # key lives outside the judged folder at /tmp/blind_pack.key.json.
+   python3 tools/creature_blind.py score /tmp/blind_pack --answers answers.json
+   ```
+
+   `render_gamecam.py` renders one rig at a time in headless Blender
+   (`-b --factory-startup`) through the follow camera (`45°` vertical
+   FOV, `-18.3°` pitch, `55°` front-3/4 orbit, ~68% figure height on a
+   ground plane, exact fractional-frame `frame_set`, zero 3D viewport
+   labels). `creature_blind.py` shuffles pairs and flips `LEFT`/`RIGHT`
+   by seed, enforces an identical-render **can't-tell control**
+   (`panel_rmse == 0.0`; any answer other than `cant_tell` discards the
+   run) and a **planted swapped-limb bad case** (`creature-bench plant`;
+   both the blind judge and `pick_score` must reject it), and retires a
+   score on any claim where the blind judge and ground truth agree
+   against it.
+
+   On the 6-pair pack (`fox`, `trex`, `velociraptor`, `bat`, plus the
+   control and planted bad case, `seed 20261117`), an independent blind
+   judge passed the control (`cant_tell`) and planted bad case, answered
+   `cant_tell` on `bat`, and agreed **3 of 3** with ground truth and
+   `pick_score` on `velociraptor`, `fox` and `trex` — retiring the old
+   score on all three.
 
 ## The video-to-motion exam
 

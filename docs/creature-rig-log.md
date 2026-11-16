@@ -295,3 +295,63 @@ A tail or head that lies a little off the mirror plane is called
 The picker still ranks by the bend score times this crate's skeleton
 check, which cannot see that hips and shoulders sit a tenth of the body
 from an artist's.
+
+## 2026-11-16: artist calibration, blind walk benchmark and reader-neutral picker
+
+### Why hand-made rigs scored 7.5 to 24.2 (fixed)
+
+On the twelve benchmark animals, the old creature score (`bend * skeleton
+/ 100`) gave the artists' own hand-made rigs 7.5 to 24.2 (median ~14):
+
+- `creature-rig` read meshes through `Frame::World` (the mesh node's
+  matrix) while reading joints in world space. On artist GLBs whose
+  armature node carries a unit-conversion scale (`horse` 1/6), the mesh
+  loaded six times smaller than its own bones, failing `S_OUTSIDE` and
+  `S_NO_CHAIN`. Added `Frame::Rest` (`skin_rest`: `jointWorld *
+  inverseBind * p`) in `crates/skintokens/src/glb.rs` and switched
+  `creature-rig` to it.
+- Also fixed in `creature-rig`: volume seed chosen inside the largest
+  connected component of `solid.inside` rather than an isolated floater;
+  stance midline width measured from the lower 40% of the body so spread
+  wings (`bat`, `dragon`) neither swallow legs nor merge narrow feet
+  across `X = 0` (`apatosaurus`); zero-skin `*_end` leaf joints and
+  `neutral_bone` excluded from `S_OUTSIDE`; IK feet hung under `root`
+  walked to their meeting shin bone (`rat`).
+- Result (`tools/bench/score_artists.py`): all 12 hand-made rigs pass
+  both `creature-rig check` (93.9 to 100.0) and `creature-bench anatomy`,
+  scoring **92.4 to 99.3** on `pick_score.rig_score` — above `crude`
+  rigid weights (**77.2 to 86.7**) and `plant`ed swapped-limb rigs
+  (**0.0 to 26.2**).
+
+### Benchmark loopholes closed (`crates/bench`)
+
+- `fit()` in `creature-bench score` only translates the single primary
+  root joint holding the most vertices (closing a flat-hierarchy
+  loophole where unparented joints translated freely; extra roots are
+  reported in `unparented_roots`).
+- At most `k + 2` route bones by skin mass may match an artist chain of
+  `k` bones (`oversegmented_bones` reported), and `extra_bones` checks
+  plain segment distance (`> 0.12` body lengths).
+- `creature-bench anatomy` splits ground patches across the mirror plane
+  (`apatosaurus` body-read rig now fails `B_NO_LEG`), rejects 1-joint
+  side-limb stubs, and flags `B_SWAPPED` when a side limb holds
+  opposite-side skin. Added `creature-bench plant` to swap farthest
+  opposite-side limb joints as a planted bad control.
+
+### Reader-neutral picker and blind game-camera verification (kept)
+
+- `tools/pick_score.py` replaces `bend * skeleton / 100` in
+  `tools/creature_route.py`: ranks `skintokens` seeds by
+  `creature-bench anatomy`, `skeleton_cut_at_token_limit`, skeleton pass
+  and `rig_score`, and compares `predicted` against `body` on
+  reader-independent anatomy, articulated limb pairs and tear share.
+- Agreement with ground-truth `creature-bench score` across the 12
+  animals: **12 of 12** (leave-one-out **12 of 12**, vs **5 of 12** for
+  the old score).
+- Blind same-frame walk pairs at the game camera (`tools/creature_blind.py`
+  + `tools/bench/render_gamecam.py`, `seed 20261117`, key outside the
+  judged folder): an independent blind judge passed the identical
+  control (`RMSE 0.0` -> `cant_tell`) and the planted swapped-limb bad
+  case, answered `cant_tell` on `bat`, and agreed **3 of 3** with ground
+  truth and `pick_score` on `velociraptor`, `fox` and `trex`, retiring
+  the old score on all three.
