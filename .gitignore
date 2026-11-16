@@ -1,4 +1,7 @@
 target/
 *.glb
 *.log
+*.blend1
+__pycache__/
+*.pyc
 .DS_Store

@@ -45,6 +45,9 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import pick_score  # noqa: E402
+
 TRIS = {"hero": 14000, "npc": 7500, "monster": 18000}
 # band widths of the weight candidates, in body thicknesses at the joint
 BLENDS = [1.6, 1.0, 2.5]
@@ -78,11 +81,12 @@ def check(wf, glb, rom):
     try:
         d = json.loads(r["out"])
     except ValueError:
-        return {"score": 0.0, "pass": False, "fails": ["check did not run: " + tail(r["err"], 120)]}
+        return {"score": 0.0, "pass": False, "fails": ["check did not run: " + tail(r["err"], 120)], "tears_pct": 100.0}
     fails = [f"{f.get('code')} {f.get('region')}: {f.get('detail')}" for f in d.get("findings", [])
              if f.get("severity") == "fail"]
     return {"score": d.get("score", 0.0), "pass": bool(d.get("pass")), "fails": fails, "verts": d.get("verts"),
-            "bones": d.get("bones"), "poses": d.get("poses"), "not_tested": d.get("skipped_poses", [])}
+            "bones": d.get("bones"), "poses": d.get("poses"), "not_tested": d.get("skipped_poses", []),
+            "tears_pct": pick_score.tears_pct(d)}
 
 
 def main():
@@ -105,7 +109,7 @@ def main():
     ap.add_argument("--fix-args", default="")
     ap.add_argument("--fix-timeout", type=int, default=1800)
     ap.add_argument("--keep-tries", action="store_true")
-    for tool in ("blender", "creature-rig", "skintokens", "motionforge", "weights", "rfcheck"):
+    for tool in ("blender", "creature-rig", "creature-bench", "skintokens", "motionforge", "weights", "rfcheck"):
         ap.add_argument(f"--{tool}", default="")
     a = ap.parse_args()
 
@@ -113,6 +117,12 @@ def main():
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sib = os.path.dirname(repo)
     cr = find("creature-rig", getattr(a, "creature_rig"), "CREATURE_RIG_BIN", [os.path.join(repo, "target/release/creature-rig")])
+    cb = None
+    for p in [getattr(a, "creature_bench"), os.environ.get("CREATURE_BENCH_BIN"), shutil.which("creature-bench"),
+              os.path.join(repo, "target/release/creature-bench"), os.path.join(home, "rigwork/bench/bin/creature-bench")]:
+        if p and os.path.exists(p):
+            cb = p
+            break
     mf = find("motionforge", a.motionforge, "MOTIONFORGE_BIN", [os.path.join(sib, "motionforge/rust/target/release/motionforge")])
     wf = find("weights", a.weights, "WEIGHTS_BIN", [os.path.join(sib, "weightforge/rust/target/release/weights")])
     rf = find("rfcheck", a.rfcheck, "RFCHECK_BIN", [os.path.join(sib, "rfcheck/target/release/rfcheck"),
@@ -230,23 +240,10 @@ def main():
             t["fix"]["error"] = tail(r["err"] or r["out"])
             shutil.copyfile(posed, fixed)
     final = check(wf, fixed, rom)
-    t.update(score=final["score"], fails=final["fails"], not_tested=final.get("not_tested", []))
+    t.update(score=final["score"], fails=final["fails"], not_tested=final.get("not_tested", []),
+             tears_pct=final.get("tears_pct", 100.0))
     t["pass"] = final["pass"]
 
-    # 5. The skeleton check.
-    r = run([cr, "check", fixed, "--json", base + ".skeleton.json"])
-    try:
-        with open(base + ".skeleton.json") as f:
-            s = json.load(f)
-        t["skeleton"] = {"score": s["score"], "pass": s["pass"],
-                         "fails": [f"{x['code']} {x['part']}: {x['detail']}" for x in s["findings"] if x["severity"] == "fail"]}
-    except (OSError, ValueError, KeyError):
-        t["skeleton"] = {"score": 0.0, "pass": False, "fails": ["skeleton check did not run: " + tail(r["err"], 120)]}
-
-    # 5b. The model's own rig of the same mesh, judged the same way (the
-    # body's range of motion on its bones, the skeleton check): it is kept
-    # instead when it is the better one, so a creature is never rigged
-    # worse than by the model alone.
     def skeleton_of(glb, out_json, rom_out=None, sheet=None):
         cmd = [cr, "check", glb, "--json", out_json]
         if rom_out:
@@ -257,20 +254,28 @@ def main():
         try:
             with open(out_json) as f:
                 s = json.load(f)
-            return {"score": s["score"], "pass": s["pass"],
+            return {"score": s["score"], "pass": s["pass"], "blended_share": s.get("blended_share"),
                     "fails": [f"{x['code']} {x['part']}: {x['detail']}" for x in s["findings"] if x["severity"] == "fail"]}
         except (OSError, ValueError, KeyError):
             return {"score": 0.0, "pass": False, "fails": ["skeleton check did not run: " + tail(r["err"], 120)]}
 
-    def rank(x):
-        """The creature score (bend x skeleton / 100), 15 off for a failing
-        skeleton finding (a limb with no bones in it costs more than a few
-        torn faces), 5 on for passing both checks. Passing alone does not
-        win: a rig can pass both with bones along half a limb and score 44
-        beside one that scores 75 with a single failing finding."""
-        both = x["pass"] and x["skeleton"]["pass"]
-        return x["score"] * x["skeleton"]["score"] / 100.0 - (0 if x["skeleton"]["pass"] else 15) + (5 if both else 0)
+    def anatomy_of(glb, out_json):
+        if not cb:
+            return None
+        run([cb, "anatomy", glb, "--json", out_json])
+        try:
+            with open(out_json) as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return None
 
+    # 5. The skeleton and independent anatomy checks.
+    t["skeleton"] = skeleton_of(fixed, base + ".skeleton.json")
+    t["anatomy"] = anatomy_of(fixed, base + ".anatomy.json")
+    t["rig_score"] = pick_score.rig_score(t["skeleton"], t.get("tears_pct", 100.0), t["anatomy"])
+
+    # 5b. The model's own rig of the same mesh (three seeds), judged by the
+    # calibrated reader-neutral picker (`tools/pick_score.py`).
     picked = {"glb": fixed, "rom": rom, "sheet": base + ".sheet.png", "skeleton_png": base + ".skeleton.png", "which": "body"}
     sk = None
     if not a.no_predicted:
@@ -278,8 +283,8 @@ def main():
             if p and os.path.exists(p):
                 sk = p
                 break
+    tries = []
     if sk:
-        tries = []
         t["predicted_tries"] = tries
         for seed in [int(x) for x in a.predicted_seeds.split(",") if x]:
             pb = f"{base}.pred{seed}"
@@ -289,6 +294,12 @@ def main():
             r = run([sk, "rig", rig, pb + ".rig.glb", "--report", pb + ".skintokens.json", "--class", "quadruped",
                      "--seed", str(seed)], timeout=3600)
             ok = r["code"] == 0 and os.path.exists(pb + ".rig.glb")
+            if os.path.exists(pb + ".skintokens.json"):
+                try:
+                    with open(pb + ".skintokens.json") as f:
+                        p["cut_at_token_limit"] = bool((json.load(f).get("rig") or {}).get("skeleton_cut_at_token_limit"))
+                except (OSError, ValueError):
+                    pass
             if ok:
                 r = run([mf, "standardize", "--input", pb + ".rig.glb", "--output", pb + ".std.glb", "--class",
                          "quadruped", "--report", pb + ".standardize.json"])
@@ -317,21 +328,32 @@ def main():
                 if not os.path.exists(pb + ".glb"):
                     shutil.copyfile(pposed, pb + ".glb")
             pfinal = check(wf, pb + ".glb", pb + ".rom.ron")
-            p.update(raw=praw["score"], score=pfinal["score"], fails=pfinal["fails"])
+            p.update(raw=praw["score"], score=pfinal["score"], fails=pfinal["fails"],
+                     tears_pct=pfinal.get("tears_pct", 100.0))
             p["pass"] = pfinal["pass"]
             p["skeleton"] = skeleton_of(pb + ".glb", pb + ".skeleton.json", sheet=pb + ".skeleton.png")
+            p["anatomy"] = anatomy_of(pb + ".glb", pb + ".anatomy.json")
+            p["rig_score"] = pick_score.rig_score(p["skeleton"], p["tears_pct"], p["anatomy"])
             save()
-        good = [p for p in tries if p.get("rigged")]
-        if good:
-            p = max(good, key=lambda x: (rank(x), -x["seed"]))
-            t["predicted"] = p
-            pb = f"{base}.pred{p['seed']}"
-            if rank(p) > rank(t):
-                picked = {"glb": pb + ".glb", "rom": pb + ".rom.ron", "sheet": pb + ".sheet.png",
-                          "skeleton_png": pb + ".skeleton.png", "which": "predicted"}
-                report["best_seed"] = p["seed"]
+
+    choice = pick_score.pick_candidate(t, tries)
+    if choice["best_predicted"] is not None:
+        t["predicted"] = choice["best_predicted"]
+    if choice["which"] == "predicted" and choice["best_predicted"] is not None:
+        ps = choice["best_predicted"]["seed"]
+        pb = f"{base}.pred{ps}"
+        picked = {"glb": pb + ".glb", "rom": pb + ".rom.ron", "sheet": pb + ".sheet.png",
+                  "skeleton_png": pb + ".skeleton.png", "which": "predicted"}
+        report["best_seed"] = ps
     t["picked"] = picked["which"]
     best = t["predicted"] if picked["which"] == "predicted" else t
+    report["pick"] = {
+        "score": "pick_score/2",
+        "which": choice["which"],
+        "rig_score": choice["rig_score"],
+        "trusted": choice["trusted"],
+        "reason": choice["reason"],
+    }
 
     # 6. Contract.
     r = run([rf, "--json", "--class", a.klass, picked["glb"]])
@@ -364,9 +386,9 @@ def main():
     other = ""
     if t.get("predicted", {}).get("rigged"):
         o = t["predicted"] if picked["which"] == "body" else t
-        other = f" [kept the {'body-read' if picked['which'] == 'body' else 'predicted'} rig; the other: bend {o['score']}, skeleton {o['skeleton']['score']}]"
-    print(f"{name}: bend {best['score']} ({'passes' if best['pass'] else str(len(best['fails'])) + ' failing'}), "
-          f"skeleton {best['skeleton']['score']}, contract {'clean' if t['contract'] else 'broken'}"
+        other = f" [kept the {'body-read' if picked['which'] == 'body' else 'predicted'} rig ({report['pick']['reason']}); other score {o.get('rig_score')}]"
+    print(f"{name}: score {best.get('rig_score')} ({'trusted' if report['pick']['trusted'] else 'untrusted'}), "
+          f"tears {best.get('tears_pct')}%, skeleton {best['skeleton']['score']}, contract {'clean' if t['contract'] else 'broken'}"
           f"{', with clips' if best.get('clips') else ''}{other}: "
           f"{'PASSES' if report['ok'] else 'FAILS: ' + '; '.join(why)} -> {os.path.join(a.out, name + '.glb')}")
     return 0 if report["ok"] else 1
