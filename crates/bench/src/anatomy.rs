@@ -63,7 +63,13 @@ pub fn check(rig: &Rig) -> Value {
     let mut xs: Vec<f64> = rig.rest_pos.iter().map(|p| p[0]).collect();
     xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let x0 = xs[xs.len() / 2];
-    let tol = (0.015 * len).max(0.10 * size[0]);
+    let (mut lxlo, mut lxhi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for p in rig.rest_pos.iter().filter(|p| p[1] - lo[1] <= 0.40 * size[1]) {
+        lxlo = lxlo.min(p[0]);
+        lxhi = lxhi.max(p[0]);
+    }
+    let stance_w = (if lxhi > lxlo { lxhi - lxlo } else { size[0] }).min(0.5 * len);
+    let tol = (0.015 * len).max(0.10 * stance_w);
 
     // joints that move skin
     let mut live = vec![false; n];
@@ -116,6 +122,7 @@ pub fn check(rig: &Rig) -> Value {
     // plane. Anything else carries on the centre line.
     let mut side = vec![false; n];
     let mut roots = vec![];
+    let mut swapped: Vec<String> = vec![];
     let mut stack: Vec<usize> = (0..n)
         .filter(|&j| live[j] && rig.parent[j].is_none())
         .collect();
@@ -123,11 +130,22 @@ pub fn check(rig: &Rig) -> Value {
         for c in kids(j) {
             let sub = below(c);
             let xs: Vec<f64> = sub.iter().map(|&k| pos[k][0] - x0).collect();
-            let one_side = xs.iter().all(|x| *x > -tol / 2.0) || xs.iter().all(|x| *x < tol / 2.0);
+            let pos_side = xs.iter().all(|x| *x > -tol / 2.0);
+            let neg_side = xs.iter().all(|x| *x < tol / 2.0);
+            let one_side = pos_side || neg_side;
+            let j_mean = xs.iter().sum::<f64>() / xs.len().max(1) as f64;
             let (mid, mass) = skin_of(&sub);
             if one_side && mass > 0.0 && (mid[0] - x0).abs() > tol {
                 for &k in &sub {
                     side[k] = true;
+                }
+                if j_mean.abs() > tol / 2.0 && (mid[0] - x0) * j_mean < 0.0 {
+                    swapped.push(format!(
+                        "{} sits on the {} side while the skin it holds lies on the {} side",
+                        rig.names[c],
+                        if j_mean > 0.0 { "+x" } else { "-x" },
+                        if mid[0] - x0 > 0.0 { "+x" } else { "-x" }
+                    ));
                 }
                 roots.push(c);
             } else {
@@ -173,6 +191,9 @@ pub fn check(rig: &Rig) -> Value {
     let mut fail = |code: &str, detail: String| {
         findings.push(json!({"code": code, "severity": "fail", "detail": detail}))
     };
+    for msg in swapped {
+        fail("B_SWAPPED", msg);
+    }
     let label = |l: &Limb| -> String {
         format!(
             "{} ({} joints, on the {})",
@@ -372,6 +393,7 @@ pub fn check(rig: &Rig) -> Value {
     let standing: Vec<usize> = (0..rig.rest_pos.len())
         .filter(|&v| rig.rest_pos[v][1] - ground < 0.04 * size[1] && rig.dominant[v] != usize::MAX)
         .collect();
+    let mid_seam = 0.012 * len;
     let mut patch = vec![usize::MAX; standing.len()];
     let mut n_patches = 0;
     let cell = 0.05 * len;
@@ -397,7 +419,13 @@ pub fn check(rig: &Rig) -> Value {
                     for &m in grid.get(&(gx + dx, gz + dz)).into_iter().flatten() {
                         if patch[m] == usize::MAX {
                             let q = rig.rest_pos[standing[m]];
-                            if ((p[0] - q[0]).powi(2) + (p[2] - q[2]).powi(2)).sqrt() < cell {
+                            let (px, qx) = (p[0] - x0, q[0] - x0);
+                            let cross_midline = px.abs() > mid_seam
+                                && qx.abs() > mid_seam
+                                && px.signum() != qx.signum();
+                            if !cross_midline
+                                && ((p[0] - q[0]).powi(2) + (p[2] - q[2]).powi(2)).sqrt() < cell
+                            {
                                 patch[m] = n_patches;
                                 stack.push(m);
                             }
@@ -408,6 +436,13 @@ pub fn check(rig: &Rig) -> Value {
         }
         n_patches += 1;
     }
+    if !limbs.is_empty() && limbs.iter().all(|l| l.joints < 2) {
+        fail(
+            "B_NO_LEG",
+            "every side limb has only 1 joint: nothing can bend a knee, elbow or ankle".into(),
+        );
+    }
+    let foot_tol = (0.015 * len).max(0.06 * stance_w);
     let mut feet = 0;
     for k in 0..n_patches {
         let vs: Vec<usize> = (0..standing.len())
@@ -419,13 +454,27 @@ pub fn check(rig: &Rig) -> Value {
         }
         let xs: Vec<f64> = vs.iter().map(|&v| rig.rest_pos[v][0] - x0).collect();
         let mid = xs.iter().sum::<f64>() / xs.len() as f64;
-        let one_side = xs.iter().all(|x| *x > -tol / 2.0) || xs.iter().all(|x| *x < tol / 2.0);
-        if !one_side || mid.abs() <= tol {
+        let touches_seam = xs.iter().any(|x| x.abs() <= mid_seam);
+        let one_side = xs.iter().all(|x| *x > -foot_tol / 2.0) || xs.iter().all(|x| *x < foot_tol / 2.0);
+        if touches_seam || !one_side || mid.abs() <= foot_tol {
             continue;
         }
         feet += 1;
+        let patch_side = if mid > 0.0 { 1 } else { -1 };
+        let foot_pos = {
+            let mut c = [0.0; 3];
+            for &v in &vs {
+                c = geom::add(c, rig.rest_pos[v]);
+            }
+            geom::scale(c, 1.0 / vs.len() as f64)
+        };
         let on_limb = vs.iter().filter(|&&v| side[rig.dominant[v]]).count();
-        if on_limb * 2 < vs.len() {
+        let near_joint = limbs.iter().filter(|l| l.side == patch_side).any(|l| {
+            l.path
+                .iter()
+                .any(|&j| geom::norm(geom::sub(pos[j], foot_pos)) < 0.30 * len)
+        });
+        if on_limb * 2 < vs.len() || !near_joint {
             let mut count: std::collections::HashMap<usize, usize> =
                 std::collections::HashMap::new();
             for &v in &vs {
@@ -436,7 +485,7 @@ pub fn check(rig: &Rig) -> Value {
             fail(
                 "B_NO_LEG",
                 format!(
-                    "the body stands on a foot on its {} side ({} of its length from the back) and the bone that holds it, {}, is on the centre line: that leg has no bones",
+                    "the body stands on a foot on its {} side ({} of its length from the back) and has no limb joint near it (held by {})",
                     if mid > 0.0 { "+x" } else { "-x" },
                     format!("{:.0}%", 100.0 * (z - lo[2]) / size[2].max(1e-9)),
                     rig.names[holder]
@@ -529,4 +578,126 @@ pub fn check(rig: &Rig) -> Value {
         "findings": findings,
         "limbs": limbs_json,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rig::{Influence, Trs};
+    use std::collections::HashMap;
+
+    fn test_quad_rig(swap_lr: bool, stub_legs: bool) -> Rig {
+        // Simple symmetric quadruped: root(0), head(1), legL0(2)->legL1(3), legR0(4)->legR1(5)
+        let jpos = if stub_legs {
+            vec![
+                [0.0, 0.5, 0.0],
+                [0.0, 0.6, 0.5],
+                [0.2, 0.4, 0.2],
+                [-0.2, 0.4, 0.2],
+            ]
+        } else {
+            vec![
+                [0.0, 0.5, 0.0],
+                [0.0, 0.6, 0.5],
+                [0.2, 0.4, 0.2],
+                [0.2, 0.05, 0.2],
+                [-0.2, 0.4, 0.2],
+                [-0.2, 0.05, 0.2],
+            ]
+        };
+        let nj = jpos.len();
+        let trs: Vec<Trs> = jpos
+            .iter()
+            .map(|&t| Trs {
+                t,
+                r: [0.0, 0.0, 0.0, 1.0],
+                s: [1.0, 1.0, 1.0],
+            })
+            .collect();
+        let rest_world: Vec<geom::M4> = trs.iter().map(|x| x.matrix()).collect();
+        let parent = if stub_legs {
+            vec![None, Some(0), Some(0), Some(0)]
+        } else {
+            vec![None, Some(0), Some(0), Some(2), Some(0), Some(4)]
+        };
+        let mut children = vec![vec![]; nj];
+        for (j, p) in parent.iter().enumerate() {
+            if let Some(p) = *p {
+                children[p].push(j);
+            }
+        }
+        let mut rest_pos = vec![];
+        let mut dominant = vec![];
+        // Trunk & head vertices (100)
+        for k in 0..80 {
+            let z = -0.4 + 0.8 * (k as f64 / 80.0);
+            let x = if k % 2 == 0 { 0.05 } else { -0.05 };
+            rest_pos.push([x, 0.5, z]);
+            dominant.push(0);
+        }
+        for k in 0..20 {
+            let x = if k % 2 == 0 { 0.03 } else { -0.03 };
+            rest_pos.push([x, 0.6, 0.45 + 0.01 * k as f64]);
+            dominant.push(1);
+        }
+        // Left & right feet on ground y = 0.0
+        let (jl, jr) = if stub_legs { (2, 3) } else { (3, 5) };
+        let (hold_l, hold_r) = if swap_lr { (jr, jl) } else { (jl, jr) };
+        for k in 0..10 {
+            rest_pos.push([0.18 + 0.005 * k as f64, 0.0, 0.18 + 0.005 * k as f64]);
+            dominant.push(hold_l);
+        }
+        for k in 0..10 {
+            rest_pos.push([-0.18 - 0.005 * k as f64, 0.0, 0.18 + 0.005 * k as f64]);
+            dominant.push(hold_r);
+        }
+        let mut mass = vec![1.0; nj];
+        let inf: Vec<Vec<Influence>> = dominant
+            .iter()
+            .map(|&j| {
+                mass[j] += 1.0;
+                vec![Influence {
+                    joint: j,
+                    w: 1.0,
+                    q: [0.0; 3],
+                }]
+            })
+            .collect();
+        Rig {
+            glb: skintokens::glb::Glb {
+                json: serde_json::json!({}),
+                bin: vec![],
+            },
+            node_parent: parent.clone(),
+            order: (0..nj).collect(),
+            rest: trs,
+            rest_world,
+            joints: (0..nj).collect(),
+            joint_of: (0..nj).map(|i| (i, i)).collect::<HashMap<_, _>>(),
+            names: (0..nj).map(|i| format!("b{i}")).collect(),
+            parent,
+            children,
+            joint_order: (0..nj).collect(),
+            inf,
+            tris: vec![[0, 1, 2]],
+            rest_pos,
+            mass,
+            dominant,
+            clips: vec![],
+        }
+    }
+
+    #[test]
+    fn clean_quad_passes_while_swapped_and_stub_legs_fail() {
+        let ok = check(&test_quad_rig(false, false));
+        assert_eq!(ok["pass"], json!(true), "{ok}");
+
+        let sw = check(&test_quad_rig(true, false));
+        assert_eq!(sw["pass"], json!(false), "{sw}");
+        assert!(sw["findings"].to_string().contains("B_SWAPPED"), "{sw}");
+
+        let st = check(&test_quad_rig(false, true));
+        assert_eq!(st["pass"], json!(false), "{st}");
+        assert!(st["findings"].to_string().contains("B_NO_LEG"), "{st}");
+    }
 }

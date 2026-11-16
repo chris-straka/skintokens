@@ -23,6 +23,7 @@ const HELP: &str =
     creature-bench score TRUTH.glb ROUTE.glb [--json OUT.json] [--clips OUT.glb]
                          [--max-frames 48] [--sweeps 6] [--roles ROLES.json] [--label NAME]
     creature-bench rigid TRUTH.glb OUT.glb
+    creature-bench plant IN.glb OUT.glb [--json OUT.json]
     creature-bench info  RIG.glb [--roles ROLES.json]
     creature-bench anatomy RIG.glb [--json OUT.json]
     creature-bench joints TRUTH.glb OTHER.glb [--clip NAME] [--other-clip NAME] [--rest yes] [--json OUT.json]
@@ -63,6 +64,10 @@ score  TRUTH is the artist's rig with its clips; ROUTE is a rig of the same
 rigid  a control: the artist's skeleton and clips with each vertex held
        wholly by its nearest bone. What crude weights on a perfect
        skeleton score.
+plant  a planted bad rig for blind A/B gates: copies IN.glb (mesh, skeleton
+       and clips) with mirrored left/right limb skin weights swapped across
+       the body's mirror plane, so both a blind judge at the game camera
+       and the numeric checks must flag it.
 info   the joints of a rig (role, parent, skin held) and its clips.
 anatomy a skeleton judged with nothing to hold it against but itself: no
        artist's rig, and no reading of the body by the tool that made it.
@@ -380,6 +385,139 @@ fn rigid(a: &Args) -> Result<()> {
     Ok(())
 }
 
+/// Copies a rig with mirrored left/right side-limb skin weights swapped
+/// across the mirror plane (the planted bad case for blind A/B runs).
+fn plant(a: &Args) -> Result<()> {
+    if a.pos.len() != 2 {
+        bail!("plant IN.glb OUT.glb");
+    }
+    let rig = Rig::read(Path::new(&a.pos[0]))?;
+    if rig.joints.is_empty() {
+        bail!("{} has no skin", a.pos[0]);
+    }
+    let pos = rig.joint_rest();
+    let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+    for p in &rig.rest_pos {
+        for k in 0..3 {
+            lo[k] = lo[k].min(p[k]);
+            hi[k] = hi[k].max(p[k]);
+        }
+    }
+    let len = (0..3).map(|k| hi[k] - lo[k]).fold(0.0, f64::max).max(1e-9);
+    let mut xs: Vec<f64> = rig.rest_pos.iter().map(|p| p[0]).collect();
+    xs.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    let x0 = xs[xs.len() / 2];
+    let tol = 0.015 * len;
+    // Pair each +x limb joint with the FARTHEST -x limb joint (e.g. front-left
+    // hip <-> hind-right foot, or left hip <-> right foot on a biped). A pure
+    // mirror swap has the same (y, z) pivot and only phase-shifts sagittal X-pitch
+    // walks, whereas a diagonal hip-to-opposite-foot swap gives a huge (y, z)
+    // lever arm that tears unmistakably at the game camera while still swapping
+    // skin across the mirror plane (`B_SWAPPED`).
+    let mut cand: Vec<(f64, usize, usize)> = vec![];
+    for i in 0..rig.joints.len() {
+        if pos[i][0] - x0 <= tol || rig.mass[i] <= 1e-6 {
+            continue;
+        }
+        for j in 0..rig.joints.len() {
+            if pos[j][0] - x0 >= -tol || rig.mass[j] <= 1e-6 {
+                continue;
+            }
+            let d = geom::norm(geom::sub(pos[i], pos[j]));
+            cand.push((d, i, j));
+        }
+    }
+    cand.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap());
+    let mut swap: Vec<usize> = (0..rig.joints.len()).collect();
+    let mut paired = vec![false; rig.joints.len()];
+    let mut pairs = vec![];
+    for (_, i, j) in cand {
+        if !paired[i] && !paired[j] {
+            paired[i] = true;
+            paired[j] = true;
+            swap[i] = j;
+            swap[j] = i;
+            pairs.push(json!([rig.names[i], rig.names[j]]));
+        }
+    }
+    if pairs.is_empty() {
+        bail!("{}: no mirrored left/right limb joints to swap", a.pos[0]);
+    }
+    let mut g = skintokens::glb::Glb {
+        json: rig.glb.json.clone(),
+        bin: rig.glb.bin.clone(),
+    };
+    let doc = rig.glb.doc()?;
+    let mut seen = std::collections::HashSet::new();
+    let mut swapped_verts = 0usize;
+    for ni in rig.glb.scene_nodes() {
+        let node = doc.nodes().nth(ni).unwrap();
+        let Some(mesh) = node.mesh() else { continue };
+        if !seen.insert((mesh.index(), node.skin().map(|s| s.index()))) {
+            continue;
+        }
+        let Some(skin) = node.skin() else { continue };
+        let slots: Vec<usize> = skin.joints().map(|j| rig.joint_of[&j.index()]).collect();
+        let mut slot_of = vec![0usize; rig.joints.len()];
+        for (s, &j) in slots.iter().enumerate() {
+            slot_of[j] = s;
+        }
+        for (pi, prim) in mesh.primitives().enumerate() {
+            if prim.mode() != gltf::mesh::Mode::Triangles {
+                continue;
+            }
+            let r = prim.reader(rig.glb.buffer());
+            let (Some(jr), Some(wr)) = (r.read_joints(0), r.read_weights(0)) else {
+                continue;
+            };
+            let mut js: Vec<[u16; 4]> = jr.into_u16().collect();
+            let ws: Vec<[f32; 4]> = wr.into_f32().collect();
+            for (v, j4) in js.iter_mut().enumerate() {
+                let mut changed = false;
+                for k in 0..4 {
+                    if ws[v][k] > 0.0 && (j4[k] as usize) < slots.len() {
+                        let old_j = slots[j4[k] as usize];
+                        let new_j = swap[old_j];
+                        if new_j != old_j {
+                            j4[k] = slot_of[new_j] as u16;
+                            changed = true;
+                        }
+                    }
+                }
+                if changed {
+                    swapped_verts += 1;
+                }
+            }
+            let (ja, wa) = g.push_skin_attrs(&js, &ws);
+            let attrs = g.json["meshes"][mesh.index()]["primitives"][pi]["attributes"]
+                .as_object_mut()
+                .unwrap();
+            attrs.retain(|k, _| !k.starts_with("JOINTS_") && !k.starts_with("WEIGHTS_"));
+            attrs.insert("JOINTS_0".into(), json!(ja));
+            attrs.insert("WEIGHTS_0".into(), json!(wa));
+        }
+    }
+    g.write(Path::new(&a.pos[1]))?;
+    let rep = json!({
+        "in": a.pos[0],
+        "out": a.pos[1],
+        "swapped_joint_pairs": pairs.len(),
+        "swapped_vertices": swapped_verts,
+        "pairs": pairs,
+    });
+    if let Some(p) = a.flags.get("json") {
+        std::fs::write(p, serde_json::to_string_pretty(&rep)?)
+            .with_context(|| format!("writing {p}"))?;
+    }
+    println!(
+        "{}: swapped {} mirrored joint pairs across {} vertices",
+        a.pos[1],
+        pairs.len(),
+        swapped_verts
+    );
+    Ok(())
+}
+
 fn info(a: &Args) -> Result<()> {
     if a.pos.len() != 1 {
         bail!("info RIG.glb");
@@ -634,6 +772,7 @@ fn main() -> ExitCode {
         match args[0].as_str() {
             "score" => score(&a),
             "rigid" => rigid(&a),
+            "plant" => plant(&a),
             "info" => info(&a),
             "follow" => follow_cmd(&a),
             "anatomy" => anatomy_cmd(&a),

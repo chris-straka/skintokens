@@ -444,6 +444,8 @@ pub struct Mapping {
     pub by_line: Vec<usize>,
     /// How far the route's bone lies from that bone's line (body lengths).
     pub off: Vec<f64>,
+    /// Nearest plain distance to any of the artist's bone lines (ignoring direction).
+    pub min_dist: Vec<f64>,
     /// The same choice made from the skin each bone holds (a cross-check).
     pub by_skin: Vec<usize>,
 }
@@ -458,6 +460,7 @@ pub fn map_bones(truth: &Truth, route: &Rig, r2t: &[usize]) -> Mapping {
     let n = route.joints.len();
     let mut by_line = vec![0; n];
     let mut off = vec![0.0; n];
+    let mut min_dist = vec![f64::INFINITY; n];
     for j in 0..n {
         let mut best = (f64::INFINITY, 0usize, 0.0);
         for a in 0..truth.rig.joints.len() {
@@ -469,6 +472,7 @@ pub fn map_bones(truth: &Truth, route: &Rig, r2t: &[usize]) -> Mapping {
                 let dir = geom::sub(q, p);
                 let dl = geom::norm(dir);
                 let mut seg_best = (f64::INFINITY, 0.0);
+                let mut plain_min = f64::INFINITY;
                 for &(la, lb) in &truth.lines[a] {
                     let d = [0.25, 0.5, 0.75]
                         .iter()
@@ -476,6 +480,7 @@ pub fn map_bones(truth: &Truth, route: &Rig, r2t: &[usize]) -> Mapping {
                         .sum::<f64>()
                         / 3.0
                         / truth.len;
+                    plain_min = plain_min.min(d);
                     let ld = geom::sub(lb, la);
                     let ll = geom::norm(ld);
                     let turn = if dl > 1e-9 && ll > 1e-9 {
@@ -490,6 +495,7 @@ pub fn map_bones(truth: &Truth, route: &Rig, r2t: &[usize]) -> Mapping {
                 }
                 cost += seg_best.0;
                 dist += seg_best.1;
+                min_dist[j] = min_dist[j].min(plain_min);
             }
             cost /= lines[j].len() as f64;
             dist /= lines[j].len() as f64;
@@ -532,6 +538,7 @@ pub fn map_bones(truth: &Truth, route: &Rig, r2t: &[usize]) -> Mapping {
     Mapping {
         by_line,
         off,
+        min_dist,
         by_skin,
     }
 }
@@ -546,64 +553,6 @@ pub fn skeleton(truth: &Truth, route: &Rig, map: &Mapping) -> Value {
         if map.off[j] <= ALONG_NOTHING {
             followers[a].push(j);
         }
-    }
-    let near = |a: usize, among: &[usize]| -> Option<(f64, usize)> {
-        among
-            .iter()
-            .map(|&j| {
-                (
-                    geom::norm(geom::sub(rpos[j], truth.joint_pos[a])) / truth.len,
-                    j,
-                )
-            })
-            .min_by(|x, y| x.0.partial_cmp(&y.0).unwrap())
-    };
-    let mut joints = vec![];
-    let (mut errs, mut trunk, mut unmatched) = (vec![], vec![], 0);
-    for a in 0..na {
-        if !truth.skin_bone[a] {
-            continue;
-        }
-        // a joint of the route's at this joint: one whose bone lies along
-        // this bone, the one above it or one below it
-        let mut cand: Vec<usize> = followers[a].clone();
-        if let Some(p) = truth.rig.parent[a] {
-            cand.extend(&followers[p]);
-        }
-        for &c in &truth.rig.children[a] {
-            cand.extend(&followers[c]);
-        }
-        let mut found = near(a, &cand);
-        let has = found.is_some();
-        if !has {
-            // none: the rig stops short of this joint. Its error is the
-            // distance back to where the rig does have a bone.
-            let mut up = truth.rig.parent[a];
-            while let Some(p) = up {
-                if !followers[p].is_empty() {
-                    found = near(a, &followers[p]);
-                    break;
-                }
-                up = truth.rig.parent[p];
-            }
-            if found.is_none() {
-                found = near(a, &(0..rpos.len()).collect::<Vec<_>>());
-            }
-        }
-        let (e, j) = found.unwrap_or((1.0, 0));
-        let role = truth.roles[a];
-        if role == Role::Trunk {
-            trunk.push(e);
-        } else if role.main() {
-            errs.push(e);
-            if !has {
-                unmatched += 1;
-            }
-        }
-        joints.push(
-            json!({"joint": truth.rig.names[a], "role": role.name(), "error_pct": pct(e),
-            "nearest": route.names.get(j), "has_a_joint": has}),
-        );
     }
     // chains: bones of one role joined through the hierarchy (a bone
     // that holds no skin but carries the next one stays in its chain)
@@ -625,6 +574,90 @@ pub fn skeleton(truth: &Truth, route: &Rig, map: &Mapping) -> Value {
                 chains.push(vec![a]);
             }
         }
+    }
+    // Guard against gaming joint_error_pct with dozens of tiny micro-bones:
+    // on each artist chain of k bones, at most k + 2 route bones (the ones
+    // holding the most skin) may answer as joint placements.
+    let mut eligible = vec![true; rpos.len()];
+    let mut oversegmented_bones = 0usize;
+    for c in &chains {
+        let mut cf: Vec<usize> = c.iter().flat_map(|&a| followers[a].iter().copied()).collect();
+        let cap = c.len() + 2;
+        if cf.len() > cap {
+            cf.sort_by(|&x, &y| {
+                route.mass[y]
+                    .partial_cmp(&route.mass[x])
+                    .unwrap()
+                    .then(x.cmp(&y))
+            });
+            for &drop_j in &cf[cap..] {
+                eligible[drop_j] = false;
+                oversegmented_bones += 1;
+            }
+        }
+    }
+    let elig_followers: Vec<Vec<usize>> = followers
+        .iter()
+        .map(|fs| fs.iter().copied().filter(|&j| eligible[j]).collect())
+        .collect();
+    let near = |a: usize, among: &[usize]| -> Option<(f64, usize)> {
+        among
+            .iter()
+            .map(|&j| {
+                (
+                    geom::norm(geom::sub(rpos[j], truth.joint_pos[a])) / truth.len,
+                    j,
+                )
+            })
+            .min_by(|x, y| x.0.partial_cmp(&y.0).unwrap())
+    };
+    let mut joints = vec![];
+    let (mut errs, mut trunk, mut unmatched) = (vec![], vec![], 0);
+    for a in 0..na {
+        if !truth.skin_bone[a] {
+            continue;
+        }
+        // a joint of the route's at this joint: one whose bone lies along
+        // this bone, the one above it or one below it
+        let mut cand: Vec<usize> = elig_followers[a].clone();
+        if let Some(p) = truth.rig.parent[a] {
+            cand.extend(&elig_followers[p]);
+        }
+        for &c in &truth.rig.children[a] {
+            cand.extend(&elig_followers[c]);
+        }
+        let mut found = near(a, &cand);
+        let has = found.is_some();
+        if !has {
+            // none: the rig stops short of this joint. Its error is the
+            // distance back to where the rig does have a bone.
+            let mut up = truth.rig.parent[a];
+            while let Some(p) = up {
+                if !elig_followers[p].is_empty() {
+                    found = near(a, &elig_followers[p]);
+                    break;
+                }
+                up = truth.rig.parent[p];
+            }
+            if found.is_none() {
+                let all_elig: Vec<usize> = (0..rpos.len()).filter(|&j| eligible[j]).collect();
+                found = near(a, &all_elig);
+            }
+        }
+        let (e, j) = found.unwrap_or((1.0, 0));
+        let role = truth.roles[a];
+        if role == Role::Trunk {
+            trunk.push(e);
+        } else if role.main() {
+            errs.push(e);
+            if !has {
+                unmatched += 1;
+            }
+        }
+        joints.push(
+            json!({"joint": truth.rig.names[a], "role": role.name(), "error_pct": pct(e),
+            "nearest": route.names.get(j), "has_a_joint": has}),
+        );
     }
     let mut chain_json = vec![];
     let mut missing = vec![];
@@ -653,13 +686,14 @@ pub fn skeleton(truth: &Truth, route: &Rig, map: &Mapping) -> Value {
             short.push(format!("{label}: {covered} of {}", c.len()));
         }
     }
-    // the route's bones that lie along nothing of the artist's
-    let is_extra = |j: usize| map.off[j] > ALONG_NOTHING && route.mass[j] > 1e-6;
+    // the route's bones that lie along nothing of the artist's (plain distance)
+    let is_extra = |j: usize| map.min_dist[j] > ALONG_NOTHING && route.mass[j] > 1e-6;
     let extra: Vec<usize> = (0..rpos.len()).filter(|&j| is_extra(j)).collect();
     let extra_chains = extra
         .iter()
         .filter(|&&j| route.parent[j].map(|p| !is_extra(p)).unwrap_or(true))
         .count();
+    let unparented_roots = route.parent.iter().filter(|p| p.is_none()).count();
     let mut sorted = errs.clone();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
     json!({
@@ -669,6 +703,8 @@ pub fn skeleton(truth: &Truth, route: &Rig, map: &Mapping) -> Value {
         "limb_joints_without_a_joint": unmatched,
         "trunk_joint_error_pct": pct(mean(&trunk)),
         "bones": {"artist": truth.skin_bone.iter().filter(|x| **x).count(), "route": route.joints.len()},
+        "unparented_roots": unparented_roots,
+        "oversegmented_bones": oversegmented_bones,
         "missing_chains": missing,
         "short_chains": short,
         "extra_chains": extra_chains,
@@ -846,6 +882,9 @@ pub struct Fitter {
     tout: Vec<usize>,
     pos: Vec<V3>,
     sweeps: usize,
+    /// Only the single primary root joint may translate in `fit`, so a flat
+    /// soup of unparented bones cannot game the skin error by sliding freely.
+    primary_root: Option<usize>,
 }
 
 impl Fitter {
@@ -883,12 +922,16 @@ impl Fitter {
                 }
             }
         }
+        let primary_root = (0..n)
+            .filter(|&j| route.parent[j].is_none())
+            .max_by(|&a, &b| under[a].len().cmp(&under[b].len()).then(b.cmp(&a)));
         Fitter {
             under,
             tin,
             tout,
             pos: route.joint_rest(),
             sweeps,
+            primary_root,
         }
     }
 }
@@ -953,7 +996,8 @@ pub fn fit(route: &Rig, fz: &Fitter, start: &[M4], target: &[V3]) -> Vec<M4> {
             let spread = (a.iter().map(|x| geom::dot(*x, *x)).sum::<f64>() / a.len() as f64).sqrt();
             let mut shift = [0.0; 3];
             let mut r_new = rot[j];
-            for _ in 0..(if route.parent[j].is_none() { 3 } else { 1 }) {
+            let may_shift = fz.primary_root == Some(j);
+            for _ in 0..(if may_shift { 3 } else { 1 }) {
                 let mut pairs: Vec<(V3, V3, f64)> = (0..a.len())
                     .map(|i| (a[i], geom::sub(b[i], geom::scale(shift, m[i])), 1.0))
                     .collect();
@@ -967,7 +1011,7 @@ pub fn fit(route: &Rig, fz: &Fitter, start: &[M4], target: &[V3]) -> Vec<M4> {
                     pairs.push((e, m3_apply(&rot[j], e), 0.01 * a.len() as f64));
                 }
                 r_new = best_rotation(&pairs);
-                if route.parent[j].is_none() {
+                if may_shift {
                     let (mut num, mut den) = ([0.0; 3], 0.0);
                     for i in 0..a.len() {
                         num = geom::add(
@@ -1304,5 +1348,76 @@ mod tests {
         assert_eq!(role_of("Jaw"), Role::Jaw);
         assert_eq!(role_of("Wing2.R"), Role::Wing);
         assert_eq!(role_of("PoleTarget.L"), Role::Other);
+    }
+
+    #[test]
+    fn only_the_primary_root_translates_in_fit() {
+        use crate::rig::{Influence, Trs};
+        use std::collections::HashMap;
+        // Two unparented bones: bone 0 holds 3 vertices, bone 1 holds 2 vertices.
+        // Target moves bone 0's vertices by +0.1 in X and bone 1's vertices by +0.5 in Y.
+        // Only bone 0 (the primary root) may translate; bone 1 stays anchored at its rest pivot.
+        let rest_pos = vec![
+            [0.0, 0.0, 0.0],
+            [0.1, 0.0, 0.0],
+            [0.0, 0.1, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.1, 0.0, 0.0],
+        ];
+        let trs0 = Trs {
+            t: [0.0, 0.0, 0.0],
+            r: [0.0, 0.0, 0.0, 1.0],
+            s: [1.0, 1.0, 1.0],
+        };
+        let trs1 = Trs {
+            t: [1.0, 0.0, 0.0],
+            r: [0.0, 0.0, 0.0, 1.0],
+            s: [1.0, 1.0, 1.0],
+        };
+        let rig = Rig {
+            glb: skintokens::glb::Glb {
+                json: serde_json::json!({}),
+                bin: vec![],
+            },
+            node_parent: vec![None, None],
+            order: vec![0, 1],
+            rest: vec![trs0, trs1],
+            rest_world: vec![trs0.matrix(), trs1.matrix()],
+            joints: vec![0, 1],
+            joint_of: HashMap::from([(0, 0), (1, 1)]),
+            names: vec!["root0".into(), "floating1".into()],
+            parent: vec![None, None],
+            children: vec![vec![], vec![]],
+            joint_order: vec![0, 1],
+            inf: vec![
+                vec![Influence { joint: 0, w: 1.0, q: [0.0, 0.0, 0.0] }],
+                vec![Influence { joint: 0, w: 1.0, q: [0.1, 0.0, 0.0] }],
+                vec![Influence { joint: 0, w: 1.0, q: [0.0, 0.1, 0.0] }],
+                vec![Influence { joint: 1, w: 1.0, q: [0.0, 0.0, 0.0] }],
+                vec![Influence { joint: 1, w: 1.0, q: [0.1, 0.0, 0.0] }],
+            ],
+            tris: vec![[0, 1, 2]],
+            rest_pos: rest_pos.clone(),
+            mass: vec![3.0, 2.0],
+            dominant: vec![0, 0, 0, 1, 1],
+            clips: vec![],
+        };
+        let fz = Fitter::new(&rig, 4);
+        assert_eq!(fz.primary_root, Some(0));
+        let start = vec![trs0.matrix(), trs1.matrix()];
+        let target = vec![
+            [0.1, 0.0, 0.0],
+            [0.2, 0.0, 0.0],
+            [0.1, 0.1, 0.0],
+            [1.0, 0.5, 0.0],
+            [1.1, 0.5, 0.0],
+        ];
+        let out = fit(&rig, &fz, &start, &target);
+        assert!((geom::translation(&out[0])[0] - 0.1).abs() < 1e-4);
+        assert!(
+            geom::norm(geom::sub(geom::translation(&out[1]), [1.0, 0.0, 0.0])) < 1e-9,
+            "secondary unparented bone translated: {:?}",
+            geom::translation(&out[1])
+        );
     }
 }
