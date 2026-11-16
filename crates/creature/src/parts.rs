@@ -61,10 +61,12 @@ impl Part {
     pub fn tip(&self) -> V3 {
         *self.line.last().unwrap()
     }
+    #[allow(dead_code)]
     pub fn is_leaf(&self) -> bool {
         self.children.is_empty()
     }
     /// Point at arc length `s` from the base, and the thickness there.
+    #[allow(dead_code)]
     pub fn at(&self, s: f64) -> (V3, f64) {
         let mut left = s.max(0.0);
         for k in 1..self.line.len() {
@@ -122,8 +124,38 @@ impl Body {
     pub fn build(verts: &[V3], tris: &[[u32; 3]], res: usize) -> Body {
         let solid = Solid::build(verts, tris, res);
         let n = solid.len();
+        // Seed inside the largest connected piece of the solid, so a thick
+        // separate object (a pedestal, a shield) cannot steal the body's root.
+        let mut comp = vec![u32::MAX; n];
+        let mut largest = (0usize, 0u32);
+        let mut cid = 0u32;
+        let mut stack = vec![];
+        for st in 0..n {
+            if !solid.inside[st] || comp[st] != u32::MAX {
+                continue;
+            }
+            comp[st] = cid;
+            stack.push(st);
+            let mut count = 0usize;
+            while let Some(i) = stack.pop() {
+                count += 1;
+                for d in NEIGHBOURS {
+                    if let Some(j) = solid.step(i, d) {
+                        if solid.inside[j] && comp[j] == u32::MAX {
+                            comp[j] = cid;
+                            stack.push(j);
+                        }
+                    }
+                }
+            }
+            if count > largest.0 {
+                largest = (count, cid);
+            }
+            cid += 1;
+        }
+        let main_comp = largest.1;
         let seed = (0..n)
-            .filter(|&i| solid.inside[i])
+            .filter(|&i| solid.inside[i] && comp[i] == main_comp)
             .max_by(|&a, &b| {
                 solid.depth[a]
                     .partial_cmp(&solid.depth[b])

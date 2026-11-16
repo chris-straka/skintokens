@@ -206,6 +206,7 @@ fn a_hint_moves_the_knees() {
                 index: 0,
                 inside: false,
                 radius: 0.0,
+                deforms: true,
             });
         }
     }
@@ -273,4 +274,78 @@ fn a_separate_piece_goes_to_its_nearest_bone() {
         let sum: f32 = skin.weights[i].iter().sum();
         assert!((sum - 1.0).abs() < 1e-4);
     }
+}
+
+/// The bench's hand-made files put a scale node over the armature that
+/// the mesh node never sees: a vertex read through its joint rests where
+/// the bone is.
+#[test]
+fn skin_rest_reads_a_vertex_through_its_joint() {
+    use skintokens::geom;
+    use skintokens::glb::skin_rest;
+    let world = geom::from_trs([1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0], [6.0, 6.0, 6.0]);
+    let near = |a: Option<V3>, b: [f64; 3]| {
+        let a = a.unwrap();
+        assert!(
+            (0..3).all(|i| (a[i] - b[i]).abs() < 1e-9),
+            "{a:?} vs {b:?}"
+        );
+    };
+    near(
+        skin_rest([0.1, 0.2, 0.3], &[(0, 1.0)], &[world], &[geom::IDENTITY]),
+        [1.6, 1.2, 1.8],
+    );
+    let other = geom::from_trs([-1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0], [6.0, 6.0, 6.0]);
+    near(
+        skin_rest(
+            [0.1, 0.2, 0.3],
+            &[(0, 0.5), (1, 0.5)],
+            &[world, other],
+            &[geom::IDENTITY, geom::IDENTITY],
+        ),
+        [0.6, 1.2, 1.8],
+    );
+    assert_eq!(
+        skin_rest([0.1, 0.2, 0.3], &[(0, 0.0)], &[world], &[geom::IDENTITY]),
+        None
+    );
+}
+
+/// A separate thick block (a pedestal or shield) deeper than a single point
+/// of the torso must not steal the body's seed from the main creature.
+#[test]
+fn seed_stays_in_the_creature_beside_a_smaller_thick_block() {
+    let (mut v, mut f) = box_dog();
+    // Smaller total volume than the dog, thicker radius than the dog's torso.
+    let (pv, pf) = cuboid([0.60, 0.0, -0.18], [0.96, 0.36, 0.18], v.len() as u32);
+    v.extend(pv);
+    f.extend(pf);
+    let body = Body::build(&v, &f, 96);
+    let an = Anatomy::read(&body);
+    assert_eq!(an.kind, Kind::FourLegged);
+    assert!(body.solid.center(body.seed)[0].abs() < 0.2);
+}
+
+/// Wide spread wings high on the body must not widen the midline enough to
+/// swallow narrow legs underneath into the centre line.
+#[test]
+fn spread_wings_do_not_swallow_narrow_legs() {
+    let boxes: [(V3, V3); 5] = [
+        ([-0.10, 0.35, -0.12], [0.10, 0.70, 0.12]),  // body
+        ([0.04, 0.0, -0.04], [0.09, 0.38, 0.04]),    // left leg (x ~ 0.065, < 6% of 2.0m wingspan)
+        ([-0.09, 0.0, -0.04], [-0.04, 0.38, 0.04]),  // right leg
+        ([0.08, 0.49, -0.26], [1.00, 0.55, 0.26]),   // left wing (2.0m span, flat sheet)
+        ([-1.00, 0.49, -0.26], [-0.08, 0.55, 0.26]), // right wing
+    ];
+    let (mut v, mut f) = (vec![], vec![]);
+    for (lo, hi) in boxes {
+        let (bv, bf) = cuboid(lo, hi, v.len() as u32);
+        v.extend(bv);
+        f.extend(bf);
+    }
+    let body = Body::build(&v, &f, 96);
+    let an = Anatomy::read(&body);
+    assert_eq!(an.kind, Kind::Winged);
+    let legs = an.limbs.iter().filter(|l| l.role == Role::Leg).count();
+    assert_eq!(legs, 2, "{:?}", an.limbs.iter().map(|l| &l.name).collect::<Vec<_>>());
 }

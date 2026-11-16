@@ -50,12 +50,14 @@ rig    lays a skeleton along those parts (hips and spine, a chain down
        `skintokens rig`; where its joints lie along a leg or an arm, the
        knees and elbows are put there instead of at the line's bends.";
 
-/// Every mesh of the file as one triangle soup in world space (glTF: +Y up).
+/// Every mesh of the file as one triangle soup in world space at rest
+/// (glTF: +Y up). Skinned vertices rest through their joints (`Frame::Rest`),
+/// so an exporter node above the armature moves both the bones and the skin.
 fn load_mesh(path: &Path) -> Result<(Vec<V3>, Vec<[u32; 3]>)> {
     let g = Glb::read(path)?;
     let mut verts = vec![];
     let mut tris = vec![];
-    for p in g.parts(Frame::World)? {
+    for p in g.parts(Frame::Rest)? {
         let base = verts.len() as u32;
         verts.extend_from_slice(&p.positions);
         tris.extend(
@@ -245,8 +247,28 @@ fn cmd_check(a: &Args) -> Result<bool> {
         res,
         a.flags.get("finer").map(|s| s.as_str()) != Some("no"),
     );
-    let bones = check::read_rig(&Glb::read(&input)?)?;
-    let v = check::check(&body, &an, bones);
+    let glb = Glb::read(&input)?;
+    let bones = check::read_rig(&glb)?;
+    let mut v = check::check(&body, &an, bones);
+    // Share of skinned vertices blended across >= 2 bones (secondary weight >= 0.05):
+    // 0.0 on crude rigid weights, > 0.15 on hand-painted and smoothly skinned rigs.
+    if let Ok(parts) = glb.parts(Frame::SkinBind) {
+        let (mut blended, mut total) = (0usize, 0usize);
+        for p in &parts {
+            if let Some(ws) = &p.weights {
+                for w in ws {
+                    total += 1;
+                    if w.iter().filter(|&&x| x >= 0.05).count() >= 2 {
+                        blended += 1;
+                    }
+                }
+            }
+        }
+        if total > 0 {
+            v.report["blended_share"] =
+                json!((blended as f64 / total as f64 * 1e4).round() / 1e4);
+        }
+    }
     if let Some(p) = a.flags.get("json") {
         std::fs::write(p, serde_json::to_string_pretty(&v.report)?)?;
     }
@@ -265,7 +287,7 @@ fn cmd_check(a: &Args) -> Result<bool> {
                 Some(l) => role_colour(&an.limbs[l]).map(|x| (x as f64 * 0.6) as u8),
             })
         });
-        for b in &v.skeleton.bones {
+        for b in v.skeleton.bones.iter().filter(|b| b.deforms) {
             // white: along a part; red: along nothing
             let c = if b.trunk || b.limb.is_some() {
                 [255, 255, 255]
@@ -274,7 +296,7 @@ fn cmd_check(a: &Args) -> Result<bool> {
             };
             vw.polyline(&[b.head, b.tail], 3.0, c);
         }
-        for b in &v.skeleton.bones {
+        for b in v.skeleton.bones.iter().filter(|b| b.deforms) {
             vw.dot(b.head, 4.0, [255, 230, 0]);
         }
         vw.canvas.text(
@@ -379,13 +401,19 @@ fn feet_on_the_ground(verts: &[V3]) -> usize {
     }
     let size = (0..3).map(|a| hi[a] - lo[a]).fold(0.0, f64::max);
     let height = hi[1] - lo[1];
-    let width = hi[0] - lo[0];
-    let off = (0.015 * size).max(0.06 * width);
+    let (mut lxlo, mut lxhi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for p in verts.iter().filter(|p| p[1] - lo[1] <= 0.40 * height) {
+        lxlo = lxlo.min(p[0]);
+        lxhi = lxhi.max(p[0]);
+    }
+    let stance_w = (if lxhi > lxlo { lxhi - lxlo } else { hi[0] - lo[0] }).min(0.5 * size);
+    let off = (0.015 * size).max(0.06 * stance_w);
     let low: Vec<V3> = verts
         .iter()
         .copied()
         .filter(|p| p[1] - lo[1] < 0.04 * height)
         .collect();
+    let mid_seam = 0.012 * size;
     let cell = 0.05 * size;
     let mut patch = vec![usize::MAX; low.len()];
     let mut grid: std::collections::HashMap<(i64, i64), Vec<usize>> =
@@ -410,7 +438,11 @@ fn feet_on_the_ground(verts: &[V3]) -> usize {
                 for dz in -1..=1 {
                     for &m in grid.get(&(gx + dx, gz + dz)).into_iter().flatten() {
                         let q = low[m];
+                        let cross_midline = p[0].abs() > mid_seam
+                            && q[0].abs() > mid_seam
+                            && p[0].signum() != q[0].signum();
                         if patch[m] == usize::MAX
+                            && !cross_midline
                             && ((p[0] - q[0]).powi(2) + (p[2] - q[2]).powi(2)).sqrt() < cell
                         {
                             patch[m] = i;
@@ -422,7 +454,8 @@ fn feet_on_the_ground(verts: &[V3]) -> usize {
             k += 1;
         }
         let mid = members.iter().map(|&m| low[m][0]).sum::<f64>() / members.len() as f64;
-        if members.len() >= 3 && mid.abs() > off {
+        let touches_seam = members.iter().any(|&m| low[m][0].abs() <= mid_seam);
+        if members.len() >= 3 && !touches_seam && mid.abs() > off {
             feet += 1;
         }
     }

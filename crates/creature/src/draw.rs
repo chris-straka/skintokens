@@ -13,6 +13,7 @@ pub struct Canvas {
 
 pub type Rgb = [u8; 3];
 
+#[allow(dead_code)]
 pub const PALETTE: [Rgb; 14] = [
     [150, 150, 150],
     [230, 80, 70],

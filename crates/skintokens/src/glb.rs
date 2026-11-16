@@ -353,10 +353,29 @@ pub struct Part {
     pub skin: Option<usize>,
 }
 
+/// Where one skinned vertex rests: the weighted sum over its influences of
+/// `jointWorld * inverseBind * p`, normalised. `None` when it has no positive
+/// influence, so the caller can fall back to the mesh node's world matrix.
+pub fn skin_rest(p: V3, inf: &[(usize, f64)], joint_world: &[M4], ibm: &[M4]) -> Option<V3> {
+    let (mut acc, mut sum) = ([0.0; 3], 0.0);
+    for &(slot, w) in inf {
+        if w > 0.0 && slot < joint_world.len() && slot < ibm.len() {
+            let m = geom::mul(&joint_world[slot], &ibm[slot]);
+            acc = geom::add(acc, geom::scale(geom::apply(&m, p), w));
+            sum += w;
+        }
+    }
+    (sum > 0.0).then(|| geom::scale(acc, 1.0 / sum))
+}
+
 /// Which primitives and in which frame.
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Frame {
     /// Every mesh node in the scene, positions in world space (node transforms applied).
     World,
+    /// Every mesh node in the scene at rest: skinned vertices through their
+    /// joints (`jointWorld * inverseBind * p`), unskinned ones by their node.
+    Rest,
     /// Primitives of nodes using skin 0, positions as stored (the skin's bind space).
     SkinBind,
 }
@@ -378,6 +397,20 @@ impl Glb {
             if !used_mesh.insert(mesh.index()) {
                 continue;
             }
+            let skin_mats: Option<(Vec<M4>, Vec<M4>)> = if frame == Frame::Rest {
+                node.skin().map(|s| {
+                    let jw: Vec<M4> = s.joints().map(|j| worlds[j.index()]).collect();
+                    let ibm: Vec<M4> = match s.reader(self.buffer()).read_inverse_bind_matrices() {
+                        Some(m) => m
+                            .map(|x| std::array::from_fn(|c| std::array::from_fn(|r| x[c][r] as f64)))
+                            .collect(),
+                        None => vec![geom::IDENTITY; jw.len()],
+                    };
+                    (jw, ibm)
+                })
+            } else {
+                None
+            };
             for (pi, prim) in mesh.primitives().enumerate() {
                 if prim.mode() != gltf::mesh::Mode::Triangles {
                     continue;
@@ -386,13 +419,37 @@ impl Glb {
                 let Some(pos) = r.read_positions() else {
                     continue;
                 };
-                let positions: Vec<V3> = pos
-                    .map(|p| {
-                        let p = [p[0] as f64, p[1] as f64, p[2] as f64];
-                        match frame {
-                            Frame::World => geom::apply(&worlds[ni], p),
-                            Frame::SkinBind => p,
+                let raw_pos: Vec<V3> = pos.map(|p| [p[0] as f64, p[1] as f64, p[2] as f64]).collect();
+                let mut sets = vec![];
+                if skin_mats.is_some() {
+                    for set in 0..4 {
+                        match (r.read_joints(set), r.read_weights(set)) {
+                            (Some(j), Some(w)) => sets.push((
+                                j.into_u16().collect::<Vec<_>>(),
+                                w.into_f32().collect::<Vec<_>>(),
+                            )),
+                            _ => break,
                         }
+                    }
+                }
+                let positions: Vec<V3> = raw_pos
+                    .iter()
+                    .enumerate()
+                    .map(|(vi, &p)| match frame {
+                        Frame::World => geom::apply(&worlds[ni], p),
+                        Frame::SkinBind => p,
+                        Frame::Rest => skin_mats
+                            .as_ref()
+                            .and_then(|(jw, ibm)| {
+                                let inf: Vec<(usize, f64)> = sets
+                                    .iter()
+                                    .flat_map(|(js, ws)| {
+                                        (0..4).map(move |k| (js[vi][k] as usize, ws[vi][k] as f64))
+                                    })
+                                    .collect();
+                                skin_rest(p, &inf, jw, ibm)
+                            })
+                            .unwrap_or_else(|| geom::apply(&worlds[ni], p)),
                     })
                     .collect();
                 let idx: Vec<u32> = match r.read_indices() {

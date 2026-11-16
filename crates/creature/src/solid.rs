@@ -78,6 +78,7 @@ impl Solid {
         }
         Some(self.idx(o))
     }
+    #[allow(dead_code)]
     pub fn is_inside(&self, p: V3) -> bool {
         (0..3).all(|a| {
             p[a] >= self.origin[a] && p[a] < self.origin[a] + self.dims[a] as f64 * self.cell

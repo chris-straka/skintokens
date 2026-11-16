@@ -17,6 +17,12 @@ use crate::skeleton::{seg_dist, Bone, Skeleton};
 /// A rig's joints as bones in world space: names, parents, heads, tails.
 /// A bone runs to the child that carries its chain on (the one farthest
 /// along the way it came), a leaf 0.6 of its parent's length further.
+///
+/// Joints that hold no skin and carry no joint that does are left out:
+/// they are the end markers an exporter writes past a foot or a head
+/// (`*_end`), not bones that move anything. Ancestor container joints that
+/// hold no skin themselves (`root`, `_rootJoint`) stay in the hierarchy
+/// with `deforms = false` so they are not judged as body segments.
 pub fn read_rig(g: &Glb) -> anyhow::Result<Vec<Bone>> {
     let joints: Vec<usize> = g.json["skins"][0]["joints"]
         .as_array()
@@ -131,7 +137,22 @@ pub fn read_rig(g: &Glb) -> anyhow::Result<Vec<Bone>> {
         };
         tail[j] = geom::add(head[j], geom::scale(dir, l));
     }
-    Ok((0..n)
+    let mut mass = vec![0.0f64; n];
+    if let Ok(parts) = g.parts(skintokens::glb::Frame::SkinBind) {
+        for p in &parts {
+            if let (Some(js), Some(ws)) = (&p.joints, &p.weights) {
+                for (j, w) in js.iter().zip(ws.iter()) {
+                    for k in 0..4 {
+                        let s = j[k] as usize;
+                        if s < n {
+                            mass[s] += w[k] as f64;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let bones: Vec<Bone> = (0..n)
         .map(|j| Bone {
             name: g.nodes()[joints[j]]["name"]
                 .as_str()
@@ -145,8 +166,65 @@ pub fn read_rig(g: &Glb) -> anyhow::Result<Vec<Bone>> {
             index: 0,
             inside: false,
             radius: 0.0,
+            deforms: mass[j] > 1e-6 && g.nodes()[joints[j]]["name"].as_str() != Some("neutral_bone"),
+        })
+        .collect();
+    // keep a joint that holds skin, or carries one that does
+    let mut keep: Vec<bool> = mass.iter().map(|&m| m > 1e-6).collect();
+    loop {
+        let mut grew = false;
+        for j in 0..n {
+            if !keep[j] && (0..n).any(|k| keep[k] && parent[k] == Some(j)) {
+                keep[j] = true;
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    if keep.iter().all(|&k| k) {
+        return Ok(bones);
+    }
+    let remap: Vec<Option<usize>> = {
+        let mut m = vec![None; n];
+        let mut next = 0;
+        for j in 0..n {
+            if keep[j] {
+                m[j] = Some(next);
+                next += 1;
+            }
+        }
+        m
+    };
+    Ok(bones
+        .into_iter()
+        .enumerate()
+        .filter(|(j, _)| keep[*j])
+        .map(|(_j, mut b)| {
+            let mut p = b.parent;
+            while let Some(x) = p {
+                if keep[x] {
+                    break;
+                }
+                p = parent[x];
+            }
+            b.parent = p.and_then(|x| remap[x]);
+            b
         })
         .collect())
+}
+
+/// The point of segment `ab` nearest to `p`.
+fn seg_point(p: V3, a: V3, b: V3) -> V3 {
+    let ab = geom::sub(b, a);
+    let l2 = geom::dot(ab, ab);
+    let t = if l2 > 0.0 {
+        (geom::dot(geom::sub(p, a), ab) / l2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    geom::add(a, geom::scale(ab, t))
 }
 
 /// Distance from `p` to a polyline and the arc length of the nearest point.
@@ -234,6 +312,25 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
         let mut votes = vec![0usize; an.limbs.len() + 1];
         let mut arc = vec![0.0f64; an.limbs.len() + 1];
         for &p in &pts {
+            // The part of the body this point of the bone sits in decides
+            // first: a wing's bones run along its front edge, far from the
+            // membrane's centre line, while still sitting inside the wing.
+            let owner = body
+                .solid
+                .nearest_inside(p, 1)
+                .map(|c| body.part_of[c])
+                .filter(|&pt| pt != u32::MAX)
+                .map(|pt| an.limb_of_part[pt as usize]);
+            if let Some(owner) = owner {
+                let w = owner.map(|l| l + 1).unwrap_or(0);
+                let s = match owner {
+                    Some(l) => line_dist(p, &an.limbs[l].line).1,
+                    None => line_dist(p, &an.spine).1,
+                };
+                votes[w] += 1;
+                arc[w] += s;
+                continue;
+            }
             let mut best: Option<(f64, usize, f64)> = None;
             // the nearest line among those the point is within reach of
             // (nearest in plain distance: a bone on a thin limb's own centre
@@ -287,42 +384,148 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
 
     let mut findings: Vec<Value> = vec![];
     // --- every limb has a chain
-    let covered = |line: &[V3], radius: &[f64], from: f64, to: f64, ids: &[usize]| -> f64 {
-        let n = 24;
-        let mut hit = 0;
-        for k in 0..n {
-            let s = from + (to - from) * (k as f64 + 0.5) / n as f64;
-            let (p, r) = roles::at(line, radius, s);
-            if ids
-                .iter()
-                .any(|&b| seg_dist(p, bones[b].head, bones[b].tail) <= reach(r))
-            {
-                hit += 1;
+    let covered =
+        |line: &[V3], radius: &[f64], from: f64, to: f64, ids: &[usize], limb: Option<usize>| -> f64 {
+            let owner_of = |q: V3| {
+                body.solid
+                    .nearest_inside(q, 1)
+                    .map(|c| body.part_of[c])
+                    .filter(|&pt| pt != u32::MAX)
+                    .and_then(|pt| an.limb_of_part[pt as usize])
+            };
+            let n = 24;
+            let mut hit = 0;
+            for k in 0..n {
+                let s = from + (to - from) * (k as f64 + 0.5) / n as f64;
+                let (p, r) = roles::at(line, radius, s);
+                let near = ids
+                    .iter()
+                    .any(|&b| seg_dist(p, bones[b].head, bones[b].tail) <= reach(r));
+                let through = !near
+                    && limb.is_some_and(|li| {
+                        owner_of(p) == Some(li)
+                            && ids.iter().any(|&b| {
+                                let q = seg_point(p, bones[b].head, bones[b].tail);
+                                owner_of(q) == Some(li)
+                                    && (line_dist(q, line).1 - s).abs() <= 0.3 * to
+                            })
+                    });
+                if near || through {
+                    hit += 1;
+                }
             }
+            hit as f64 / n as f64
+        };
+    let continues = |li: usize, lj: usize| -> bool {
+        if li == lj || an.limbs[lj].parts.is_empty() {
+            return false;
         }
-        hit as f64 / n as f64
+        let mut p = body.parts[an.limbs[lj].parts[0]].parent;
+        while let Some(x) = p {
+            if an.limbs[li].parts.contains(&x) {
+                return true;
+            }
+            p = body.parts[x].parent;
+        }
+        false
     };
+    let inside_cells = body.solid.inside.iter().filter(|&&b| b).count().max(1);
     let mut limb_scores = vec![];
     let mut limb_rows = vec![];
     for (li, l) in an.limbs.iter().enumerate() {
-        let ids: Vec<usize> = (0..nb).filter(|&b| bones[b].limb == Some(li)).collect();
+        let ids: Vec<usize> = (0..nb)
+            .filter(|&b| bones[b].limb == Some(li) && bones[b].deforms)
+            .collect();
         // bones are asked for where the limb is out of the body; what a
         // rig has inside it (a shoulder blade, a thigh in the haunch) counts
         // as the limb's but is not demanded
-        let cov = covered(&l.line, &l.radius, l.emerge, l.length, &ids);
-        let enough = ids.len() >= needed(l.role);
+        let cov = covered(&l.line, &l.radius, l.emerge, l.length, &ids, Some(li));
+        let mut chain: Vec<usize> = ids.clone();
+        for &b in &ids {
+            let mut p = bones[b].parent;
+            // An IK foot hung directly under the trajectory root meets its
+            // shin's tail at the ankle rather than through `parent`.
+            if p.is_some_and(|r| bones[r].parent.is_none() && !bones[r].deforms) {
+                if let Some(shin) = (0..nb)
+                    .filter(|&k| k != b && bones[k].deforms && bones[k].limb.is_none())
+                    .min_by(|&a, &c| {
+                        geom::norm(geom::sub(bones[a].tail, bones[b].head))
+                            .partial_cmp(&geom::norm(geom::sub(bones[c].tail, bones[b].head)))
+                            .unwrap()
+                    })
+                    .filter(|&k| geom::norm(geom::sub(bones[k].tail, bones[b].head)) <= 0.05 * size)
+                {
+                    p = Some(shin);
+                }
+            }
+            let mut up = 0;
+            while let Some(x) = p {
+                if bones[x].parent.is_none() && !bones[x].deforms {
+                    break;
+                }
+                let (d, s) = line_dist(bones[x].head, &l.line);
+                let near = d <= reach(roles::at(&l.line, &l.radius, s).1).max(0.08 * size);
+                let (sd, ss) = line_dist(bones[x].head, &an.spine);
+                let off_spine = sd > reach(roles::at(&an.spine, &an.spine_radius, ss).1)
+                    || (l.side != Side::Centre && bones[x].head[0].abs() > roles::stance_off(body));
+                if bones[x].limb.is_none() && (near || off_spine) && up < 2 {
+                    if !chain.contains(&x) {
+                        chain.push(x);
+                    }
+                    up += 1;
+                    p = bones[x].parent;
+                } else {
+                    break;
+                }
+            }
+        }
+        for lj in 0..an.limbs.len() {
+            if continues(li, lj) {
+                for b in (0..nb).filter(|&b| bones[b].limb == Some(lj) && bones[b].deforms) {
+                    if !chain.contains(&b) {
+                        chain.push(b);
+                    }
+                }
+            }
+        }
+        let enough = chain.len() >= needed(l.role);
         let s = (cov / 0.8).min(1.0) * if enough { 1.0 } else { 0.5 };
-        let weight = if l.role == Role::Extra { 0.3 } else { 1.0 };
+        let cells: usize = l.parts.iter().map(|&p| body.parts[p].cells).sum();
+        let share = (cells as f64 / inside_cells as f64 * 1e4).round() / 1e4;
+        // A tiny, short non-leg nub (< 1.5% of the body and < 20% of body
+        // size outside the trunk: a pug's curled tail, a wyvern's folded
+        // fore-claws) may legitimately ride on its parent bone. Weight is
+        // fixed per limb (never conditioned on ids.is_empty()) so adding a
+        // bone along any limb always raises or keeps the score.
+        let max_minor_len = if l.role == Role::Tail { 0.20 } else { 0.30 };
+        let minor = l.role != Role::Leg
+            && share < 0.015
+            && (l.length - l.emerge) < max_minor_len * size;
+        let weight = if minor {
+            0.05
+        } else {
+            match l.role {
+                Role::Extra => 0.15,
+                Role::Tail => 0.5,
+                _ => 1.0,
+            }
+        };
         limb_scores.push((s, weight));
         limb_rows.push(
-            json!({"limb": l.name, "bones": ids.len(), "covered": (cov * 100.0).round() / 100.0}),
+            json!({"limb": l.name, "bones": ids.len(), "covered": (cov * 100.0).round() / 100.0, "body_share": share}),
         );
         if cov < 0.5 || ids.is_empty() {
-            findings.push(json!({"code": "S_NO_CHAIN", "severity": if l.role == Role::Extra { "warn" } else { "fail" }, "part": l.name,
+            let sev = if l.role == Role::Extra || minor {
+                "warn"
+            } else {
+                "fail"
+            };
+            findings.push(json!({"code": "S_NO_CHAIN", "severity": sev, "part": l.name,
                 "detail": format!("bones run along {:.0}% of it", cov * 100.0)}));
         } else if !enough {
-            findings.push(json!({"code": "S_SHORT_CHAIN", "severity": "fail", "part": l.name,
-                "detail": format!("{} bone(s) where it needs {} to bend", ids.len(), needed(l.role))}));
+            let sev = if minor { "warn" } else { "fail" };
+            findings.push(json!({"code": "S_SHORT_CHAIN", "severity": sev, "part": l.name,
+                "detail": format!("{} bone(s) where it needs {} to bend", chain.len(), needed(l.role))}));
         }
     }
     let wsum: f64 = limb_scores.iter().map(|x| x.1).sum();
@@ -337,14 +540,16 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
         0.0,
         roles::length(&an.spine),
         &trunk,
+        None,
     );
     if spine_cov < 0.5 {
         findings.push(json!({"code": "S_NO_CHAIN", "severity": "fail", "part": "spine", "detail": format!("bones run along {:.0}% of it", spine_cov * 100.0)}));
     }
-    // --- bones lie inside the body
+    // --- bones lie inside the body (deforming bones only; trajectory root containers sit on the ground)
     let mut inside_all = (0usize, 0usize);
     let mut outside_bones = vec![];
-    for b in &bones {
+    let deforming_nb = bones.iter().filter(|b| b.deforms).count().max(1);
+    for b in bones.iter().filter(|b| b.deforms) {
         let mut inn = 0;
         for k in 0..SAMPLES {
             let p = geom::add(
@@ -361,10 +566,14 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
             outside_bones.push(b.name.clone());
         }
     }
-    let inside = inside_all.0 as f64 / inside_all.1.max(1) as f64;
+    let inside = if inside_all.1 > 0 {
+        inside_all.0 as f64 / inside_all.1 as f64
+    } else {
+        1.0
+    };
     if !outside_bones.is_empty() {
-        findings.push(json!({"code": "S_OUTSIDE", "severity": if outside_bones.len() * 10 > nb { "fail" } else { "warn" }, "part": "*",
-            "detail": format!("{} of {} bones run outside the body: {}", outside_bones.len(), nb, outside_bones.iter().take(6).cloned().collect::<Vec<_>>().join(", "))}));
+        findings.push(json!({"code": "S_OUTSIDE", "severity": if outside_bones.len() * 10 > deforming_nb { "fail" } else { "warn" }, "part": "*",
+            "detail": format!("{} of {} bones run outside the body: {}", outside_bones.len(), deforming_nb, outside_bones.iter().take(6).cloned().collect::<Vec<_>>().join(", "))}));
     }
     // --- a left and its right match
     let stem = |n: &str| n.trim_end_matches(".L").trim_end_matches(".R").to_string();
@@ -378,12 +587,19 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
                 && a.role != Role::Extra
             {
                 let (na, nb_) = (
-                    (0..nb).filter(|&x| bones[x].limb == Some(i)).count(),
-                    (0..nb).filter(|&x| bones[x].limb == Some(j)).count(),
+                    (0..nb)
+                        .filter(|&x| bones[x].limb == Some(i) && bones[x].deforms)
+                        .count(),
+                    (0..nb)
+                        .filter(|&x| bones[x].limb == Some(j) && bones[x].deforms)
+                        .count(),
                 );
                 pairs.1 += 1;
-                if na == nb_ {
+                if na.abs_diff(nb_) <= 1 {
                     pairs.0 += 1;
+                    if na != nb_ {
+                        findings.push(json!({"code": "S_LOPSIDED", "severity": "warn", "part": stem(&a.name), "detail": format!("{na} bones on one side, {nb_} on the other")}));
+                    }
                 } else {
                     findings.push(json!({"code": "S_LOPSIDED", "severity": "fail", "part": stem(&a.name), "detail": format!("{na} bones on one side, {nb_} on the other")}));
                 }
@@ -396,7 +612,7 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
         1.0
     };
     let stray = (0..nb)
-        .filter(|&b| !bones[b].trunk && bones[b].limb.is_none())
+        .filter(|&b| bones[b].deforms && !bones[b].trunk && bones[b].limb.is_none())
         .count();
     let score = 100.0
         * (0.55 * limbs + 0.15 * (spine_cov / 0.8).min(1.0) + 0.15 * inside + 0.15 * symmetry);

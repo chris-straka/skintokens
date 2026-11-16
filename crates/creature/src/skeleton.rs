@@ -28,6 +28,8 @@ pub struct Bone {
     pub inside: bool,
     /// Thickness of the body at the head (inscribed radius).
     pub radius: f64,
+    /// Holds skin itself (false for trajectory root containers that only parent joints).
+    pub deforms: bool,
 }
 
 pub struct Skeleton {
@@ -277,6 +279,7 @@ impl Skeleton {
         sk
     }
 
+    #[allow(dead_code)]
     pub fn fit(body: &Body, an: &Anatomy) -> Skeleton {
         Self::fit_with(body, an, None)
     }
@@ -308,6 +311,7 @@ impl Skeleton {
                 index: k,
                 inside: false,
                 radius: thick(head),
+                deforms: true,
             });
         }
         // --- limbs: joint fractions, the same on a left and its right
@@ -443,6 +447,7 @@ impl Skeleton {
                     index: k,
                     inside: fk < -1e-9,
                     radius: thick(head),
+                    deforms: true,
                 });
                 prev = bones.len() - 1;
             }
@@ -456,6 +461,7 @@ impl Skeleton {
         Skeleton { bones }
     }
 
+    #[allow(dead_code)]
     pub fn children(&self, b: usize) -> Vec<usize> {
         (0..self.bones.len())
             .filter(|&i| self.bones[i].parent == Some(b))

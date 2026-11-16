@@ -117,6 +117,7 @@ pub struct Anatomy {
     pub upright: bool,
     pub limbs: Vec<Limb>,
     /// Parts that are the body itself.
+    #[allow(dead_code)]
     pub trunk: Vec<usize>,
     /// The spine: from the hips (or the lowest or rearmost point of a
     /// legless body) to where the neck starts (or the top or front).
@@ -161,6 +162,28 @@ struct Tree<'a> {
     total: usize,
 }
 
+/// Midline margin in X for telling a left or right limb from the centre line.
+/// Uses the lower 40% of the body's height (capped at half the longest side)
+/// so spread wings high up do not widen the midline and swallow narrow legs.
+pub fn stance_off(body: &Body) -> f64 {
+    let height = body.hi[1] - body.lo[1];
+    let y_cap = body.lo[1] + 0.40 * height;
+    let (mut xlo, mut xhi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for (i, &ins) in body.solid.inside.iter().enumerate() {
+        if ins {
+            let p = body.solid.center(i);
+            if p[1] <= y_cap {
+                xlo = xlo.min(p[0]);
+                xhi = xhi.max(p[0]);
+            }
+        }
+    }
+    let full_w = body.hi[0] - body.lo[0];
+    let low_w = if xhi > xlo { xhi - xlo } else { full_w };
+    let stance_w = low_w.min(0.5 * body.size);
+    (0.015 * body.size).max(0.06 * stance_w)
+}
+
 impl Tree<'_> {
     fn major(&self, p: usize) -> bool {
         let height = self.body.hi[1] - self.body.lo[1];
@@ -170,7 +193,7 @@ impl Tree<'_> {
             && self.reach[p] >= STANDING_LENGTH * height
             && self.volume[p] as f64 >= STANDING_VOLUME * self.total as f64
             // off the midline: a hem or a tail on the ground is not a leg
-            && self.body.parts[p].tip()[0].abs() > (0.015 * self.body.size).max(0.06 * (self.body.hi[0] - self.body.lo[0]));
+            && self.body.parts[p].tip()[0].abs() > stance_off(self.body);
         long || stands
     }
 }
@@ -321,8 +344,8 @@ impl Anatomy {
         };
         // which side a limb is on: where its line runs once it has left the
         // body, against a margin that a narrow animal's legs still clear
-        let width = body.hi[0] - body.lo[0];
-        let off = (0.015 * size).max(0.06 * width);
+        // even under wide wings
+        let off = stance_off(body);
         for l in limbs.iter_mut() {
             let own: Vec<f64> = l.line.iter().skip(1).map(|p| p[0]).collect();
             let x = if own.is_empty() {
