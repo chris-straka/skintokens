@@ -348,6 +348,11 @@ On the twelve benchmark animals, the old creature score (`bend * skeleton
 - Agreement with ground-truth `creature-bench score` across the 12
   animals: **12 of 12** (leave-one-out **12 of 12**, vs **5 of 12** for
   the old score).
+- Not yet a held-out result (note, 2026-11-18): the 12 of 12 was measured
+  on the same 12 animals the picker's constants and branch order were
+  tuned on; the leave-one-out refits only `tear_override_pct`. No animal
+  outside the 12 has been tried, and a picker that always answers
+  `predicted` was not scored beside it.
 - Blind same-frame walk pairs at the game camera (`tools/creature_blind.py`
   + `tools/bench/render_gamecam.py`, `seed 20261117`, key outside the
   judged folder): an independent blind judge passed the identical
