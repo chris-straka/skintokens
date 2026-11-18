@@ -117,15 +117,12 @@ def main():
     repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     cr = find("creature-rig", a.creature_rig, "CREATURE_RIG_BIN", [
         os.path.join(repo, "target/release/creature-rig"),
-        os.path.join(home, "rigwork/creatures/bin/creature-rig"),
     ])
     wf = find("weights", a.weights, "WEIGHTS_BIN", [
-        os.path.join(os.path.dirname(repo), "weightforge/rust/target/release/weights"),
-        os.path.join(home, "rigwork/creatures/bin/weights"),
+        os.path.join(os.path.dirname(repo), "meshweights/rust/target/release/weights"),
     ])
     cb = find("creature-bench", a.creature_bench, "CREATURE_BENCH_BIN", [
         os.path.join(repo, "target/release/creature-bench"),
-        os.path.join(home, "rigwork/bench/bin/creature-bench"),
     ])
 
     work = a.work or os.path.join(a.bench, "calibration")

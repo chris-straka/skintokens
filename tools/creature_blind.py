@@ -629,9 +629,9 @@ def cmd_bench(a):
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sib = os.path.dirname(repo)
     blender = find_bin("blender", a.blender, "BLENDER", ["/Applications/Blender.app/Contents/MacOS/Blender", os.path.join(home, ".local/bin/blender")])
-    cb = find_bin("creature-bench", a.creature_bench, "CREATURE_BENCH_BIN", [os.path.join(repo, "target/release/creature-bench"), os.path.join(home, "rigwork/bench/bin/creature-bench")])
-    cr = find_bin("creature-rig", a.creature_rig, "CREATURE_RIG_BIN", [os.path.join(repo, "target/release/creature-rig"), os.path.join(home, "rigwork/creatures/bin/creature-rig")])
-    wf = find_bin("weights", a.weights, "WEIGHTS_BIN", [os.path.join(sib, "weightforge/rust/target/release/weights"), os.path.join(home, "rigwork/creatures/bin/weights")])
+    cb = find_bin("creature-bench", a.creature_bench, "CREATURE_BENCH_BIN", [os.path.join(repo, "target/release/creature-bench")])
+    cr = find_bin("creature-rig", a.creature_rig, "CREATURE_RIG_BIN", [os.path.join(repo, "target/release/creature-rig")])
+    wf = find_bin("weights", a.weights, "WEIGHTS_BIN", [os.path.join(sib, "meshweights/rust/target/release/weights")])
     script = os.path.join(repo, "tools/bench/render_gamecam.py")
 
     animals = [x.strip() for x in a.animals.split(",") if x.strip()]
@@ -776,9 +776,9 @@ def cmd_make(a):
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sib = os.path.dirname(repo)
     blender = find_bin("blender", a.blender, "BLENDER", ["/Applications/Blender.app/Contents/MacOS/Blender", os.path.join(home, ".local/bin/blender")])
-    cb = find_bin("creature-bench", a.creature_bench, "CREATURE_BENCH_BIN", [os.path.join(repo, "target/release/creature-bench"), os.path.join(home, "rigwork/bench/bin/creature-bench")])
-    cr = find_bin("creature-rig", a.creature_rig, "CREATURE_RIG_BIN", [os.path.join(repo, "target/release/creature-rig"), os.path.join(home, "rigwork/creatures/bin/creature-rig")])
-    wf = find_bin("weights", a.weights, "WEIGHTS_BIN", [os.path.join(sib, "weightforge/rust/target/release/weights"), os.path.join(home, "rigwork/creatures/bin/weights")])
+    cb = find_bin("creature-bench", a.creature_bench, "CREATURE_BENCH_BIN", [os.path.join(repo, "target/release/creature-bench")])
+    cr = find_bin("creature-rig", a.creature_rig, "CREATURE_RIG_BIN", [os.path.join(repo, "target/release/creature-rig")])
+    wf = find_bin("weights", a.weights, "WEIGHTS_BIN", [os.path.join(sib, "meshweights/rust/target/release/weights")])
     script = os.path.join(repo, "tools/bench/render_gamecam.py")
 
     work = tempfile.mkdtemp(prefix="creature_blind_make_")
