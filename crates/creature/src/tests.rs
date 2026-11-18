@@ -286,10 +286,7 @@ fn skin_rest_reads_a_vertex_through_its_joint() {
     let world = geom::from_trs([1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0], [6.0, 6.0, 6.0]);
     let near = |a: Option<V3>, b: [f64; 3]| {
         let a = a.unwrap();
-        assert!(
-            (0..3).all(|i| (a[i] - b[i]).abs() < 1e-9),
-            "{a:?} vs {b:?}"
-        );
+        assert!((0..3).all(|i| (a[i] - b[i]).abs() < 1e-9), "{a:?} vs {b:?}");
     };
     near(
         skin_rest([0.1, 0.2, 0.3], &[(0, 1.0)], &[world], &[geom::IDENTITY]),
@@ -347,5 +344,10 @@ fn spread_wings_do_not_swallow_narrow_legs() {
     let an = Anatomy::read(&body);
     assert_eq!(an.kind, Kind::Winged);
     let legs = an.limbs.iter().filter(|l| l.role == Role::Leg).count();
-    assert_eq!(legs, 2, "{:?}", an.limbs.iter().map(|l| &l.name).collect::<Vec<_>>());
+    assert_eq!(
+        legs,
+        2,
+        "{:?}",
+        an.limbs.iter().map(|l| &l.name).collect::<Vec<_>>()
+    );
 }

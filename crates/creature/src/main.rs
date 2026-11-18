@@ -265,8 +265,7 @@ fn cmd_check(a: &Args) -> Result<bool> {
             }
         }
         if total > 0 {
-            v.report["blended_share"] =
-                json!((blended as f64 / total as f64 * 1e4).round() / 1e4);
+            v.report["blended_share"] = json!((blended as f64 / total as f64 * 1e4).round() / 1e4);
         }
     }
     if let Some(p) = a.flags.get("json") {
@@ -406,7 +405,12 @@ fn feet_on_the_ground(verts: &[V3]) -> usize {
         lxlo = lxlo.min(p[0]);
         lxhi = lxhi.max(p[0]);
     }
-    let stance_w = (if lxhi > lxlo { lxhi - lxlo } else { hi[0] - lo[0] }).min(0.5 * size);
+    let stance_w = (if lxhi > lxlo {
+        lxhi - lxlo
+    } else {
+        hi[0] - lo[0]
+    })
+    .min(0.5 * size);
     let off = (0.015 * size).max(0.06 * stance_w);
     let low: Vec<V3> = verts
         .iter()

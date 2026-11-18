@@ -64,7 +64,11 @@ pub fn check(rig: &Rig) -> Value {
     xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let x0 = xs[xs.len() / 2];
     let (mut lxlo, mut lxhi) = (f64::INFINITY, f64::NEG_INFINITY);
-    for p in rig.rest_pos.iter().filter(|p| p[1] - lo[1] <= 0.40 * size[1]) {
+    for p in rig
+        .rest_pos
+        .iter()
+        .filter(|p| p[1] - lo[1] <= 0.40 * size[1])
+    {
         lxlo = lxlo.min(p[0]);
         lxhi = lxhi.max(p[0]);
     }
@@ -455,7 +459,8 @@ pub fn check(rig: &Rig) -> Value {
         let xs: Vec<f64> = vs.iter().map(|&v| rig.rest_pos[v][0] - x0).collect();
         let mid = xs.iter().sum::<f64>() / xs.len() as f64;
         let touches_seam = xs.iter().any(|x| x.abs() <= mid_seam);
-        let one_side = xs.iter().all(|x| *x > -foot_tol / 2.0) || xs.iter().all(|x| *x < foot_tol / 2.0);
+        let one_side =
+            xs.iter().all(|x| *x > -foot_tol / 2.0) || xs.iter().all(|x| *x < foot_tol / 2.0);
         if touches_seam || !one_side || mid.abs() <= foot_tol {
             continue;
         }

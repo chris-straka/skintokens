@@ -581,7 +581,10 @@ pub fn skeleton(truth: &Truth, route: &Rig, map: &Mapping) -> Value {
     let mut eligible = vec![true; rpos.len()];
     let mut oversegmented_bones = 0usize;
     for c in &chains {
-        let mut cf: Vec<usize> = c.iter().flat_map(|&a| followers[a].iter().copied()).collect();
+        let mut cf: Vec<usize> = c
+            .iter()
+            .flat_map(|&a| followers[a].iter().copied())
+            .collect();
         let cap = c.len() + 2;
         if cf.len() > cap {
             cf.sort_by(|&x, &y| {
@@ -1390,11 +1393,31 @@ mod tests {
             children: vec![vec![], vec![]],
             joint_order: vec![0, 1],
             inf: vec![
-                vec![Influence { joint: 0, w: 1.0, q: [0.0, 0.0, 0.0] }],
-                vec![Influence { joint: 0, w: 1.0, q: [0.1, 0.0, 0.0] }],
-                vec![Influence { joint: 0, w: 1.0, q: [0.0, 0.1, 0.0] }],
-                vec![Influence { joint: 1, w: 1.0, q: [0.0, 0.0, 0.0] }],
-                vec![Influence { joint: 1, w: 1.0, q: [0.1, 0.0, 0.0] }],
+                vec![Influence {
+                    joint: 0,
+                    w: 1.0,
+                    q: [0.0, 0.0, 0.0],
+                }],
+                vec![Influence {
+                    joint: 0,
+                    w: 1.0,
+                    q: [0.1, 0.0, 0.0],
+                }],
+                vec![Influence {
+                    joint: 0,
+                    w: 1.0,
+                    q: [0.0, 0.1, 0.0],
+                }],
+                vec![Influence {
+                    joint: 1,
+                    w: 1.0,
+                    q: [0.0, 0.0, 0.0],
+                }],
+                vec![Influence {
+                    joint: 1,
+                    w: 1.0,
+                    q: [0.1, 0.0, 0.0],
+                }],
             ],
             tris: vec![[0, 1, 2]],
             rest_pos: rest_pos.clone(),

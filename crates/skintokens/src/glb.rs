@@ -402,7 +402,9 @@ impl Glb {
                     let jw: Vec<M4> = s.joints().map(|j| worlds[j.index()]).collect();
                     let ibm: Vec<M4> = match s.reader(self.buffer()).read_inverse_bind_matrices() {
                         Some(m) => m
-                            .map(|x| std::array::from_fn(|c| std::array::from_fn(|r| x[c][r] as f64)))
+                            .map(|x| {
+                                std::array::from_fn(|c| std::array::from_fn(|r| x[c][r] as f64))
+                            })
                             .collect(),
                         None => vec![geom::IDENTITY; jw.len()],
                     };
@@ -419,7 +421,9 @@ impl Glb {
                 let Some(pos) = r.read_positions() else {
                     continue;
                 };
-                let raw_pos: Vec<V3> = pos.map(|p| [p[0] as f64, p[1] as f64, p[2] as f64]).collect();
+                let raw_pos: Vec<V3> = pos
+                    .map(|p| [p[0] as f64, p[1] as f64, p[2] as f64])
+                    .collect();
                 let mut sets = vec![];
                 if skin_mats.is_some() {
                     for set in 0..4 {

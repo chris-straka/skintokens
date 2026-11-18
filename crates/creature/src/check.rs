@@ -166,7 +166,8 @@ pub fn read_rig(g: &Glb) -> anyhow::Result<Vec<Bone>> {
             index: 0,
             inside: false,
             radius: 0.0,
-            deforms: mass[j] > 1e-6 && g.nodes()[joints[j]]["name"].as_str() != Some("neutral_bone"),
+            deforms: mass[j] > 1e-6
+                && g.nodes()[joints[j]]["name"].as_str() != Some("neutral_bone"),
         })
         .collect();
     // keep a joint that holds skin, or carries one that does
@@ -384,38 +385,42 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
 
     let mut findings: Vec<Value> = vec![];
     // --- every limb has a chain
-    let covered =
-        |line: &[V3], radius: &[f64], from: f64, to: f64, ids: &[usize], limb: Option<usize>| -> f64 {
-            let owner_of = |q: V3| {
-                body.solid
-                    .nearest_inside(q, 1)
-                    .map(|c| body.part_of[c])
-                    .filter(|&pt| pt != u32::MAX)
-                    .and_then(|pt| an.limb_of_part[pt as usize])
-            };
-            let n = 24;
-            let mut hit = 0;
-            for k in 0..n {
-                let s = from + (to - from) * (k as f64 + 0.5) / n as f64;
-                let (p, r) = roles::at(line, radius, s);
-                let near = ids
-                    .iter()
-                    .any(|&b| seg_dist(p, bones[b].head, bones[b].tail) <= reach(r));
-                let through = !near
-                    && limb.is_some_and(|li| {
-                        owner_of(p) == Some(li)
-                            && ids.iter().any(|&b| {
-                                let q = seg_point(p, bones[b].head, bones[b].tail);
-                                owner_of(q) == Some(li)
-                                    && (line_dist(q, line).1 - s).abs() <= 0.3 * to
-                            })
-                    });
-                if near || through {
-                    hit += 1;
-                }
-            }
-            hit as f64 / n as f64
+    let covered = |line: &[V3],
+                   radius: &[f64],
+                   from: f64,
+                   to: f64,
+                   ids: &[usize],
+                   limb: Option<usize>|
+     -> f64 {
+        let owner_of = |q: V3| {
+            body.solid
+                .nearest_inside(q, 1)
+                .map(|c| body.part_of[c])
+                .filter(|&pt| pt != u32::MAX)
+                .and_then(|pt| an.limb_of_part[pt as usize])
         };
+        let n = 24;
+        let mut hit = 0;
+        for k in 0..n {
+            let s = from + (to - from) * (k as f64 + 0.5) / n as f64;
+            let (p, r) = roles::at(line, radius, s);
+            let near = ids
+                .iter()
+                .any(|&b| seg_dist(p, bones[b].head, bones[b].tail) <= reach(r));
+            let through = !near
+                && limb.is_some_and(|li| {
+                    owner_of(p) == Some(li)
+                        && ids.iter().any(|&b| {
+                            let q = seg_point(p, bones[b].head, bones[b].tail);
+                            owner_of(q) == Some(li) && (line_dist(q, line).1 - s).abs() <= 0.3 * to
+                        })
+                });
+            if near || through {
+                hit += 1;
+            }
+        }
+        hit as f64 / n as f64
+    };
     let continues = |li: usize, lj: usize| -> bool {
         if li == lj || an.limbs[lj].parts.is_empty() {
             return false;
@@ -498,9 +503,8 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
         // fixed per limb (never conditioned on ids.is_empty()) so adding a
         // bone along any limb always raises or keeps the score.
         let max_minor_len = if l.role == Role::Tail { 0.20 } else { 0.30 };
-        let minor = l.role != Role::Leg
-            && share < 0.015
-            && (l.length - l.emerge) < max_minor_len * size;
+        let minor =
+            l.role != Role::Leg && share < 0.015 && (l.length - l.emerge) < max_minor_len * size;
         let weight = if minor {
             0.05
         } else {
@@ -520,8 +524,10 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
             } else {
                 "fail"
             };
-            findings.push(json!({"code": "S_NO_CHAIN", "severity": sev, "part": l.name,
-                "detail": format!("bones run along {:.0}% of it", cov * 100.0)}));
+            findings.push(
+                json!({"code": "S_NO_CHAIN", "severity": sev, "part": l.name,
+                "detail": format!("bones run along {:.0}% of it", cov * 100.0)}),
+            );
         } else if !enough {
             let sev = if minor { "warn" } else { "fail" };
             findings.push(json!({"code": "S_SHORT_CHAIN", "severity": sev, "part": l.name,
