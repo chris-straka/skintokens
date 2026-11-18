@@ -5,12 +5,12 @@ Auto-rigging for the game character pipeline with SkinTokens / TokenRig
 to UniRig. A mesh goes in; a skeleton and skin weights come out, as GLB.
 It is:
 
-- weightforge's **ML candidate** (`weights fix --skintokens` runs
+- meshweights' **ML candidate** (`weights fix --skintokens` runs
   `skintokens skin`; scored like every other candidate, never trusted
   blindly),
 - rigforge's **joint-hint source** (`skintokens joints` writes
   `skintokens-joints/1`, the unirig-joints/1 schema under a new name), and
-- genforge's default **rig stage** (`skintokens rig`).
+- assetgen's default **rig stage** (`skintokens rig`).
 
 Rust (candle; Metal on Apple Silicon, CUDA on an NVIDIA card with the `cuda`
 feature, CPU elsewhere), no Python at runtime: the official checkpoint is read directly and GLBs are read and
@@ -54,10 +54,10 @@ and the FSQ-CVAE skin decoder.
   already rigged input is re-rigged (its skin and animations dropped).
 - **skin**: keeps IN's skeleton and rewrites only its JOINTS_0/WEIGHTS_0
   bytes in place (TokenRig's skin-only mode on the given bones). This is
-  the weightforge candidate. Twist/helper bones (motionforge's
+  the meshweights candidate. Twist/helper bones (motionforge's
   `DEF-*_twist.*`, marked by `extras.helper_bone`) share their driver's
   joint, so the model would see two joints in one place; `skin` runs the
-  model without them and gives them zero weight; weightforge's fix
+  model without them and gives them zero weight; meshweights' fix
   weights them.
 - **joints**: rigforge hints from any rigged GLB (no model run).
 - **--transfer**: how the weights the model predicts on 54,000 surface
@@ -70,10 +70,10 @@ and the FSQ-CVAE skin decoder.
   humans the choice barely matters (docs/evaluation.md, "Weights along
   the surface"); `facing` scores worse and stays only for comparison.
 
-`R.json` is genforge's adapter contract: `{"ok", "outputs" (relative to
+`R.json` is assetgen's adapter contract: `{"ok", "outputs" (relative to
 R.json's folder), "tool": "skintokens", "version", "stage", "<stage>":
 {...}, "reason"?}`; exit 0 ok, 1 ran and failed (report written), 2 usage
-or setup error (no report). Inputs are never modified. A genforge
+or setup error (no report). Inputs are never modified. An assetgen
 `local-tools.json` entry looks like:
 
     "rig": ["skintokens", "rig", "{input}", "{out}", "--report", "{report}", "--class", "{class}"]
@@ -83,7 +83,7 @@ One inference runs at a time per machine (a file lock in
 per `skin` on a 13.6k-vert hero mesh, ~3.7 GB peak; the Python wrapper took
 ~48 s and ~35 s. Same `--seed`, same machine, same output (the Python
 wrapper was not reproducible); different seeds vary like the original
-(raw weightforge 48.9-51.5 on that hero over four seeds).
+(raw meshweights 48.9-51.5 on that hero over four seeds).
 
 **CUDA.** `cargo build --release --no-default-features --features cuda`
 needs a CUDA toolkit at build time (`nvcc`; `CUDA_ROOT` names it) and its
@@ -136,7 +136,7 @@ the body itself:
   the same joints left and right, bones named `DEF-<part>.<nnn>.<side>`;
   weights from each bone's distance through the solid, shared across a
   joint over a band `--blend` body thicknesses wide; the body's range of
-  motion as a weightforge pose set (`--rom`). A body the clean step left
+  motion as a meshweights pose set (`--rom`). A body the clean step left
   facing -Z (read from its toes) is turned to face +Z.
 - **check**: the skeleton check for any rig of a creature, whoever made
   it: every leg, arm, tail, wing and the neck and head has a chain of
@@ -148,7 +148,7 @@ the body itself:
 `tools/creature_route.py MODEL.fbx OUT --name NAME` is the whole route
 (motionforge's `tripo_rig.py` calls it for a creature): clean,
 `creature-rig rig` at three band widths, walk and trot for a four-legged
-body, weightforge's fix choosing per region among those widths and the
+body, meshweights' fix choosing per region among those widths and the
 model's own weights for this skeleton (`skintokens skin`), then the bend
 gate, the skeleton check and rfcheck. It also makes the model's own rig
 (`skintokens rig`, three seeds), judges it the same way, and keeps it
@@ -232,6 +232,6 @@ are there too.
 - `fetch-weights.sh` - pinned checkpoint download.
 - `tools/joints_samples/` - a `skintokens-joints/1` sample rigforge's tests read.
 - `tools/transfer_bench.sh`, `tools/transfer_bench_summary.py` - the rig
-  route (rig, motionforge standardize, weightforge check/fix/check) over a
+  route (rig, motionforge standardize, meshweights check/fix/check) over a
   folder of meshes, one transfer at a time, and its table.
 - `docs/evaluation.md` - SkinTokens vs UniRig vs the game rig; Rust vs Python parity.
