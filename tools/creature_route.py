@@ -367,6 +367,35 @@ def main():
         "reason": choice["reason"],
     }
 
+    # 5c. A last fix on the kept rig, through the range of motion the skeleton
+    # check writes for it (the poses any later check of this file bends it
+    # through; the fix above used the rig's own set), kept only when it
+    # leaves fewer failing findings and the skeleton and anatomy checks
+    # still pass.
+    final_rom = base + ".final.rom.ron"
+    run([cr, "check", picked["glb"], "--json", base + ".final.skeleton.json", "--rom", final_rom])
+    if os.path.exists(final_rom) and not a.no_fix:
+        before = check(wf, picked["glb"], final_rom)
+        last = {"before": {"score": before["score"], "fails": before["fails"]}}
+        if not before["pass"]:
+            out2 = base + ".final.glb"
+            env = dict(os.environ)
+            r = run([wf, "fix", picked["glb"], "--out", out2, "--poses", final_rom] + shlex.split(a.fix_args),
+                    timeout=a.fix_timeout, env=env)
+            if os.path.exists(out2):
+                after = check(wf, out2, final_rom)
+                sk2 = skeleton_of(out2, base + ".final2.skeleton.json")
+                an2 = anatomy_of(out2, base + ".final2.anatomy.json")
+                an_ok = pick_score.anatomy_summary(an2)["pass"]
+                kept = (len(after["fails"]) < len(before["fails"]) and sk2["pass"] and an_ok)
+                last.update(after={"score": after["score"], "fails": after["fails"]}, kept=kept)
+                if kept:
+                    picked["glb"], picked["rom"] = out2, final_rom
+            else:
+                last["error"] = tail(r["err"] or r["out"])
+        t["last_fix"] = last
+        save()
+
     # 6. Contract.
     r = run([rf, "--json", "--class", a.klass, picked["glb"]])
     t["contract"] = r["code"] == 0
