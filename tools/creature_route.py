@@ -10,14 +10,17 @@ same inputs, same outputs, a different rig.
 
 Steps, each a tool of its own:
 
-1. `motionforge/tools/tripo_to_glb.py` (Blender): one mesh, facing
+1. motion's `tools/tripo_to_glb.py` (Blender): one mesh, facing
    forward, on the ground, cut to the class's triangle budget. (A GLB
    that is already clean can be given with `--clean-mesh`.)
 2. `creature-rig rig`: the body's parts read from its volume, a skeleton
    laid along them, weights through the body at three band widths, and
    the body's range of motion as a pose set.
-3. A four-legged creature gets its walk, trot and lunge
-   (`motionforge creature-profile`, `creature-gait`).
+3. Clips for every body plan: a four-legged body gets its walk, trot and
+   lunge (`motionforge creature-profile`, `creature-gait`) and an idle;
+   any other body (two-legged, winged, many-limbed, legless), or a
+   four-legged one the gait can't read, gets an idle and an attack from
+   `motionforge creature-clips`. The same for the model's own rig.
 4. `weights fix` (weightforge) chooses per region among the three band
    widths, the model's own weights for this skeleton (`skintokens skin`,
    unless `--no-ml`) and its own repairs; `weights check` is the gate.
@@ -89,6 +92,51 @@ def check(wf, glb, rom):
             "tears_pct": pick_score.tears_pct(d)}
 
 
+def make_clips(mf, rig, base, name, four_legged):
+    """Clips on `rig` for its body plan. Returns (GLB with clips or `rig`,
+    what was made). A four-legged body: `creature-gait` (walk, trot,
+    attack, only when the profile kept every joint) and an idle from
+    `creature-clips`; any other body, or one the gait can't read: an idle
+    and an attack from `creature-clips`, put on the rig's own joints."""
+    prof, clean_glb = base + ".creature.json", base + ".clean.glb"
+    info = {"by": [], "clips": []}
+    r = run([mf, "creature-profile", "--rig", rig, "--output", prof, "--clean-glb", clean_glb,
+             "--report", base + ".profile.json", "--name", name])
+    if r["code"] != 0:
+        info["error"] = "creature-profile: " + tail(r["err"] or r["out"])
+        return rig, info
+    kept = False
+    try:
+        with open(base + ".profile.json") as f:
+            p = json.load(f)
+        kept = p.get("joints_in") == p.get("joints_out")
+        info["joints"] = [p.get("joints_in"), p.get("joints_out")]
+    except (OSError, ValueError):
+        pass
+    src, more = rig, "idle,attack"
+    if four_legged and kept:
+        gait = base + ".gait.glb"
+        r = run([mf, "creature-gait", "--creature", prof, "--glb-in", clean_glb, "--glb-out", gait,
+                 "--rom", base + ".gait_rom.ron"])
+        if r["code"] == 0 and os.path.exists(gait):
+            src, more = gait, "idle"
+            info["by"].append("creature-gait")
+            info["clips"] += ["walk", "trot", "attack"]
+        else:
+            info["gait_error"] = tail(r["err"] or r["out"])
+    elif four_legged:
+        info["gait_error"] = "the profile changed the skeleton"
+    moving = base + ".moving.glb"
+    r = run([mf, "creature-clips", "--creature", prof, "--glb-in", src, "--glb-out", moving, "--clips", more])
+    if r["code"] == 0 and os.path.exists(moving):
+        info["by"].append("creature-clips")
+        info["clips"] += more.split(",")
+        info["body"] = [ln for ln in r["out"].splitlines() if ln.split(":")[0] in ("front", "back", "leg", "arm", "free to move")]
+        return moving, info
+    info["error"] = "creature-clips: " + tail(r["err"] or r["out"])
+    return src, info
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("model")
@@ -113,20 +161,14 @@ def main():
         ap.add_argument(f"--{tool}", default="")
     a = ap.parse_args()
 
-    home = os.path.expanduser("~")
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sib = os.path.dirname(repo)
     cr = find("creature-rig", getattr(a, "creature_rig"), "CREATURE_RIG_BIN", [os.path.join(repo, "target/release/creature-rig")])
-    cb = None
-    for p in [getattr(a, "creature_bench"), os.environ.get("CREATURE_BENCH_BIN"), shutil.which("creature-bench"),
-              os.path.join(repo, "target/release/creature-bench"), os.path.join(home, "rigwork/bench/bin/creature-bench")]:
-        if p and os.path.exists(p):
-            cb = p
-            break
-    mf = find("motionforge", a.motionforge, "MOTIONFORGE_BIN", [os.path.join(sib, "motionforge/rust/target/release/motionforge")])
-    wf = find("weights", a.weights, "WEIGHTS_BIN", [os.path.join(sib, "weightforge/rust/target/release/weights")])
-    rf = find("rfcheck", a.rfcheck, "RFCHECK_BIN", [os.path.join(sib, "rfcheck/target/release/rfcheck"),
-                                                     os.path.join(home, ".cargo/bin/rfcheck")])
+    # The anatomy check is a gate, not an extra: without it the route does not run.
+    cb = find("creature-bench", getattr(a, "creature_bench"), "CREATURE_BENCH_BIN", [os.path.join(repo, "target/release/creature-bench")])
+    mf = find("motionforge", a.motionforge, "MOTIONFORGE_BIN", [os.path.join(sib, "motion/rust/target/release/motionforge")])
+    wf = find("weights", a.weights, "WEIGHTS_BIN", [os.path.join(sib, "meshweights/rust/target/release/weights")])
+    rf = find("rfcheck", a.rfcheck, "RFCHECK_BIN", [os.path.join(sib, "rfcheck/target/release/rfcheck")])
     name = a.name or os.path.basename(os.path.dirname(os.path.abspath(a.model))) or "model"
     os.makedirs(a.out, exist_ok=True)
     report = {"model": os.path.abspath(a.model), "name": name, "kind": "creature", "class": a.klass,
@@ -150,7 +192,7 @@ def main():
             pass
     else:
         blender = find("blender", a.blender, "BLENDER", [], first=["/Applications/Blender.app/Contents/MacOS/Blender"])
-        script = os.environ.get("TRIPO_TO_GLB") or os.path.join(sib, "motionforge/tools/tripo_to_glb.py")
+        script = os.environ.get("TRIPO_TO_GLB") or os.path.join(sib, "motion/tools/tripo_to_glb.py")
         r = run([blender, "-b", "--factory-startup", "-P", script, "--", a.model, mesh, "--kind", "auto",
                  "--convention", a.convention, "--tris", str(a.tris or TRIS[a.klass]), "--height", str(a.height)],
                 timeout=900)
@@ -189,34 +231,10 @@ def main():
     print(f"{name}: {t['body']}, {len(info['bones'])} bones ({', '.join(f'{k} {v}' for k, v in t['limbs'].items())})"
           + ("; turned to face forward" if t["turned_half_a_turn"] else ""))
 
-    # 3. Clips for a four-legged body. creature-profile may drop joints it
-    # takes for strays; ours are all on the body, so a profile that dropped
-    # any is not used.
+    # 3. Clips for its body plan (`make_clips`).
     posed = rig
-    if info["kind"] == "four-legged" and not a.no_clips:
-        prof, clean_glb, moving = base + ".creature.json", base + ".clean.glb", base + ".moving.glb"
-        r = run([mf, "creature-profile", "--rig", rig, "--output", prof, "--clean-glb", clean_glb,
-                 "--report", base + ".profile.json", "--name", name])
-        t["profile"] = {"code": r["code"]}
-        kept = False
-        if r["code"] == 0:
-            try:
-                with open(base + ".profile.json") as f:
-                    p = json.load(f)
-                kept = p.get("joints_in") == p.get("joints_out")
-                t["profile"]["joints"] = [p.get("joints_in"), p.get("joints_out")]
-            except (OSError, ValueError):
-                pass
-        if kept:
-            r = run([mf, "creature-gait", "--creature", prof, "--glb-in", clean_glb, "--glb-out", moving,
-                     "--rom", base + ".gait_rom.ron"])
-            t["gait"] = {"code": r["code"], "clips": [ln for ln in r["out"].splitlines() if ln.startswith("clip ")]}
-            if r["code"] == 0 and os.path.exists(moving):
-                posed = moving
-            else:
-                t["gait"]["error"] = tail(r["err"] or r["out"])
-        else:
-            t["profile"]["error"] = tail(r["err"] or r["out"]) or "the profile changed the skeleton"
+    if not a.no_clips:
+        posed, t["clips_made"] = make_clips(mf, rig, base, name, info["kind"] == "four-legged")
     t["clips"] = posed != rig
 
     # 4. Fix and gate.
@@ -260,14 +278,14 @@ def main():
             return {"score": 0.0, "pass": False, "fails": ["skeleton check did not run: " + tail(r["err"], 120)]}
 
     def anatomy_of(glb, out_json):
-        if not cb:
-            return None
-        run([cb, "anatomy", glb, "--json", out_json])
+        r = run([cb, "anatomy", glb, "--json", out_json])
         try:
             with open(out_json) as f:
                 return json.load(f)
         except (OSError, ValueError):
-            return None
+            # a check that did not run fails, it never passes
+            return {"pass": False, "findings": [{"code": "ANATOMY_DID_NOT_RUN", "severity": "fail",
+                                                 "detail": tail(r["err"] or r["out"], 160)}], "limbs": []}
 
     # 5. The skeleton and independent anatomy checks.
     t["skeleton"] = skeleton_of(fixed, base + ".skeleton.json")
@@ -309,15 +327,9 @@ def main():
                 continue
             p["rigged"] = True
             pposed = pb + ".std.glb"
-            if info["kind"] == "four-legged" and not a.no_clips:
-                r = run([mf, "creature-profile", "--rig", pposed, "--output", pb + ".creature.json", "--clean-glb",
-                         pb + ".clean.glb", "--report", pb + ".profile.json", "--name", name])
-                if r["code"] == 0:
-                    r = run([mf, "creature-gait", "--creature", pb + ".creature.json", "--glb-in", pb + ".clean.glb",
-                             "--glb-out", pb + ".moving.glb", "--rom", pb + ".gait_rom.ron"])
-                    if r["code"] == 0 and os.path.exists(pb + ".moving.glb"):
-                        pposed = pb + ".moving.glb"
-            p["clips"] = pposed.endswith(".moving.glb")
+            if not a.no_clips:
+                pposed, p["clips_made"] = make_clips(mf, pposed, pb, name, info["kind"] == "four-legged")
+            p["clips"] = pposed != pb + ".std.glb"
             skeleton_of(pposed, pb + ".skeleton.json", rom_out=pb + ".rom.ron")
             praw = check(wf, pposed, pb + ".rom.ron")
             if a.no_fix or praw["pass"]:
