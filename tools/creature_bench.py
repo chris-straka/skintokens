@@ -16,7 +16,7 @@ and the artist's skeleton with every vertex on its nearest bone):
 
 1. `creature-bench score`: where the joints are, and how far the skin
    lands from the artist's when both rigs play the artist's clips.
-2. `weights check` (weightforge) on the route's rig carrying those same
+2. `weights check` (meshweights) on the route's rig carrying those same
    frames, with no pose set: tears = vertices in failing stretch, volume
    and bleed findings, as a share of all vertices.
 
@@ -247,7 +247,7 @@ def main():
             summary = json.load(f).get("animals", {})
     if not a.no_score:
         cb = find("creature-bench", a.creature_bench, "CREATURE_BENCH_BIN", [os.path.join(repo, "target/release/creature-bench")])
-        wf = find("weights", a.weights, "WEIGHTS_BIN", [os.path.join(os.path.dirname(repo), "weightforge/rust/target/release/weights")])
+        wf = find("weights", a.weights, "WEIGHTS_BIN", [os.path.join(os.path.dirname(repo), "meshweights/rust/target/release/weights")])
         empty = os.path.join(out, "clips_only.ron")
         with open(empty, "w") as f:
             f.write('// No poses: the bend checker then judges a rig on its clips alone.\nPoseSet(\n    name: "clips only",\n    poses: [],\n)\n')

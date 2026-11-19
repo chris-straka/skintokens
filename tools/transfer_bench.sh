@@ -1,22 +1,27 @@
 #!/usr/bin/env bash
 # Rig route for a set of characters, one skin transfer at a time, scored by
-# weightforge: rig -> motionforge standardize -> weights check (raw) ->
+# meshweights: rig -> motionforge standardize -> weights check (raw) ->
 # weights fix -> weights check (final). Same steps and settings as
 # motionforge's tools/tripo_rig.py for a human (class humanoid, no clips).
 #
 #   tools/transfer_bench.sh IN_ROOT OUT_ROOT TAG [SKINTOKENS_ARGS...]
 #
 # IN_ROOT/<name>/mesh.glb are the cleaned meshes; results go to
-# OUT_ROOT/TAG/<name>/s<seed>.* Environment: SK (skintokens binary), WF
-# (weights), MF (motionforge), SEEDS (default "1 2 3"), NAMES (default:
-# every folder in IN_ROOT), PRED_CACHE (a folder: the model's prediction
-# per name and seed is kept there, so two transfers see the same samples
-# and the same per-sample skin; the model runs once).
+# OUT_ROOT/TAG/<name>/s<seed>.* Environment: SKINTOKENS_BIN or SK (skintokens
+# binary), WEIGHTS_BIN or WF (weights), MOTIONFORGE_BIN or MF (motionforge),
+# SEEDS (default "1 2 3"), NAMES (default: every folder in IN_ROOT),
+# PRED_CACHE (a folder: the model's prediction per name and seed is kept
+# there, so two transfers see the same samples and the same per-sample skin;
+# the model runs once).
 set -u
+REPO=$(cd "$(dirname "$0")/.." && pwd)
+SK=${SK:-${SKINTOKENS_BIN:-$REPO/target/release/skintokens}}
+WF=${WF:-${WEIGHTS_BIN:-$REPO/../meshweights/rust/target/release/weights}}
+MF=${MF:-${MOTIONFORGE_BIN:-$REPO/../motion/rust/target/release/motionforge}}
+[ -f "$SK" ] || { echo "skintokens not found: $SK (set SKINTOKENS_BIN or SK)" >&2; exit 2; }
+[ -f "$WF" ] || { echo "weights not found: $WF (set WEIGHTS_BIN or WF)" >&2; exit 2; }
+[ -f "$MF" ] || { echo "motionforge not found: $MF (set MOTIONFORGE_BIN or MF)" >&2; exit 2; }
 in_root=$1; out_root=$2; tag=$3; shift 3
-SK=${SK:-$HOME/rigwork/bin/skintokens}
-WF=${WF:-$HOME/rigwork/bin/weights}
-MF=${MF:-$HOME/rigwork/bin/motionforge}
 SEEDS=${SEEDS:-"1 2 3"}
 NAMES=${NAMES:-$(cd "$in_root" && ls -d */ | tr -d /)}
 for n in $NAMES; do
