@@ -114,5 +114,54 @@ class CreatureBlindTest(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+
+class PackRefusesStrangeFoldersTest(unittest.TestCase):
+    """skintokens-10: `write_blind_pack` replaces only a blind pack it made (its pairs.json
+    inside, its key beside); any other folder named by --out is refused, untouched. Until
+    then it deleted whatever --out named (`shutil.rmtree`)."""
+
+    def _items(self, tmp):
+        p1 = os.path.join(tmp, "p1.png")
+        write_png_rgb(p1, 8, 6, bytearray([80, 120, 160] * (8 * 6)))
+        return [{"category": "control", "subject": "fox", "a_name": "same_a", "b_name": "same_b",
+                 "a_pngs": [p1], "b_pngs": [p1], "expected": "cant_tell"}]
+
+    def test_refuses_a_folder_that_is_not_a_pack(self):
+        tmp = tempfile.mkdtemp(prefix="test_cblind_refuse_")
+        try:
+            items = self._items(tmp)
+            precious = os.path.join(tmp, "work")
+            os.makedirs(precious)
+            with open(os.path.join(precious, "notes.txt"), "w") as f:
+                f.write("not a blind pack")
+            with self.assertRaises((ValueError, RuntimeError, OSError, SystemExit)):
+                write_blind_pack(items, precious, 1)
+            self.assertTrue(os.path.exists(os.path.join(precious, "notes.txt")), "the folder was deleted")
+            # A pack's own folder without its key beside it is refused too.
+            half = os.path.join(tmp, "half")
+            os.makedirs(half)
+            with open(os.path.join(half, "pairs.json"), "w") as f:
+                f.write("{}")
+            with self.assertRaises((ValueError, RuntimeError, OSError, SystemExit)):
+                write_blind_pack(items, half, 1)
+            self.assertTrue(os.path.exists(os.path.join(half, "pairs.json")))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_replaces_its_own_pack(self):
+        tmp = tempfile.mkdtemp(prefix="test_cblind_again_")
+        try:
+            items = self._items(tmp)
+            pack = os.path.join(tmp, "pack")
+            write_blind_pack(items, pack, 1)
+            key = write_blind_pack(items, pack, 2)  # a second run over its own pack: fine
+            self.assertTrue(os.path.exists(key))
+            # An empty folder (nothing to lose) is fine too.
+            empty = os.path.join(tmp, "empty")
+            os.makedirs(empty)
+            write_blind_pack(items, empty, 1)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
 if __name__ == "__main__":
     unittest.main()
