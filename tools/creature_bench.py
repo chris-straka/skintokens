@@ -33,8 +33,10 @@ import json
 import os
 import shutil
 import statistics
-import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import toolpaths  # noqa: E402
 
 TEARS = ("D_STRETCH", "D_VOLUME", "D_BLEED")
 CONTROLS = ["artist", "crude"]
@@ -42,21 +44,10 @@ LABEL = {"artist": "the artist's rig", "crude": "artist's skeleton, crude weight
          "new2": "today's route, mirror-plane reading"}
 
 
-def find(name, explicit, env, fallbacks):
-    for p in [explicit, os.environ.get(env), shutil.which(name)] + fallbacks:
-        if p and os.path.exists(p):
-            return p
-    raise SystemExit(f"{name} not found: pass --{name}, set {env}, or put it on PATH")
-
-
-def run(cmd):
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    return r.returncode, r.stdout, r.stderr
-
-
 def tears(wf, glb, empty, out):
     """The bend checker on the rig's clips alone."""
-    code, text, err = run([wf, "check", glb, "--json", "--poses", empty])
+    res = toolpaths.run([wf, "check", glb, "--json", "--poses", empty])
+    text, err = res["out"], res["err"]
     try:
         d = json.loads(text)
     except ValueError:
@@ -79,9 +70,9 @@ def score_animal(cb, wf, d, name, routes, empty):
     sd = os.path.join(d, "score")
     os.makedirs(sd, exist_ok=True)
     rigid = os.path.join(sd, "crude.glb")
-    code, out, err = run([cb, "rigid", truth, rigid])
-    if code != 0:
-        raise SystemExit(f"{name}: {err.strip()}")
+    res = toolpaths.run([cb, "rigid", truth, rigid])
+    if res["code"] != 0:
+        raise SystemExit(f"{name}: {res['err'].strip()}")
     rows = {}
     for r in CONTROLS + routes:
         glb = {"artist": truth, "crude": rigid}.get(r) or os.path.join(d, r, name + ".glb")
@@ -93,9 +84,9 @@ def score_animal(cb, wf, d, name, routes, empty):
         roles = os.path.join(d, "roles.json")
         if os.path.exists(roles):
             cmd += ["--roles", roles]
-        code, out, err = run(cmd)
-        if code != 0:
-            rows[r] = {"error": err.strip()[-200:]}
+        res = toolpaths.run(cmd)
+        if res["code"] != 0:
+            rows[r] = {"error": res["err"].strip()[-200:]}
             continue
         with open(js) as f:
             rep = json.load(f)
@@ -204,15 +195,15 @@ def pictures(bench, out, summary, routes, blender, repo):
                "--loop", mp4, "--loop-clip", pick, "--loop-frames", "72"]
         for label, path in rigs:
             cmd += ["--rig", f"{label}={path}"]
-        code, text, err = run(cmd)
-        if code != 0 or not os.path.exists(png):
-            print(f"  {name}: no picture: {(err or text).strip()[-200:]}")
+        res = toolpaths.run(cmd)
+        if res["code"] != 0 or not os.path.exists(png):
+            print(f"  {name}: no picture: {(res['err'] or res['out']).strip()[-200:]}")
             continue
         rows["picture"] = {"sheet": os.path.basename(png), "frame": f"{worst['clip']} at {worst['time']} s", "loop": os.path.basename(mp4), "loop_clip": pick}
         sheets.append(png)
         print(f"  {name}: {os.path.basename(png)} ({worst['clip']} at {worst['time']} s), {os.path.basename(mp4)} ({pick})")
     if sheets and shutil.which("convert"):
-        run(["convert"] + sheets + ["-resize", "1500x", "-append", "-quality", "82", os.path.join(out, "all.jpg")])
+        toolpaths.run(["convert"] + sheets + ["-resize", "1500x", "-append", "-quality", "82", os.path.join(out, "all.jpg")])
 
 
 def main():
@@ -246,8 +237,8 @@ def main():
         with open(summary_path) as f:
             summary = json.load(f).get("animals", {})
     if not a.no_score:
-        cb = find("creature-bench", a.creature_bench, "CREATURE_BENCH_BIN", [os.path.join(repo, "target/release/creature-bench")])
-        wf = find("weights", a.weights, "WEIGHTS_BIN", [os.path.join(os.path.dirname(repo), "meshweights/rust/target/release/weights")])
+        cb = toolpaths.find("creature-bench", a.creature_bench, "CREATURE_BENCH_BIN", [os.path.join(repo, "target/release/creature-bench")])
+        wf = toolpaths.find("weights", a.weights, "WEIGHTS_BIN", [os.path.join(os.path.dirname(repo), "meshweights/rust/target/release/weights")])
         empty = os.path.join(out, "clips_only.ron")
         with open(empty, "w") as f:
             f.write('// No poses: the bend checker then judges a rig on its clips alone.\nPoseSet(\n    name: "clips only",\n    poses: [],\n)\n')
@@ -259,7 +250,7 @@ def main():
             summary[n] = score_animal(cb, wf, d, n, routes, empty)
     summary = {n: summary[n] for n in (order or sorted(summary)) if n in summary}
     if a.pictures:
-        blender = find("blender", a.blender, "BLENDER", ["/Applications/Blender.app/Contents/MacOS/Blender"])
+        blender = toolpaths.find("blender", a.blender, "BLENDER", ["/Applications/Blender.app/Contents/MacOS/Blender"])
         pictures(a.bench, out, summary, routes, blender, repo)
     text, meds = table(summary, routes, kinds)
     with open(os.path.join(out, "table.md"), "w") as f:

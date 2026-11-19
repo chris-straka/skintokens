@@ -44,36 +44,21 @@ import json
 import os
 import shlex
 import shutil
-import subprocess
 import sys
-import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_here = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _here)
+if not os.path.isfile(os.path.join(_here, "toolpaths.py")):
+    for _d in (os.path.join(os.getcwd(), "tools"), os.getcwd()):
+        if os.path.isfile(os.path.join(_d, "toolpaths.py")):
+            sys.path.append(_d)
+            break
 import pick_score  # noqa: E402
+from toolpaths import find, run  # noqa: E402
 
 TRIS = {"hero": 14000, "npc": 7500, "monster": 18000}
 # band widths of the weight candidates, in body thicknesses at the joint
 BLENDS = [1.6, 1.0, 2.5]
-
-
-def find(name, explicit, env, fallbacks, first=()):
-    for p in [explicit, os.environ.get(env)] + list(first) + [shutil.which(name)] + fallbacks:
-        if p and os.path.exists(p):
-            return p
-    print(f"{name} not found: pass --{name}, set {env}, or put it on PATH", file=sys.stderr)
-    raise SystemExit(2)
-
-
-def run(cmd, timeout=None, env=None):
-    t = time.time()
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
-        code, out, err = r.returncode, r.stdout, r.stderr
-    except subprocess.TimeoutExpired as e:
-        code, out, err = 124, e.stdout or "", f"timed out after {timeout} s"
-        if isinstance(out, bytes):
-            out = out.decode(errors="replace")
-    return {"code": code, "secs": round(time.time() - t, 1), "out": out, "err": err}
 
 
 def tail(text, n=300):
