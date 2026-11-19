@@ -47,21 +47,9 @@ def judge(cr, wf, cb, glb, work, tag, cut_at_limit=False):
     rom = os.path.join(work, tag + ".rom.ron")
     sj = os.path.join(work, tag + ".skel.json")
     aj = os.path.join(work, tag + ".anatomy.json")
-    run([cr, "check", glb, "--json", sj, "--rom", rom])
-    try:
-        sk = json.load(open(sj))
-    except (OSError, ValueError):
-        sk = {"score": 0.0, "pass": False}
-    _, out, _ = run([wf, "check", glb, "--json", "--poses", rom])
-    try:
-        bend = json.loads(out)
-    except ValueError:
-        bend = {"score": 0.0, "findings": [], "verts": 0}
-    run([cb, "anatomy", glb, "--json", aj])
-    try:
-        an = json.load(open(aj))
-    except (OSError, ValueError):
-        an = None
+    sk = pick_score.checked_json("creature-rig check", run([cr, "check", glb, "--json", sj, "--rom", rom]), sj)
+    bend = pick_score.checked_json("weights check", run([wf, "check", glb, "--json", "--poses", rom]))
+    an = pick_score.checked_json("creature-bench anatomy", run([cb, "anatomy", glb, "--json", aj]), aj)
     tears = pick_score.tears_pct(bend)
     score = pick_score.rig_score(sk, bend, an)
     an_sum = pick_score.anatomy_summary(an)

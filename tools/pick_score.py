@@ -66,11 +66,35 @@ def tears_pct(bend):
     return round(min(100.0, 100.0 * torn / verts), 2)
 
 
+import json
+
+
+class CheckDidNotRun(RuntimeError):
+    """A check's tool crashed or wrote nothing: the rig can't be judged (skintokens-3)."""
+
+
+def checked_json(what, result, path=None):
+    """The JSON a check wrote (`path`) or printed (stdout), from `result` = (exit code,
+    stdout, stderr). Exit 0 and 1 are verdicts (pass, fail); anything else, or no JSON,
+    raises CheckDidNotRun instead of standing in a made-up score."""
+    code, out, err = result
+    if code not in (0, 1):
+        raise CheckDidNotRun(f"{what} exited {code}: {(err or out or '').strip()[-200:]}")
+    try:
+        if path is None:
+            return json.loads(out)
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError) as e:
+        raise CheckDidNotRun(f"{what} wrote no JSON ({e}): {(err or '').strip()[-200:]}") from e
+
+
 def anatomy_summary(anatomy):
     """Extracts pass, fail count, fail codes, and articulated limb pairs
     (side-limb pairs with >= 2 joints) from `creature-bench anatomy` JSON."""
     if not anatomy:
-        return {"present": False, "pass": True, "fails": 0, "codes": [], "articulated_pairs": 0}
+        # A check that did not run fails; it never passes (skintokens-3).
+        return {"present": False, "pass": False, "fails": 0, "codes": ["ANATOMY_DID_NOT_RUN"], "articulated_pairs": 0}
     codes = [
         f.get("code", "")
         for f in anatomy.get("findings", [])

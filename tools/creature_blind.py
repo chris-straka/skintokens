@@ -513,15 +513,9 @@ def judge_rig_metrics(cr, wf, cb, glb, work, tag):
     rom = os.path.join(work, tag + ".rom.ron")
     sj = os.path.join(work, tag + ".skel.json")
     aj = os.path.join(work, tag + ".anatomy.json")
-    run_cmd([cr, "check", glb, "--json", sj, "--rom", rom])
-    sk = json.load(open(sj)) if os.path.exists(sj) else {"score": 0.0, "pass": False}
-    _, out, _ = run_cmd([wf, "check", glb, "--json", "--poses", rom])
-    try:
-        bend = json.loads(out)
-    except ValueError:
-        bend = {"score": 0.0, "findings": [], "verts": 0}
-    run_cmd([cb, "anatomy", glb, "--json", aj])
-    an = json.load(open(aj)) if os.path.exists(aj) else None
+    sk = pick_score.checked_json("creature-rig check", run_cmd([cr, "check", glb, "--json", sj, "--rom", rom]), sj)
+    bend = pick_score.checked_json("weights check", run_cmd([wf, "check", glb, "--json", "--poses", rom]))
+    an = pick_score.checked_json("creature-bench anatomy", run_cmd([cb, "anatomy", glb, "--json", aj]), aj)
     tears = pick_score.tears_pct(bend)
     rscore = pick_score.rig_score(sk, bend, an)
     oscore = pick_score.old_score(bend.get("score", 0.0), sk.get("score", 0.0), bool(sk.get("pass")))

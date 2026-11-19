@@ -60,7 +60,8 @@ def find(name, explicit, env, fallbacks, first=()):
     for p in [explicit, os.environ.get(env)] + list(first) + [shutil.which(name)] + fallbacks:
         if p and os.path.exists(p):
             return p
-    raise SystemExit(f"{name} not found: pass --{name}, set {env}, or put it on PATH")
+    print(f"{name} not found: pass --{name}, set {env}, or put it on PATH", file=sys.stderr)
+    raise SystemExit(2)
 
 
 def run(cmd, timeout=None, env=None):
