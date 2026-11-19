@@ -12,7 +12,9 @@ SRC=${SKINTOKENS_PIN_CKPT:-${FLEET_DATA_SKINTOKENS_WEIGHTS:-}/grpo_1400.ckpt}
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 fails=0
-pin() { SKINTOKENS_PIN_CKPT=$1 cargo test --release -p skintokens --test model_pin -- --ignored model_pin > "$T/pin.out" 2>&1; }
+feat=()
+[ "$(uname -s)" = Darwin ] || feat=(--no-default-features)   # `metal` (the default) is the Mac's
+pin() { SKINTOKENS_PIN_CKPT=$1 cargo test --release -p skintokens ${feat[@]+"${feat[@]}"} --test model_pin -- --ignored model_pin > "$T/pin.out" 2>&1; }
 pin "$SRC"
 if [ $? -eq 0 ]; then echo "PASS  the pin holds on the real checkpoint"; else echo "FAIL  the pin fails on the real checkpoint"; grep -E "drifted|panicked|joint|share|vertex" "$T/pin.out" | head -12 | sed 's/^/      /'; fails=$((fails + 1)); fi
 python3 - "$SRC" "$T/perturbed.ckpt" <<'PY' || { echo "FAIL  could not write the perturbed checkpoint"; exit 1; }

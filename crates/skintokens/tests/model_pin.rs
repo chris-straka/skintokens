@@ -1,6 +1,7 @@
 //! A pin on the model's output (skintokens-11). Parity with the Python original was proven
 //! once (2026-10-05); nothing would show drift after a candle upgrade, a weights change or a
-//! port edit. This rigs one small made-up figure on the CPU with a fixed seed and compares
+//! port edit. This rigs one small made-up figure on the CPU with a fixed seed (class
+//! `custom`: the model's own skeleton, no humanoid naming on top) and compares
 //! what comes out with what was recorded:
 //!
 //! - the skeleton: every joint's name and its bind-pose head, within 1 mm;
@@ -13,6 +14,8 @@
 //! fleet run --snapshot --cores 6 --data skintokens-weights -- \
 //!   cargo test --release -p skintokens --test model_pin -- --ignored model_pin
 //! ```
+//!
+//! (on Linux add `--no-default-features`: the default `metal` feature is the Mac's)
 //!
 //! The checkpoint: `$SKINTOKENS_PIN_CKPT`, else `$FLEET_DATA_SKINTOKENS_WEIGHTS/grpo_1400.ckpt`,
 //! else the binary's own default (`$SKINTOKENS_HOME/weights`). A missing checkpoint fails the
@@ -225,7 +228,7 @@ fn model_pin() {
         "--report",
         rep.to_str().unwrap(),
     ])
-    .args(["--seed", "1", "--class", "humanoid"])
+    .args(["--seed", "1", "--class", "custom"])
     .env("SKINTOKENS_DEVICE", "cpu")
     .env("SKINTOKENS_DTYPE", "f32");
     if let Some(c) = ckpt() {
@@ -233,10 +236,11 @@ fn model_pin() {
         cmd.env("SKINTOKENS_CKPT", &c);
     }
     let o = cmd.output().unwrap();
+    let report = std::fs::read_to_string(&rep).unwrap_or_default();
     assert_eq!(
         o.status.code(),
         Some(0),
-        "skintokens rig failed:\n{}\n{}",
+        "skintokens rig failed:\n{}\n{}\nreport: {report}",
         String::from_utf8_lossy(&o.stdout),
         String::from_utf8_lossy(&o.stderr)
     );
