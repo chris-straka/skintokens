@@ -30,14 +30,13 @@ import json
 import math
 import os
 import shutil
-import struct
-import subprocess
 import sys
 import tempfile
-import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pick_score  # noqa: E402
+from pngfont import FONT_5X7, draw_text, read_png_rgb, text_width, write_png_rgb  # noqa: E402
+import toolpaths  # noqa: E402
 
 
 # ------------------------------------------------ seeded coin-flip & shuffle
@@ -66,170 +65,7 @@ def presentation_order(n, seed):
     return idx
 
 
-# ----------------------------------------- pure-Python 8-bit PNG & compositor
-
-FONT_5X7 = {
-    " ": [0, 0, 0, 0, 0, 0, 0],
-    "-": [0, 0, 0, 31, 0, 0, 0],
-    "?": [14, 17, 1, 2, 4, 0, 4],
-    "/": [1, 2, 2, 4, 8, 8, 16],
-    "(": [2, 4, 8, 8, 8, 4, 2],
-    ")": [8, 4, 2, 2, 2, 4, 8],
-    "_": [0, 0, 0, 0, 0, 0, 31],
-    ":": [0, 4, 4, 0, 4, 4, 0],
-    ".": [0, 0, 0, 0, 0, 4, 4],
-    "'": [4, 4, 8, 0, 0, 0, 0],
-    "0": [14, 17, 19, 21, 25, 17, 14],
-    "1": [4, 12, 4, 4, 4, 4, 14],
-    "2": [14, 17, 1, 2, 4, 8, 31],
-    "3": [31, 2, 4, 2, 1, 17, 14],
-    "4": [2, 6, 10, 18, 31, 2, 2],
-    "5": [31, 16, 30, 1, 1, 17, 14],
-    "6": [6, 8, 16, 30, 17, 17, 14],
-    "7": [31, 1, 2, 4, 8, 8, 8],
-    "8": [14, 17, 17, 14, 17, 17, 14],
-    "9": [14, 17, 17, 15, 1, 2, 12],
-    "A": [14, 17, 17, 31, 17, 17, 17],
-    "B": [30, 17, 17, 30, 17, 17, 30],
-    "C": [14, 17, 16, 16, 16, 17, 14],
-    "D": [28, 18, 17, 17, 17, 18, 28],
-    "E": [31, 16, 16, 30, 16, 16, 31],
-    "F": [31, 16, 16, 30, 16, 16, 16],
-    "G": [14, 17, 16, 23, 17, 17, 15],
-    "H": [17, 17, 17, 31, 17, 17, 17],
-    "I": [14, 4, 4, 4, 4, 4, 14],
-    "J": [7, 2, 2, 2, 2, 18, 12],
-    "K": [17, 18, 20, 24, 20, 18, 17],
-    "L": [16, 16, 16, 16, 16, 16, 31],
-    "M": [17, 27, 21, 21, 17, 17, 17],
-    "N": [17, 25, 21, 19, 17, 17, 17],
-    "O": [14, 17, 17, 17, 17, 17, 14],
-    "P": [30, 17, 17, 30, 16, 16, 16],
-    "Q": [14, 17, 17, 17, 21, 18, 13],
-    "R": [30, 17, 17, 30, 20, 18, 17],
-    "S": [15, 16, 16, 14, 1, 1, 30],
-    "T": [31, 4, 4, 4, 4, 4, 4],
-    "U": [17, 17, 17, 17, 17, 17, 14],
-    "V": [17, 17, 17, 17, 17, 10, 4],
-    "W": [17, 17, 17, 21, 21, 27, 17],
-    "X": [17, 17, 10, 4, 10, 17, 17],
-    "Y": [17, 17, 10, 4, 4, 4, 4],
-    "Z": [31, 1, 2, 4, 8, 16, 31],
-}
-
-
-def read_png_rgb(path):
-    """Reads an 8-bit RGB or RGBA non-interlaced PNG into `(w, h, bytearray_rgb)`."""
-    with open(path, "rb") as f:
-        data = f.read()
-    if data[:8] != b"\x89PNG\r\n\x1a\n":
-        raise ValueError(f"{path}: not a PNG")
-    pos = 8
-    w = h = ctype = 0
-    idat = bytearray()
-    while pos < len(data):
-        ln, typ = struct.unpack(">I4s", data[pos:pos + 8])
-        chunk = data[pos + 8:pos + 8 + ln]
-        pos += 12 + ln
-        if typ == b"IHDR":
-            w, h, depth, ctype, comp, filt, interlace = struct.unpack(">IIBBBBB", chunk)
-            if depth != 8 or ctype not in (2, 6) or interlace != 0:
-                raise ValueError(f"{path}: unsupported PNG format depth={depth} ctype={ctype}")
-        elif typ == b"IDAT":
-            idat.extend(chunk)
-        elif typ == b"IEND":
-            break
-    raw = zlib.decompress(bytes(idat))
-    bpp = 3 if ctype == 2 else 4
-    stride = w * bpp
-    out = bytearray(w * h * 3)
-    prev = bytearray(stride)
-    cur = bytearray(stride)
-    src = 0
-    for y in range(h):
-        ft = raw[src]
-        src += 1
-        row = raw[src:src + stride]
-        src += stride
-        if ft == 0:
-            cur[:] = row
-        elif ft == 1:
-            for i in range(stride):
-                cur[i] = (row[i] + (cur[i - bpp] if i >= bpp else 0)) & 0xFF
-        elif ft == 2:
-            for i in range(stride):
-                cur[i] = (row[i] + prev[i]) & 0xFF
-        elif ft == 3:
-            for i in range(stride):
-                a = cur[i - bpp] if i >= bpp else 0
-                b = prev[i]
-                cur[i] = (row[i] + ((a + b) >> 1)) & 0xFF
-        elif ft == 4:
-            for i in range(stride):
-                a = cur[i - bpp] if i >= bpp else 0
-                b = prev[i]
-                c = prev[i - bpp] if i >= bpp else 0
-                p = a + b - c
-                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
-                pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
-                cur[i] = (row[i] + pr) & 0xFF
-        else:
-            raise ValueError(f"bad PNG filter {ft}")
-        if bpp == 3:
-            out[y * w * 3:(y + 1) * w * 3] = cur
-        else:
-            dst = y * w * 3
-            for x in range(w):
-                out[dst + x * 3:dst + x * 3 + 3] = cur[x * 4:x * 4 + 3]
-        prev[:] = cur
-    return w, h, out
-
-
-def write_png_rgb(path, w, h, rgb):
-    def chunk(typ, body):
-        crc = zlib.crc32(typ + body) & 0xFFFFFFFF
-        return struct.pack(">I", len(body)) + typ + body + struct.pack(">I", crc)
-
-    raw = bytearray()
-    stride = w * 3
-    for y in range(h):
-        raw.append(0)
-        raw.extend(rgb[y * stride:(y + 1) * stride])
-    png = (
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
-        + chunk(b"IDAT", zlib.compress(bytes(raw), 6))
-        + chunk(b"IEND", b"")
-    )
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    with open(path, "wb") as f:
-        f.write(png)
-
-
-def draw_text(buf, w, h, x0, y0, text, scale, color):
-    r, g, b = color
-    cx = x0
-    for ch in text.upper():
-        rows = FONT_5X7.get(ch, FONT_5X7["?"])
-        for ry, bits in enumerate(rows):
-            for rx in range(5):
-                if (bits >> (4 - rx)) & 1:
-                    for sy in range(scale):
-                        py = y0 + ry * scale + sy
-                        if 0 <= py < h:
-                            for sx in range(scale):
-                                px = cx + rx * scale + sx
-                                if 0 <= px < w:
-                                    o = (py * w + px) * 3
-                                    buf[o] = r
-                                    buf[o + 1] = g
-                                    buf[o + 2] = b
-        cx += 6 * scale
-
-
-def text_width(text, scale):
-    return max(0, len(text) * 6 * scale - scale)
-
+# ----------------------------------------- pair sheet compositor
 
 HEAD_H = 62
 GAP = 4
@@ -444,18 +280,6 @@ def score_blind_run(key, answers):
 
 # --------------------------------------------------------- rendering driver
 
-def find_bin(name, explicit, env, fallbacks):
-    for p in [explicit, os.environ.get(env), shutil.which(name)] + fallbacks:
-        if p and os.path.exists(p):
-            return p
-    raise SystemExit(f"{name} not found: pass --{name} or set {env}")
-
-
-def run_cmd(cmd):
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
-    return r.returncode, r.stdout, r.stderr
-
-
 def render_pair_spec(blender, script, rig_a, rig_b, clip, at, paint_ref, work, tag):
     """Measures shared camera bounds over both rigs, renders each rig in its
     own clean headless Blender process with that shared `--cam-spec`, and
@@ -468,10 +292,10 @@ def render_pair_spec(blender, script, rig_a, rig_b, clip, at, paint_ref, work, t
         ]
         if paint_ref:
             cmd += ["--paint-from", paint_ref]
-        code, out, err = run_cmd(cmd)
-        lines = [ln for ln in out.splitlines() if ln.startswith("RENDER_GAMECAM_SPEC ")]
-        if code != 0 or not lines:
-            raise RuntimeError(f"gamecam measure failed on {rpath}: {(err or out)[-240:]}")
+        res = toolpaths.run(cmd, timeout=1800)
+        lines = [ln for ln in res["out"].splitlines() if ln.startswith("RENDER_GAMECAM_SPEC ")]
+        if res["code"] != 0 or not lines:
+            raise RuntimeError(f"gamecam measure failed on {rpath}: {(res['err'] or res['out'])[-240:]}")
         specs.append(json.loads(lines[-1][len("RENDER_GAMECAM_SPEC "):]))
 
     ca, cb = specs[0]["cam_spec"], specs[1]["cam_spec"]
@@ -501,10 +325,10 @@ def render_pair_spec(blender, script, rig_a, rig_b, clip, at, paint_ref, work, t
         ]
         if paint_ref:
             cmd += ["--paint-from", paint_ref]
-        code, out, err = run_cmd(cmd)
+        res = toolpaths.run(cmd, timeout=1800)
         pngs = [f"{prefix}_{i + 1}.png" for i in range(len(times))]
-        if code != 0 or not all(os.path.exists(p) for p in pngs):
-            raise RuntimeError(f"gamecam render failed on {rpath}: {(err or out)[-240:]}")
+        if res["code"] != 0 or not all(os.path.exists(p) for p in pngs):
+            raise RuntimeError(f"gamecam render failed on {rpath}: {(res['err'] or res['out'])[-240:]}")
         rendered.append(pngs)
     return rendered[0], rendered[1], {"clip": specs[0]["clip"], "times": times, "cam_spec": cam_arg}
 
@@ -513,9 +337,12 @@ def judge_rig_metrics(cr, wf, cb, glb, work, tag):
     rom = os.path.join(work, tag + ".rom.ron")
     sj = os.path.join(work, tag + ".skel.json")
     aj = os.path.join(work, tag + ".anatomy.json")
-    sk = pick_score.checked_json("creature-rig check", run_cmd([cr, "check", glb, "--json", sj, "--rom", rom]), sj)
-    bend = pick_score.checked_json("weights check", run_cmd([wf, "check", glb, "--json", "--poses", rom]))
-    an = pick_score.checked_json("creature-bench anatomy", run_cmd([cb, "anatomy", glb, "--json", aj]), aj)
+    def call(cmd):
+        r = toolpaths.run(cmd, timeout=1800)
+        return r["code"], r["out"], r["err"]
+    sk = pick_score.checked_json("creature-rig check", call([cr, "check", glb, "--json", sj, "--rom", rom]), sj)
+    bend = pick_score.checked_json("weights check", call([wf, "check", glb, "--json", "--poses", rom]))
+    an = pick_score.checked_json("creature-bench anatomy", call([cb, "anatomy", glb, "--json", aj]), aj)
     tears = pick_score.tears_pct(bend)
     rscore = pick_score.rig_score(sk, bend, an)
     oscore = pick_score.old_score(bend.get("score", 0.0), sk.get("score", 0.0), bool(sk.get("pass")))
@@ -534,10 +361,15 @@ def write_blind_pack(raw_items, out_dir, seed):
     `pair_NN.png` and `pairs.json` into `out_dir`, and writes
     `<out_dir>.key.json` beside `out_dir`."""
     out_dir = os.path.abspath(out_dir.rstrip("/"))
-    if os.path.exists(out_dir):
-        shutil.rmtree(out_dir)
-    os.makedirs(out_dir, exist_ok=True)
     key_path = out_dir + ".key.json"
+    if os.path.exists(out_dir):
+        if os.path.islink(out_dir) or not os.path.isdir(out_dir):
+            raise ValueError(f"refusing to overwrite {out_dir}: not a directory")
+        if os.listdir(out_dir):
+            if not (os.path.isfile(os.path.join(out_dir, "pairs.json")) and os.path.isfile(key_path)):
+                raise ValueError(f"refusing to delete {out_dir}: not a blind pack (need pairs.json and {key_path}, or an empty folder)")
+            shutil.rmtree(out_dir)
+    os.makedirs(out_dir, exist_ok=True)
 
     order = presentation_order(len(raw_items), seed)
     pairs_public = []
@@ -622,10 +454,10 @@ def cmd_bench(a):
     home = os.path.expanduser("~")
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sib = os.path.dirname(repo)
-    blender = find_bin("blender", a.blender, "BLENDER", ["/Applications/Blender.app/Contents/MacOS/Blender", os.path.join(home, ".local/bin/blender")])
-    cb = find_bin("creature-bench", a.creature_bench, "CREATURE_BENCH_BIN", [os.path.join(repo, "target/release/creature-bench")])
-    cr = find_bin("creature-rig", a.creature_rig, "CREATURE_RIG_BIN", [os.path.join(repo, "target/release/creature-rig")])
-    wf = find_bin("weights", a.weights, "WEIGHTS_BIN", [os.path.join(sib, "meshweights/rust/target/release/weights")])
+    blender = toolpaths.find("blender", a.blender, "BLENDER", ["/Applications/Blender.app/Contents/MacOS/Blender", os.path.join(home, ".local/bin/blender")])
+    cb = toolpaths.find("creature-bench", a.creature_bench, "CREATURE_BENCH_BIN", [os.path.join(repo, "target/release/creature-bench")])
+    cr = toolpaths.find("creature-rig", a.creature_rig, "CREATURE_RIG_BIN", [os.path.join(repo, "target/release/creature-rig")])
+    wf = toolpaths.find("weights", a.weights, "WEIGHTS_BIN", [os.path.join(sib, "meshweights/rust/target/release/weights")])
     script = os.path.join(repo, "tools/bench/render_gamecam.py")
 
     animals = [x.strip() for x in a.animals.split(",") if x.strip()]
@@ -673,9 +505,9 @@ def cmd_bench(a):
             body_sc_j = os.path.join(work, f"{n}_body.score.json")
             extra_roles = ["--roles", roles] if os.path.exists(roles) else []
             for src_g, out_c, out_j in ((pred_glb, pred_clips, pred_sc_j), (body_glb, body_clips, body_sc_j)):
-                rc, _, err = run_cmd([cb, "score", truth, src_g, "--clips", out_c, "--json", out_j] + extra_roles)
-                if rc != 0:
-                    raise RuntimeError(f"score failed for {n}: {err[-200:]}")
+                res = toolpaths.run([cb, "score", truth, src_g, "--clips", out_c, "--json", out_j] + extra_roles, timeout=1800)
+                if res["code"] != 0:
+                    raise RuntimeError(f"score failed for {n}: {res['err'][-200:]}")
             ps = json.load(open(pred_sc_j))
             bs = json.load(open(body_sc_j))
             clip_names = [c["clip"] for c in ps["skin"]["clips"]]
@@ -732,9 +564,9 @@ def cmd_bench(a):
 
         # Mandatory planted bad case: mirrored left/right limb weights swapped on c_clips.
         planted_clips = os.path.join(work, f"{cn}_planted.clips.glb")
-        rc, _, err = run_cmd([cb, "plant", c_clips, planted_clips])
-        if rc != 0:
-            raise RuntimeError(f"plant failed on {c_clips}: {err[-200:]}")
+        res = toolpaths.run([cb, "plant", c_clips, planted_clips], timeout=1800)
+        if res["code"] != 0:
+            raise RuntimeError(f"plant failed on {c_clips}: {res['err'][-200:]}")
         pl_m = judge_rig_metrics(cr, wf, cb, planted_clips, work, f"{cn}_planted")
         planted_metric_ok = (
             pl_m["rig_score"] < 80.0
@@ -769,10 +601,10 @@ def cmd_make(a):
     home = os.path.expanduser("~")
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sib = os.path.dirname(repo)
-    blender = find_bin("blender", a.blender, "BLENDER", ["/Applications/Blender.app/Contents/MacOS/Blender", os.path.join(home, ".local/bin/blender")])
-    cb = find_bin("creature-bench", a.creature_bench, "CREATURE_BENCH_BIN", [os.path.join(repo, "target/release/creature-bench")])
-    cr = find_bin("creature-rig", a.creature_rig, "CREATURE_RIG_BIN", [os.path.join(repo, "target/release/creature-rig")])
-    wf = find_bin("weights", a.weights, "WEIGHTS_BIN", [os.path.join(sib, "meshweights/rust/target/release/weights")])
+    blender = toolpaths.find("blender", a.blender, "BLENDER", ["/Applications/Blender.app/Contents/MacOS/Blender", os.path.join(home, ".local/bin/blender")])
+    cb = toolpaths.find("creature-bench", a.creature_bench, "CREATURE_BENCH_BIN", [os.path.join(repo, "target/release/creature-bench")])
+    cr = toolpaths.find("creature-rig", a.creature_rig, "CREATURE_RIG_BIN", [os.path.join(repo, "target/release/creature-rig")])
+    wf = toolpaths.find("weights", a.weights, "WEIGHTS_BIN", [os.path.join(sib, "meshweights/rust/target/release/weights")])
     script = os.path.join(repo, "tools/bench/render_gamecam.py")
 
     work = tempfile.mkdtemp(prefix="creature_blind_make_")
@@ -826,9 +658,9 @@ def cmd_make(a):
         })
 
         planted_glb = os.path.join(work, f"{cn}_planted.glb")
-        rc, _, err = run_cmd([cb, "plant", c_glb, planted_glb])
-        if rc != 0:
-            raise RuntimeError(f"plant failed on {c_glb}: {err[-200:]}")
+        res = toolpaths.run([cb, "plant", c_glb, planted_glb], timeout=1800)
+        if res["code"] != 0:
+            raise RuntimeError(f"plant failed on {c_glb}: {res['err'][-200:]}")
         pl_m = judge_rig_metrics(cr, wf, cb, planted_glb, work, f"{cn}_planted")
         planted_metric_ok = (
             pl_m["rig_score"] < 80.0
