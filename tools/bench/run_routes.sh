@@ -15,7 +15,7 @@
 # the route goes beside the earlier one, so both can be scored.
 set -uo pipefail
 BENCH=${BENCH:?set BENCH}
-TOOLS=${TOOLS:-/home/f/rigwork/creatures}
+TOOLS=${TOOLS:?set TOOLS to the folder holding the tool builds (bin/) and sources (src/)}
 OLD_ROUTE=${OLD_ROUTE:-$TOOLS/src/motionforge/tools/tripo_rig.py}
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 export PATH=$HOME/.local/bin:$HOME/.cargo/bin:$PATH

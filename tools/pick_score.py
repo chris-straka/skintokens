@@ -6,7 +6,7 @@ Why the pre-2026-11-16 creature score could not be trusted:
   while reading bones by their joint world matrices; on artist exports with
   a scale/turn node above the armature, the mesh sat at a sixth of the
   bones' size and all 12 hand-made rigs scored ~15 of 100.
-- Multiplying weightforge's 0-100 bend energy score (which halves the worst
+- Multiplying meshweights' 0-100 bend energy score (which halves the worst
   region and rates hand-painted rigs 7 to 25) by `creature-rig check`
   punished hand-made rigs and favoured `creature-rig`'s own fewer,
   surface-pivoted bones by circular construction.

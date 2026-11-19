@@ -11,7 +11,7 @@
 # Tools as in run_routes.sh; CREATURE_RIG_BIN picks the body reader.
 set -uo pipefail
 BENCH=${BENCH:?set BENCH}; TAG=$1; SET=$2
-TOOLS=${TOOLS:-/home/f/rigwork/creatures}
+TOOLS=${TOOLS:?set TOOLS to the folder holding the tool builds (bin/) and sources (src/)}
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 export PATH=$HOME/.local/bin:$HOME/.cargo/bin:$PATH
 export CREATURE_RIG_BIN=${CREATURE_RIG_BIN:-$BENCH/bin/creature-rig} SKINTOKENS_BIN=${SKINTOKENS_BIN:-$TOOLS/bin/sk_wrap.sh} \

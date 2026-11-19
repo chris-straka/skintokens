@@ -30,7 +30,7 @@ set -uo pipefail
 BENCH=${BENCH:?set BENCH}
 HERE=$(cd "$(dirname "$0")" && pwd)
 export PATH=$HOME/.local/bin:$HOME/.cargo/bin:$PATH
-MF=${MOTIONFORGE_BIN:-/home/f/rigwork/creatures/bin/motionforge}
+MF=${MOTIONFORGE_BIN:?set MOTIONFORGE_BIN to a motionforge build}
 MFREPO=${MOTIONFORGE_REPO:-$HOME/Games/_blender/motion}
 PY=${EXAM_PYTHON:-$HOME/.genforge/local/venv-triposg/bin/python}
 CB=${CREATURE_BENCH_BIN:-$BENCH/bin/creature-bench}

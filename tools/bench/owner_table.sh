@@ -22,7 +22,7 @@
 # makes the table from everything on disk.
 set -uo pipefail
 BENCH=${BENCH:?set BENCH}; TAG=$1; SET=$2; OLD=${3:-}
-TOOLS=${TOOLS:-/home/f/rigwork/creatures}
+TOOLS=${TOOLS:?set TOOLS to the folder holding the tool builds (bin/) and sources (src/)}
 CR=${CREATURE_RIG_BIN:-$BENCH/bin/creature-rig}; CB=${CREATURE_BENCH_BIN:-$BENCH/bin/creature-bench}
 WF=${WEIGHTS_BIN:-$TOOLS/bin/weights}
 O=$BENCH/owner/$TAG; S=$O.sheets; mkdir -p "$S"
