@@ -16,7 +16,7 @@ side). For each clip:
    turns the rig's joints frame by frame until its outline lies on the
    video's; it writes the rig with the followed motion as a clip
    (`<clip>.followed.glb`) and the overlap of the two outlines per frame.
-3. `weights check` (weightforge) on that file with no pose set: tears
+3. `weights check` (meshweights) on that file with no pose set: tears
    while following = vertices in failing stretch, volume and bleed
    findings, as a share of all vertices.
 4. Blender renders the followed clip, painted, through the lined-up
@@ -94,7 +94,7 @@ def main():
     a = ap.parse_args()
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     cb = find("creature-bench", a.creature_bench, "CREATURE_BENCH_BIN", [os.path.join(repo, "target/release/creature-bench")])
-    wf = find("weights", a.weights, "WEIGHTS_BIN", [os.path.join(os.path.dirname(repo), "weightforge/rust/target/release/weights")])
+    wf = find("weights", a.weights, "WEIGHTS_BIN", [os.path.join(os.path.dirname(repo), "meshweights/rust/target/release/weights")])
     d = os.path.abspath(a.dir)
     rig, cam = os.path.join(d, "rig.glb"), os.path.join(d, "camera.json")
     with open(cam) as f:

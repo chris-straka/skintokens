@@ -21,7 +21,7 @@ Steps, each a tool of its own:
    any other body (two-legged, winged, many-limbed, legless), or a
    four-legged one the gait can't read, gets an idle and an attack from
    `motionforge creature-clips`. The same for the model's own rig.
-4. `weights fix` (weightforge) chooses per region among the three band
+4. `weights fix` (meshweights) chooses per region among the three band
    widths, the model's own weights for this skeleton (`skintokens skin`,
    unless `--no-ml`) and its own repairs; `weights check` is the gate.
 5. `creature-rig check`: the skeleton check (every limb has a chain,
