@@ -761,15 +761,24 @@ def patch_puppeteer_sdpa(skel_dir: str) -> List[str]:
             _write(demo_path, new_txt)
             changed.append(demo_path)
 
-    # 6. third_partys/Michelangelo: PyTorch 2.6 weights_only=False if torch.load lacks it
-    m_init = os.path.join(skel_dir, "third_partys", "Michelangelo", "michelangelo", "models", "tsal", "sal_perceiver.py")
-    if os.path.isfile(m_init):
-        txt = _read(m_init)
-        old_ml = 'torch.load(ckpt_path, map_location="cpu")'
-        new_ml = 'torch.load(ckpt_path, map_location="cpu", weights_only=False)'
-        if old_ml in txt:
-            _write(m_init, txt.replace(old_ml, new_ml))
-            changed.append(m_init)
+    # 6. third_partys/Michelangelo: PyTorch 2.6 weights_only=False in asl_pl_module.py / sal_perceiver.py
+    for rel in (
+        os.path.join("third_partys", "Michelangelo", "michelangelo", "models", "tsal", "asl_pl_module.py"),
+        os.path.join("third_partys", "Michelangelo", "michelangelo", "models", "tsal", "sal_perceiver.py"),
+    ):
+        m_init = os.path.join(skel_dir, rel)
+        if os.path.isfile(m_init):
+            txt = _read(m_init)
+            new_txt = txt.replace(
+                'torch.load(path, map_location="cpu")',
+                'torch.load(path, map_location="cpu", weights_only=False)',
+            ).replace(
+                'torch.load(ckpt_path, map_location="cpu")',
+                'torch.load(ckpt_path, map_location="cpu", weights_only=False)',
+            )
+            if new_txt != txt:
+                _write(m_init, new_txt)
+                changed.append(m_init)
 
     return changed
 
@@ -880,10 +889,12 @@ def run_one_rival(
 
         log_path = os.path.join(batch_work, f"demo_{label}_{rival_key}.log")
         t0 = time.time()
+        demo_env = os.environ.copy()
+        demo_env["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
         with open(log_path, "w", encoding="utf-8") as log:
             log.write("$ " + " ".join(cmd) + "\n\n")
             log.flush()
-            r = subprocess.run(cmd, cwd=skel_dir, stdout=log, stderr=subprocess.STDOUT, timeout=3600)
+            r = subprocess.run(cmd, cwd=skel_dir, env=demo_env, stdout=log, stderr=subprocess.STDOUT, timeout=3600)
         t_infer = time.time() - t0
         print(
             f"[{label}/{rival_key}] demo.py on {len(need_ids)} meshes finished (rc={r.returncode}) in {t_infer:.1f}s",

@@ -236,7 +236,13 @@ animals and the 12 frozen non-Quaternius CC0/CC-BY held-out animals
   SkinTokens `5.38%` / `5.66%`), but SkinTokens beats UniRig by more than
   2x on skin error (`0.59%` mean / `1.58%` p95 / `0.53%` weights-only vs
   UniRig's `1.36%` / `3.84%` / `1.39%`), matching the 2026-10-05 humanoid
-  result. Puppeteer and MagicArticulate skeleton stages remain unrun.
+  result.
+- **Additional outside skeleton rivals (`skintokens-8`, `tools/bench/run_skeleton_rivals.py` + `tools/bench/setup_skeleton_rivals.sh`, fleet `kn533sry`):**
+  - **Licences verified (2026-11-20):**
+    - `Seed3D/Puppeteer` skeleton stage (`skeleton_ckpts/puppeteer_skeleton_w_diverse_pose.pth`): **Apache-2.0** code & weights. Puppeteer's **skinning stage** depends on NVIDIA `PartField` (non-commercial) and is explicitly excluded (submodule never initialized, weights never fetched).
+    - `Seed3D/MagicArticulate` skeleton stage (`skeleton_ckpt/checkpoint_trainonv2_hier.pth`): **Apache-2.0** code & weights (no skinning stage released upstream).
+    - Shared shape encoder `Maikou/Michelangelo` (`shapevae-256.ckpt`): **LGPL-3.0** weights / **GPL-3.0** code (`ChaoyueSong/Michelangelo`, same tool-side-only class as `crates/skintokens-encoder`; rigged GLB outputs are unaffected). `facebook/opt-350m` config JSON only (`OPTConfig.from_pretrained`, weights overwritten by Apache-2.0 checkpoints).
+  - **Fleet `kn533sry` setup + smoke status:** Cloned `Seed3D/Puppeteer` (`--depth 1`, Michelangelo submodule only — verified zero PartField), installed isolated CUDA venv `/data/rigwork/venv-puppeteer` (`torch 2.6.0+cu124`, `transformers 4.46.1`, `mesh2sdf 1.1.0`), downloaded all three checkpoints to `/data/rigwork/puppeteer`, and applied the SDPA patch (no `flash-attn`). The 2-animal in-sample smoke inference (`fox`, `horse`) hit PyTorch 2.6's default `weights_only=True` in `Michelangelo`'s `asl_pl_module.py:68` (`_pickle.UnpicklingError` on `numpy.core.multiarray.scalar`). Fixed in `run_skeleton_rivals.py` (`patch_puppeteer_sdpa` now patches `asl_pl_module.py` + sets `TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1`); no follow-up GPU pass was queued to respect the single-GPU-run cap keeping `f`'s GPU free. Re-running `run_skeleton_rivals.py` on `f` requires zero re-downloads.
 
 ## Part A: limits
 

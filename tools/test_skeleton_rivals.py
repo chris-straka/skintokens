@@ -102,7 +102,8 @@ class TestSkeletonRivals(unittest.TestCase):
 
             nv, nf = rsr.glb_to_obj(bare, obj)
             self.assertEqual((nv, nf), (4, 2))
-            lines = [l.strip() for l in open(obj, encoding="utf-8") if l.strip()]
+            with open(obj, encoding="utf-8") as f:
+                lines = [l.strip() for l in f if l.strip()]
             self.assertEqual(sum(1 for l in lines if l.startswith("v ")), 4)
             self.assertEqual(sum(1 for l in lines if l.startswith("f ")), 2)
 
@@ -141,6 +142,7 @@ class TestSkeletonRivals(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             os.makedirs(os.path.join(tmp, "skeleton_models"))
             os.makedirs(os.path.join(tmp, "utils"))
+            os.makedirs(os.path.join(tmp, "third_partys", "Michelangelo", "michelangelo", "models", "tsal"))
             with open(os.path.join(tmp, "skeleton_models", "skeletongen.py"), "w", encoding="utf-8") as f:
                 f.write('cfg = dict(_attn_implementation="flash_attention_2")\n')
             with open(os.path.join(tmp, "skeleton_models", "skeleton_opt.py"), "w", encoding="utf-8") as f:
@@ -153,14 +155,20 @@ class TestSkeletonRivals(unittest.TestCase):
                 f.write("from data_utils.pyrender_wrapper import PyRenderWrapper\n")
             with open(os.path.join(tmp, "utils", "mesh_to_pc.py"), "w", encoding="utf-8") as f:
                 f.write("import mesh2sdf.core\n")
+            asl_p = os.path.join(tmp, "third_partys", "Michelangelo", "michelangelo", "models", "tsal", "asl_pl_module.py")
+            with open(asl_p, "w", encoding="utf-8") as f:
+                f.write('state_dict = torch.load(path, map_location="cpu")["state_dict"]\n')
 
             c1 = rsr.patch_puppeteer_sdpa(tmp)
-            self.assertEqual(len(c1), 4)
+            self.assertEqual(len(c1), 5)
             c2 = rsr.patch_puppeteer_sdpa(tmp)
             self.assertEqual(len(c2), 0)
-            opt_txt = open(os.path.join(tmp, "skeleton_models", "skeleton_opt.py"), encoding="utf-8").read()
+            with open(os.path.join(tmp, "skeleton_models", "skeleton_opt.py"), encoding="utf-8") as f:
+                opt_txt = f.read()
             self.assertIn("_prepare_4d_causal_attention_mask_for_sdpa", opt_txt)
             self.assertNotIn("Only flash_attention_2 is supported", opt_txt)
+            with open(asl_p, encoding="utf-8") as f:
+                self.assertIn("weights_only=False", f.read())
 
 
 if __name__ == "__main__":
