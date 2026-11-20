@@ -71,12 +71,12 @@ def write_gpu_sdpa_tasks(unirig_dir: str, tmp_dir: str) -> tuple:
             "  accelerator: gpu\n"
             "  strategy: auto\n"
         )
-    skin_cfg = os.path.join(tmp_dir, "skin_compat.yaml")
+    skin_cfg = os.path.join(tmp_dir, "skin_gpu_sdpa.yaml")
     with open(skin_cfg, "w", encoding="utf-8") as f:
         f.write(
             "mode: predict\n"
             "debug: False\n"
-            "experiment_name: quick_inference_skin_compat\n"
+            "experiment_name: quick_inference_skin_gpu_sdpa\n"
             "resume_from_checkpoint: experiments/skin/articulation-xl/model.ckpt\n"
             "components:\n"
             "  data: quick_inference\n"
@@ -96,8 +96,8 @@ def write_gpu_sdpa_tasks(unirig_dir: str, tmp_dir: str) -> tuple:
             "  max_epochs: 1\n"
             "  num_nodes: 1\n"
             "  devices: 1\n"
-            "  precision: 32-true\n"
-            "  accelerator: cpu\n"
+            "  precision: 16-mixed\n"
+            "  accelerator: gpu\n"
             "  strategy: auto\n"
             "  inference_mode: True\n"
         )
@@ -169,12 +169,19 @@ def run_unirig_one(py: str, unirig_dir: str, bare_glb: str, out_dir: str, aid: s
     if rc != 0 or find_one(skin_npz, "raw_data.npz") is None:
         return False, rigged_glb, f"extract_skel failed (exit {rc})"
 
-    # 4. Skin prediction
+    # 4. Skin prediction (GPU SDPA, fallback to CPU if GPU fails/OOMs)
     rc = run_stage(
         [py, "run.py", f"--task={skin_task}", "--input", skel_fbx,
          "--npz_dir", skin_npz, "--data_name", "raw_data.npz", "--output", skin_fbx],
         unirig_dir, os.path.join(work, "4_skin.log"),
     )
+    if rc != 0 or not os.path.isfile(skin_fbx):
+        rc = run_stage(
+            [py, "run.py", "--task=configs/task/quick_inference_unirig_skin_mac",
+             "--input", skel_fbx, "--npz_dir", skin_npz,
+             "--data_name", "raw_data.npz", "--output", skin_fbx],
+            unirig_dir, os.path.join(work, "4b_skin_cpu.log"),
+        )
     if rc != 0 or not os.path.isfile(skin_fbx):
         return False, rigged_glb, f"skin failed (exit {rc})"
 

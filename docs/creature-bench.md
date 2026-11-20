@@ -200,24 +200,26 @@ animals and the 12 frozen non-Quaternius CC0/CC-BY held-out animals
 (`tools/bench/heldout_manifest.json`, fleet jobs `96qnk55e`, `gymftv8v`,
 `7ta6s56x`):
 
-### In-sample 12 animals (`gymftv8v`, `7ta6s56x`)
+### In-sample 12 animals (`gymftv8v`, `7ta6s56x`; UniRig rival `3h66zkcb`)
 
 | Rig | N | Joints med | Missing chain | Skin mean med | Skin p95 med | Weights-only med |
 |---|---:|---:|---:|---:|---:|---:|
 | the artist's rig | 12 | 0.00% | 0 of 12 | 0.00% | 0.00% | 0.00% |
 | artist's skeleton, crude weights | 12 | 0.00% | 0 of 12 | 0.63% | 1.93% | 0.58% |
-| `predicted` (best SkinTokens seed) | 12 | **3.08%** | 4 of 12 | **0.71%** | **1.95%** | **0.50%** |
+| `predicted` (best SkinTokens seed) | 12 | **3.08%** | **4 of 12** | **0.71%** | **1.95%** | **0.50%** |
 | `route` (picked) | 12 | 5.00% | 8 of 12 | 1.10% | 2.82% | 0.82% |
+| `unirig` (VAST-AI/UniRig, SDPA, seed 42) | 12 | 3.60% | 7 of 12 | 1.24% | 3.05% | 1.52% |
 | `body` (body-read alone) | 12 | 6.86% | 11 of 12 | 1.52% | 3.49% | 1.22% |
 
-### Frozen held-out 12 non-Quaternius animals (`tools/bench/heldout.sh`, `7ta6s56x`)
+### Frozen held-out 12 non-Quaternius animals (`tools/bench/heldout.sh`, `7ta6s56x`; UniRig rival `3h66zkcb`)
 
 | Rig | N | Joints med | Missing chain | Skin mean med | Skin p95 med | Weights-only med |
 |---|---:|---:|---:|---:|---:|---:|
 | the artist's rig | 12 | 0.00% | 0 of 12 | 0.00% | 0.00% | 0.00% |
 | artist's skeleton, crude weights | 12 | 0.00% | 1 of 12 | 0.20% | 0.74% | 0.20% |
-| `predicted` (best SkinTokens seed) | 12 | **5.38%** | 11 of 12 | **0.59%** | **1.58%** | **0.53%** |
-| `route` (picked) | 12 | **5.66%** | 11 of 12 | **0.65%** | **1.69%** | **0.64%** |
+| `predicted` (best SkinTokens seed) | 12 | 5.38% | **11 of 12** | **0.59%** | **1.58%** | **0.53%** |
+| `route` (picked) | 12 | 5.66% | **11 of 12** | **0.65%** | **1.69%** | **0.64%** |
+| `unirig` (VAST-AI/UniRig, SDPA, seed 42) | 12 | **4.47%** | 12 of 12 | 1.36% | 3.84% | 1.39% |
 | `body` (body-read alone) | 12 | 7.78% | 12 of 12 | 1.80% | 5.04% | 1.21% |
 
 - On unseen non-Quaternius and dense (16k–52k) animals, SkinTokens
@@ -225,6 +227,16 @@ animals and the 12 frozen non-Quaternius CC0/CC-BY held-out animals
   animals miss at least one fine chain in 55–107 bone artist rigs, yet
   its skin error stays low (`0.59%` mean / `1.58%` p95) and beats the
   body-read rig by 3x (`1.80%` mean / `5.04%` p95).
+- **Outside rival (`skintokens-8` / `unirig-mac-5`, `tools/bench/run_unirig_rival.py`, fleet `3h66zkcb`):**
+  Upstream `VAST-AI/UniRig` (MIT, SDPA without `flash-attn`; CUDA skeleton
+  stage ~8 s/animal, skin stage hits 8 GB VRAM OOM on RTX 2060 SUPER and
+  falls back to CPU ~2.5 min/animal) completed `12/12` in-sample and
+  `12/12` frozen held-out animals with 0 failures. On unseen held-out
+  animals, UniRig places joints slightly closer to the artist (`4.47%` vs
+  SkinTokens `5.38%` / `5.66%`), but SkinTokens beats UniRig by more than
+  2x on skin error (`0.59%` mean / `1.58%` p95 / `0.53%` weights-only vs
+  UniRig's `1.36%` / `3.84%` / `1.39%`), matching the 2026-10-05 humanoid
+  result. Puppeteer and MagicArticulate skeleton stages remain unrun.
 
 ## Part A: limits
 

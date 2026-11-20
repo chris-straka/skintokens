@@ -403,3 +403,16 @@ On the twelve benchmark animals, the old creature score (`bend * skeleton
   skin mean, `5.04%` p95) by 3x on skin error, and the picked `route`
   tracks `predicted` closely (`5.66%` joints, `0.65%` skin mean, `1.69%`
   p95).
+- **Outside rival — upstream UniRig (`skintokens-8` / `unirig-mac-5`, fleet `3h66zkcb`):**
+  Scored `VAST-AI/UniRig` (MIT, SDPA without `flash-attn`, seed 42) across
+  all `12/12` in-sample and `12/12` frozen held-out animals (0 failures).
+  - **In-sample 12:** UniRig joints `3.60%`, missing `7/12`, skin mean
+    `1.24%`, p95 `3.05%`, weights-only `1.52%` (vs SkinTokens `predicted`
+    `3.08%` / `4/12` / `0.71%` / `1.95%` / `0.50%`).
+  - **Frozen held-out 12:** UniRig joints **`4.47%`**, missing `12/12`,
+    skin mean `1.36%`, p95 `3.84%`, weights-only `1.39%` (vs SkinTokens
+    `predicted` `5.38%` / `11/12` / **`0.59%`** / **`1.58%`** / **`0.53%`**
+    and `route` `5.66%` / `11/12` / **`0.65%`** / **`1.69%`** / **`0.64%`**).
+  - UniRig places joints closer on unseen non-Quaternius bodies, while
+    SkinTokens delivers >2x lower skin deformation error on both sets.
+    Puppeteer and MagicArticulate skeleton stages remain unrun.
