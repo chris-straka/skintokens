@@ -24,6 +24,7 @@ against the 12 hand-made benchmark animals (stdlib only).
 import argparse
 import json
 import os
+import random
 import subprocess
 import sys
 
@@ -41,6 +42,44 @@ def find(name, explicit, env, fallbacks):
 def run(cmd):
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
     return r.returncode, r.stdout, r.stderr
+
+
+def picker_baselines(picker, loo=None, seed=0):
+    """Compute picker agreement alongside always-predicted, always-body, and
+    coin-flip baselines (`skintokens-2`)."""
+    names = sorted(picker)
+    total = len(names)
+    rng = random.Random(seed)
+    coin_hits = sum(
+        1 for n in names if rng.choice(("predicted", "body")) == picker[n].get("truth_winner")
+    )
+    loo_hits = sum(1 for v in (loo or {}).values() if v.get("agrees"))
+    return {
+        "total": total,
+        "picker": sum(1 for v in picker.values() if v.get("agrees")),
+        "leave_one_out": loo_hits,
+        "old_score": sum(1 for v in picker.values() if v.get("old_agrees")),
+        "always_predicted": sum(
+            1 for v in picker.values() if v.get("truth_winner") == "predicted"
+        ),
+        "always_body": sum(1 for v in picker.values() if v.get("truth_winner") == "body"),
+        "coin_flip_expected": total * 0.5,
+        "coin_flip_seeded": coin_hits,
+        "coin_flip_seed": seed,
+    }
+
+
+def format_picker_baselines(b):
+    n = b["total"]
+    return (
+        f"picker agreement with ground truth: {b['picker']} of {n} "
+        f"(leave-one-out: {b['leave_one_out']} of {n}; "
+        f"old score: {b['old_score']} of {n}; "
+        f"always-predicted: {b['always_predicted']} of {n}; "
+        f"always-body: {b['always_body']} of {n}; "
+        f"coin-flip: {b['coin_flip_expected']:.1f} of {n} expected, "
+        f"{b['coin_flip_seeded']} of {n} seed={b['coin_flip_seed']})"
+    )
 
 
 def judge(cr, wf, cb, glb, work, tag, cut_at_limit=False):
@@ -263,13 +302,10 @@ def main():
             loo[held] = {"fit_tear_override_pct": best_thr, "picked": rh["which"], "agrees": hit}
             if hit:
                 loo_hits += 1
+        baselines = {}
         if picker:
-            new_hits = sum(1 for v in picker.values() if v["agrees"])
-            old_hits = sum(1 for v in picker.values() if v["old_agrees"])
-            print(
-                f"picker agreement with ground truth: {new_hits} of {len(picker)} "
-                f"(leave-one-out: {loo_hits} of {len(cands)}; old score: {old_hits} of {len(picker)})"
-            )
+            baselines = picker_baselines(picker, loo=loo)
+            print(format_picker_baselines(baselines))
 
     if a.json:
         with open(a.json, "w") as f:
@@ -279,6 +315,7 @@ def main():
                     "gate_failures": gate_failures,
                     "picker": picker,
                     "leave_one_out": loo,
+                    "baselines": baselines if a.picker_check else {},
                 },
                 f,
                 indent=1,
