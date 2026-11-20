@@ -248,7 +248,7 @@ impl Solid {
                 if col.is_empty() {
                     continue;
                 }
-                col.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+                col.sort_by(|a, b| a.0.total_cmp(&b.0));
                 // winding in front of each crossing, read forwards and backwards
                 let mut fwd = vec![0i32; col.len() + 1];
                 for (k, x) in col.iter().enumerate() {

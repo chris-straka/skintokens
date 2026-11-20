@@ -84,8 +84,7 @@ pub fn name_humanoid(
             .filter(|&k| heads[k][1] >= heads[j][1] - 0.02 * height && dx(k) < 0.04 * height)
             .min_by(|&a, &b| {
                 round3(dx(a))
-                    .partial_cmp(&round3(dx(b)))
-                    .unwrap()
+                    .total_cmp(&round3(dx(b)))
                     .then(size[b].cmp(&size[a]))
                     .then(std::cmp::Ordering::Equal)
             })
@@ -153,8 +152,20 @@ pub fn name_humanoid(
         }
     }
     let Some(chest) = chest else {
+        let mapping = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                let v = if i == root {
+                    format!("{PREFIX}Hips")
+                } else {
+                    format!("extra_{i}")
+                };
+                (n.clone(), v)
+            })
+            .collect();
         return (
-            HashMap::new(),
+            mapping,
             CORE.iter()
                 .filter(|&&c| c != "Hips")
                 .map(|s| s.to_string())

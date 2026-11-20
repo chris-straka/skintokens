@@ -168,13 +168,13 @@ pub fn skin(body: &Body, sk: &Skeleton, verts: &[V3], tris: &[[u32; 3]], blend: 
                     as f32;
             }
             let a = (0..nb)
-                .min_by(|&x, &y| d[x].partial_cmp(&d[y]).unwrap_or(std::cmp::Ordering::Equal))
+                .min_by(|&x, &y| d[x].total_cmp(&d[y]))
                 .unwrap_or(0);
             w.push(vec![(a as u16, 1.0)]);
             continue;
         }
         let a = (0..nb)
-            .min_by(|&x, &y| d[x].partial_cmp(&d[y]).unwrap_or(std::cmp::Ordering::Equal))
+            .min_by(|&x, &y| d[x].total_cmp(&d[y]))
             .unwrap_or(0);
         let mut row: Vec<(u16, f32)> = vec![(a as u16, 1.0)];
         if d[a].is_finite() {
@@ -206,7 +206,7 @@ pub fn skin(body: &Body, sk: &Skeleton, verts: &[V3], tris: &[[u32; 3]], blend: 
         }
     }
     let norm = |row: &mut Vec<(u16, f32)>| {
-        row.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap().then(a.0.cmp(&b.0)));
+        row.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
         row.truncate(4);
         let s: f32 = row.iter().map(|x| x.1).sum();
         row.iter_mut().for_each(|x| x.1 /= s.max(1e-12));

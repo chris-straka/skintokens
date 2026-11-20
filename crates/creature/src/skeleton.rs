@@ -55,7 +55,7 @@ fn bends(l: &Limb, want: usize, most: usize, defaults: &[f64]) -> Vec<f64> {
             v.push(d);
         }
     }
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    v.sort_by(|a, b| a.total_cmp(b));
     v
 }
 
@@ -83,7 +83,7 @@ fn bends_min(l: &Limb, most: usize, defaults: &[f64], min_turn: f64) -> Vec<f64>
         .map(|k| (turn[k], k as f64 / n as f64))
         .filter(|&(_, f)| (0.14..=0.88).contains(&f))
         .collect();
-    peaks.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+    peaks.sort_by(|a, b| b.0.total_cmp(&a.0));
     let mut out: Vec<f64> = vec![];
     for (_, f) in peaks {
         if out.len() < most && out.iter().all(|&g| (g - f).abs() >= spacing) {
@@ -98,7 +98,7 @@ fn bends_min(l: &Limb, most: usize, defaults: &[f64], min_turn: f64) -> Vec<f64>
             out.push(d);
         }
     }
-    out.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    out.sort_by(|a, b| a.total_cmp(b));
     out
 }
 
@@ -243,7 +243,7 @@ fn hinted(l: &Limb, body: &Body, hint: &[Bone], most: usize) -> Option<Vec<f64>>
             at.push(f);
         }
     }
-    at.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    at.sort_by(|a, b| a.total_cmp(b));
     let mut out: Vec<f64> = vec![];
     for f in at {
         if out.last().is_none_or(|&g| f - g >= 0.14) {
@@ -263,7 +263,7 @@ fn hinted(l: &Limb, body: &Body, hint: &[Bone], most: usize) -> Option<Vec<f64>>
                     1.0 - out[i]
                 })
             };
-            gap(a).partial_cmp(&gap(b)).unwrap()
+            gap(a).total_cmp(&gap(b))
         });
         out.remove(k.unwrap());
     }
@@ -413,7 +413,7 @@ impl Skeleton {
             hang[li] = (0..=n_spine)
                 .min_by(|&a, &b| {
                     let d = |k: usize| seg_dist(base, bones[k].head, bones[k].tail);
-                    d(a).partial_cmp(&d(b)).unwrap().then(a.cmp(&b))
+                    d(a).total_cmp(&d(b)).then(a.cmp(&b))
                 })
                 .unwrap();
         }

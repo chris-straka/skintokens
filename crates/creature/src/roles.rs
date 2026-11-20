@@ -402,9 +402,7 @@ impl Anatomy {
             let mut by_z = legs.clone();
             // (the toes are read after this, so front and hind are swapped below if it faces -Z)
             by_z.sort_by(|&a, &b| {
-                limbs[a].at(limbs[a].emerge).0[2]
-                    .partial_cmp(&limbs[b].at(limbs[b].emerge).0[2])
-                    .unwrap()
+                limbs[a].at(limbs[a].emerge).0[2].total_cmp(&limbs[b].at(limbs[b].emerge).0[2])
             });
             let mean = |ids: &[usize]| {
                 let mut c = [0.0; 3];
@@ -420,9 +418,7 @@ impl Anatomy {
                 // standing up with its hands on the ground: the upper pair are arms
                 let mut by_y = legs.clone();
                 by_y.sort_by(|&a, &b| {
-                    limbs[a].at(limbs[a].emerge).0[1]
-                        .partial_cmp(&limbs[b].at(limbs[b].emerge).0[1])
-                        .unwrap()
+                    limbs[a].at(limbs[a].emerge).0[1].total_cmp(&limbs[b].at(limbs[b].emerge).0[1])
                 });
                 for &i in &by_y[2..] {
                     limbs[i].role = Role::Arm;
@@ -483,17 +479,13 @@ impl Anatomy {
                     limbs[i].base()[1] > ground + 0.5 * height
                         && (limbs[i].tip()[1] > limbs[i].base()[1] || ahead(i) > 0.05 * size)
                 })
-                .max_by(|&a, &b| limbs[a].base()[1].partial_cmp(&limbs[b].base()[1]).unwrap())
+                .max_by(|&a, &b| limbs[a].base()[1].total_cmp(&limbs[b].base()[1]))
         } else {
             centre
                 .iter()
                 .copied()
                 .filter(|&i| ahead(i) > 0.05 * size)
-                .max_by(|&a, &b| {
-                    (fwd * limbs[a].tip()[2])
-                        .partial_cmp(&(fwd * limbs[b].tip()[2]))
-                        .unwrap()
-                })
+                .max_by(|&a, &b| (fwd * limbs[a].tip()[2]).total_cmp(&(fwd * limbs[b].tip()[2])))
         };
         // A body that stands and holds its head to one side (a hunched
         // creature in no clear pose) has no limb on the midline up there:
@@ -538,11 +530,7 @@ impl Anatomy {
             .iter()
             .copied()
             .filter(|&i| Some(i) != head && ahead(i) < -0.05 * size)
-            .min_by(|&a, &b| {
-                (fwd * limbs[a].tip()[2])
-                    .partial_cmp(&(fwd * limbs[b].tip()[2]))
-                    .unwrap()
-            });
+            .min_by(|&a, &b| (fwd * limbs[a].tip()[2]).total_cmp(&(fwd * limbs[b].tip()[2])));
         if let Some(tl) = tail {
             limbs[tl].role = Role::Tail;
         }
@@ -674,7 +662,7 @@ fn emerges(l: &Limb) -> f64 {
     let mut outer: Vec<f64> = (n * 2 / 5..=n * 9 / 10)
         .map(|k| l.at(l.length * k as f64 / n as f64).1)
         .collect();
-    outer.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    outer.sort_by(|a, b| a.total_cmp(b));
     let typical = outer[outer.len() / 2];
     for k in 0..=n * 2 / 5 {
         let s = l.length * k as f64 / n as f64;
@@ -734,7 +722,7 @@ fn chain_from(t: &Tree, first: usize) -> Vec<usize> {
                 (geom::dot(d, dir) / (geom::norm(d) * dl).max(1e-12), c)
             })
             .filter(|x| x.0 > 0.5)
-            .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            .max_by(|a, b| a.0.total_cmp(&b.0));
         if let Some((_, c)) = best {
             chain.push(c);
         }
@@ -782,14 +770,14 @@ fn spine_line(
         };
         let l = legs
             .iter()
-            .min_by(|a, b| key(a).partial_cmp(&key(b)).unwrap())
+            .min_by(|a, b| key(a).total_cmp(&key(b)))
             .unwrap();
         attach(l)
     } else {
         let p = trunk_leaves
             .iter()
             .copied()
-            .min_by(|&a, &b| score_far(a, 1.0).partial_cmp(&score_far(b, 1.0)).unwrap())
+            .min_by(|&a, &b| score_far(a, 1.0).total_cmp(&score_far(b, 1.0)))
             .unwrap_or(0);
         (p, end_of(p))
     };
@@ -806,7 +794,7 @@ fn spine_line(
             .iter()
             .copied()
             .filter(|&p| p != low.0 || trunk_leaves.len() == 1)
-            .max_by(|&a, &b| score_far(a, 1.0).partial_cmp(&score_far(b, 1.0)).unwrap())
+            .max_by(|&a, &b| score_far(a, 1.0).total_cmp(&score_far(b, 1.0)))
             .unwrap_or(0);
         (p, end_of(p))
     };

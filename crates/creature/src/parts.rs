@@ -156,12 +156,7 @@ impl Body {
         let main_comp = largest.1;
         let seed = (0..n)
             .filter(|&i| solid.inside[i] && comp[i] == main_comp)
-            .max_by(|&a, &b| {
-                solid.depth[a]
-                    .partial_cmp(&solid.depth[b])
-                    .unwrap()
-                    .then(b.cmp(&a))
-            })
+            .max_by(|&a, &b| solid.depth[a].total_cmp(&solid.depth[b]).then(b.cmp(&a)))
             .expect("an empty solid");
         let dist = geodesic(&solid, &[seed]);
         let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
@@ -195,12 +190,7 @@ impl Body {
         let band_of = |i: usize| (self.dist[i] / BAND) as usize;
         let mut node_of = vec![u32::MAX; n];
         let mut order: Vec<usize> = (0..n).filter(|&i| self.dist[i].is_finite()).collect();
-        order.sort_by(|&a, &b| {
-            self.dist[a]
-                .partial_cmp(&self.dist[b])
-                .unwrap()
-                .then(a.cmp(&b))
-        });
+        order.sort_by(|&a, &b| self.dist[a].total_cmp(&self.dist[b]).then(a.cmp(&b)));
         let mut stack = vec![];
         for &st in &order {
             if node_of[st] != u32::MAX {
@@ -469,7 +459,7 @@ impl Body {
             let n = cnt[id].max(1) as f64;
             let m = cov[id].map(|r| r.map(|x| x / n));
             let mut e = eigenvalues_sym3(m).map(|x| x.max(0.0).sqrt());
-            e.sort_by(|a, b| b.partial_cmp(a).unwrap());
+            e.sort_by(|a, b| b.total_cmp(a));
             parts[id].spread = e;
         }
         self.parts = parts;
