@@ -75,8 +75,12 @@ if not cb or not os.path.exists(cb):
     sys.exit(2)
 
 picker_doc = json.load(open(picker_json)) if os.path.isfile(picker_json) else {}
-baselines = picker_doc.get("picker_baselines") or {}
-cal_summary = picker_doc.get("calibration_summary") or {}
+baselines = picker_doc.get("baselines") or picker_doc.get("picker_baselines") or {}
+gate_failures = picker_doc.get("gate_failures") or []
+cal_summary = {
+    "artists_total": len(picker_doc.get("artists") or {}),
+    "calibration_gate_failures": len(gate_failures),
+}
 
 def score_one(truth, cand, out_p):
     r = subprocess.run([cb, "score", truth, cand, "--json", out_p], capture_output=True, text=True, timeout=600)
@@ -88,7 +92,7 @@ def score_one(truth, cand, out_p):
         "missing_chains": len(d["skeleton"]["missing_chains"]),
         "skin_mean_pct": d["skin"]["mean_pct"],
         "skin_p95_pct": d["skin"]["p95_pct"],
-        "weights_only_pct": d.get("weights_only", {}).get("mean_pct"),
+        "weights_only_pct": (d.get("skin_weights_only") or d.get("weights_only") or {}).get("mean_pct"),
     }
 
 def median_or_none(vals):

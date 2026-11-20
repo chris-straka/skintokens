@@ -192,6 +192,40 @@ of the day this was written.)
 - The predicted skeleton's lead here is partly unfair: see the first
   limit below.
 
+## Part A: post-11-16 and frozen held-out medians (2026-11-20, `skintokens-5`)
+
+Measured with current `skintokens` (CUDA), `creature-rig`, `creature-bench`,
+and `weights` (cut-cell geodesic) across both the original 12 in-sample
+animals and the 12 frozen non-Quaternius CC0/CC-BY held-out animals
+(`tools/bench/heldout_manifest.json`, fleet jobs `96qnk55e`, `gymftv8v`,
+`7ta6s56x`):
+
+### In-sample 12 animals (`gymftv8v`, `7ta6s56x`)
+
+| Rig | N | Joints med | Missing chain | Skin mean med | Skin p95 med | Weights-only med |
+|---|---:|---:|---:|---:|---:|---:|
+| the artist's rig | 12 | 0.00% | 0 of 12 | 0.00% | 0.00% | 0.00% |
+| artist's skeleton, crude weights | 12 | 0.00% | 0 of 12 | 0.63% | 1.93% | 0.58% |
+| `predicted` (best SkinTokens seed) | 12 | **3.08%** | 4 of 12 | **0.71%** | **1.95%** | **0.50%** |
+| `route` (picked) | 12 | 5.00% | 8 of 12 | 1.10% | 2.82% | 0.82% |
+| `body` (body-read alone) | 12 | 6.86% | 11 of 12 | 1.52% | 3.49% | 1.22% |
+
+### Frozen held-out 12 non-Quaternius animals (`tools/bench/heldout.sh`, `7ta6s56x`)
+
+| Rig | N | Joints med | Missing chain | Skin mean med | Skin p95 med | Weights-only med |
+|---|---:|---:|---:|---:|---:|---:|
+| the artist's rig | 12 | 0.00% | 0 of 12 | 0.00% | 0.00% | 0.00% |
+| artist's skeleton, crude weights | 12 | 0.00% | 1 of 12 | 0.20% | 0.74% | 0.20% |
+| `predicted` (best SkinTokens seed) | 12 | **5.38%** | 11 of 12 | **0.59%** | **1.58%** | **0.53%** |
+| `route` (picked) | 12 | **5.66%** | 11 of 12 | **0.65%** | **1.69%** | **0.64%** |
+| `body` (body-read alone) | 12 | 7.78% | 12 of 12 | 1.80% | 5.04% | 1.21% |
+
+- On unseen non-Quaternius and dense (16k–52k) animals, SkinTokens
+  `predicted` joint error increases from `3.08%` to `5.38%` and `11/12`
+  animals miss at least one fine chain in 55–107 bone artist rigs, yet
+  its skin error stays low (`0.59%` mean / `1.58%` p95) and beats the
+  body-read rig by 3x (`1.80%` mean / `5.04%` p95).
+
 ## Part A: limits
 
 - **The old route's model has probably seen these animals.** They are

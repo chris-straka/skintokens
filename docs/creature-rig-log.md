@@ -360,3 +360,46 @@ On the twelve benchmark animals, the old creature score (`bend * skeleton
   case, answered `cant_tell` on `bat`, and agreed **3 of 3** with ground
   truth and `pick_score` on `velociraptor`, `fox` and `trex`, retiring
   the old score on all three.
+
+## 2026-11-20: Frozen held-out 12-animal set, honest baselines, post-11-16 medians, and subtle plants (`skintokens-1/-2/-5/-6`)
+
+- **Frozen held-out set (`skintokens-1`, fleet `96qnk55e`):** Selected and
+  froze 12 non-Quaternius, CC0-1.0 / CC-BY-4.0 animated animals from
+  independent authors (`BabylonJS/Assets` and `Mesh2Motion`), with zero
+  overlap against the 12 in-sample animals and covering winged, hunched,
+  long-armed, many-legged, legless, quadruped, and dense 16k–52k triangle
+  meshes (`bee_dense` 51.7k, `octopus_dense` 16.1k, `shark_dense` 51.2k,
+  `eagle`, `m2m_dragon`, `kaiju`, `m2m_trex`, `m2m_spider`, `m2m_snake`,
+  `dog`, `panda`, `whale`). Manifest and SHA-256s live in
+  `tools/bench/heldout_manifest.json`; aggregate-only gate is
+  `tools/bench/heldout.sh`.
+- **Picker baselines (`skintokens-2`, fleet `gymftv8v` + `7ta6s56x`):**
+  - **In-sample 12:** picker **11 of 12** (LOO **11 of 12**, old score
+    **9 of 12**, **always-predicted 12 of 12**, always-body **0 of 12**,
+    coin-flip `6.0/12` expected, `3/12` seed=0). Calibration gate: 12/12
+    hand-made rigs >= 90 and beat crude & planted controls.
+  - **Frozen held-out 12 (`heldout.sh`):** picker **10 of 12** (LOO
+    **10 of 12**, old score **6 of 12**, **always-predicted 11 of 12**,
+    always-body **1 of 12**, coin-flip `6.0/12` expected, `4/12` seed=0).
+    Calibration gate: **6 of 12** non-Quaternius/dense/legless artist
+    rigs fail `score_artists`'s `>= 90` calibration threshold.
+  - **Honest verdict:** `always-predicted` beats the current `pick_score`
+    picker by 1 animal on both in-sample (`12/12` vs `11/12`) and frozen
+    held-out (`11/12` vs `10/12`), while `pick_score` beats the old score
+    (`10/12` vs `6/12` held-out) and coin-flip (`6/12`).
+- **Per-limb check & subtle plant verification (`skintokens-6`, fleet `gymftv8v`):**
+  - **In-sample 12:** artist anatomy pass **12/12**; `loud` rejected
+    **12/12**, `mirror` rejected **12/12**, `falloff` rejected **12/12**
+    (**PASS**).
+  - **Frozen held-out 12:** artist anatomy pass **8/12** (honest failure
+    on 4 of 12 non-Quaternius/dense/legless artist rigs); on all 11
+    limbed animals (`m2m_snake` is legless so `creature-bench plant`
+    exits 2), `loud` rejected **11/11**, `mirror` rejected **11/11**,
+    `falloff` rejected **11/11**.
+- **Route medians (`skintokens-5`, fleet `gymftv8v` + `7ta6s56x`):** See
+  `docs/creature-bench.md` ("Post-11-16 and held-out medians"). On frozen
+  held-out animals, `predicted` (`5.38%` joints, `0.59%` skin mean,
+  `1.58%` p95) continues to outperform `body` (`7.78%` joints, `1.80%`
+  skin mean, `5.04%` p95) by 3x on skin error, and the picked `route`
+  tracks `predicted` closely (`5.66%` joints, `0.65%` skin mean, `1.69%`
+  p95).
