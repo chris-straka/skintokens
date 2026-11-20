@@ -52,7 +52,7 @@ pub fn mirror_plane(verts: &[V3]) -> Mirror {
     let best_at = |yaw: f64| -> (f64, f64) {
         let (s, c) = yaw.to_radians().sin_cos();
         let mut proj: Vec<f64> = sample.iter().map(|p| c * p[0] + s * p[2]).collect();
-        proj.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        proj.sort_by(|a, b| a.total_cmp(b));
         let mid = (proj[0] + proj[proj.len() - 1]) / 2.0;
         let med = proj[proj.len() / 2];
         let mut best = (f64::INFINITY, 0.0);

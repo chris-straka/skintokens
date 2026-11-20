@@ -586,7 +586,7 @@ impl Welded {
                 scratch.clear();
                 scratch.extend(cand.values());
                 let (_, kth, _) =
-                    scratch.select_nth_unstable_by(K - 1, |a, b| a.partial_cmp(b).unwrap());
+                    scratch.select_nth_unstable_by(K - 1, |a, b| a.total_cmp(b));
                 if *kth <= dc {
                     break;
                 }
@@ -621,7 +621,7 @@ impl Welded {
             .filter(|&(_, d)| d <= reach)
             .map(|(s, d)| (d, s as usize))
             .collect();
-        out.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        out.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
         out.truncate(K);
         out
     }
@@ -710,12 +710,7 @@ pub fn top4(skin: &[Vec<f32>]) -> (Vec<[u16; 4]>, Vec<[f32; 4]>) {
     let mut ws = Vec::with_capacity(skin.len());
     for row in skin {
         let mut idx: Vec<usize> = (0..row.len()).collect();
-        idx.sort_by(|&a, &b| {
-            row[b]
-                .partial_cmp(&row[a])
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then(a.cmp(&b))
-        });
+        idx.sort_by(|&a, &b| row[b].total_cmp(&row[a]).then(a.cmp(&b)));
         let k = idx.len().min(4);
         let s: f32 = idx[..k].iter().map(|&i| row[i].max(0.0)).sum();
         let mut j4 = [0u16; 4];

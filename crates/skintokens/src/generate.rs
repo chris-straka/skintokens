@@ -153,9 +153,7 @@ fn top_k(scores: &mut [f32], k: usize) {
         return;
     }
     let mut v: Vec<f32> = scores.to_vec();
-    v.select_nth_unstable_by(k - 1, |a, b| {
-        b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal)
-    });
+    v.select_nth_unstable_by(k - 1, |a, b| b.total_cmp(a));
     let thr = v[k - 1];
     scores.iter_mut().for_each(|s| {
         if *s < thr {
@@ -176,7 +174,7 @@ fn top_p(scores: &mut [f32], p: f32, min_keep: usize) {
         .map(|(i, s)| (s, i))
         .collect();
     // ascending; torch.sort is not stable but ties only reorder equal values
-    finite.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(a.1.cmp(&b.1)));
+    finite.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
     let m = finite.iter().map(|x| x.0).fold(f32::NEG_INFINITY, f32::max);
     let z: f32 = finite.iter().map(|x| (x.0 - m).exp()).sum();
     let n = finite.len();
@@ -298,18 +296,18 @@ pub fn beam_search(
                 })
                 .collect();
             keys.select_nth_unstable_by(keep - 1, |x, y| {
-                y.0.partial_cmp(&x.0).unwrap().then(x.1.cmp(&y.1))
+                y.0.total_cmp(&x.0).then(x.1.cmp(&y.1))
             });
             keys.truncate(keep);
-            keys.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap().then(x.1.cmp(&y.1)));
+            keys.sort_by(|x, y| y.0.total_cmp(&x.0).then(x.1.cmp(&y.1)));
             keys.into_iter().map(|x| x.1).collect()
         } else {
             let mut idx: Vec<usize> = (0..acc.len()).collect();
             idx.select_nth_unstable_by(keep - 1, |&x, &y| {
-                acc[y].partial_cmp(&acc[x]).unwrap().then(x.cmp(&y))
+                acc[y].total_cmp(&acc[x]).then(x.cmp(&y))
             });
             idx.truncate(keep);
-            idx.sort_by(|&x, &y| acc[y].partial_cmp(&acc[x]).unwrap().then(x.cmp(&y)));
+            idx.sort_by(|&x, &y| acc[y].total_cmp(&acc[x]).then(x.cmp(&y)));
             idx
         };
         let cand_scores: Vec<f32> = cand.iter().map(|&i| acc[i]).collect();
@@ -334,12 +332,7 @@ pub fn beam_search(
             .map(|(&s, &h)| s + if h { -1e9 } else { 0.0 })
             .collect();
         let mut order: Vec<usize> = (0..keep).collect();
-        order.sort_by(|&x, &y| {
-            run_scores[y]
-                .partial_cmp(&run_scores[x])
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then(x.cmp(&y))
-        });
+        order.sort_by(|&x, &y| run_scores[y].total_cmp(&run_scores[x]).then(x.cmp(&y)));
         let next: Vec<usize> = order[..nb].to_vec();
         // f. finished pool
         let denom = ((cur_len + 1) as f32).powf(lp);
@@ -358,13 +351,7 @@ pub fn beam_search(
             merged.push((s, cand_seq[k].clone(), just));
         }
         let mut morder: Vec<usize> = (0..merged.len()).collect();
-        morder.sort_by(|&x, &y| {
-            merged[y]
-                .0
-                .partial_cmp(&merged[x].0)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then(x.cmp(&y))
-        });
+        morder.sort_by(|&x, &y| merged[y].0.total_cmp(&merged[x].0).then(x.cmp(&y)));
         let mut nf = Vec::with_capacity(nb);
         for &i in &morder[..nb] {
             nf.push(merged[i].clone());

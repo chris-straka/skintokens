@@ -291,12 +291,10 @@ impl KdTree {
                 }
             }
             let axis = (0..3)
-                .max_by(|&a, &b| (hi[a] - lo[a]).partial_cmp(&(hi[b] - lo[b])).unwrap())
+                .max_by(|&a, &b| (hi[a] - lo[a]).total_cmp(&(hi[b] - lo[b])))
                 .unwrap();
             let mid = idx.len() / 2;
-            idx.select_nth_unstable_by(mid, |&a, &b| {
-                pts[a][axis].partial_cmp(&pts[b][axis]).unwrap()
-            });
+            idx.select_nth_unstable_by(mid, |&a, &b| pts[a][axis].total_cmp(&pts[b][axis]));
             out[mid] = (idx[mid], axis as u8);
             let (l, r) = idx.split_at_mut(mid);
             let (ol, or) = out.split_at_mut(mid);
@@ -359,7 +357,7 @@ mod tests {
                 .enumerate()
                 .map(|(i, p)| (dist2(*p, q).sqrt(), i))
                 .collect();
-            all.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            all.sort_by(|a, b| a.0.total_cmp(&b.0));
             assert_eq!(
                 got.iter().map(|x| x.1).collect::<Vec<_>>(),
                 all[..8].iter().map(|x| x.1).collect::<Vec<_>>()
