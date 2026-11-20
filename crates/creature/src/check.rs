@@ -116,7 +116,7 @@ pub fn read_rig(g: &Glb) -> anyhow::Result<Vec<Bone>> {
         let best = ch
             .iter()
             .copied()
-            .max_by(|&a, &b| key(a).partial_cmp(&key(b)).unwrap())
+            .max_by(|&a, &b| key(a).total_cmp(&key(b)))
             .unwrap();
         tail[j] = head[best];
         len[j] = geom::norm(geom::sub(tail[j], head[j]));
@@ -266,6 +266,17 @@ fn needed(r: Role) -> usize {
     }
 }
 
+fn role_name(r: Role) -> &'static str {
+    match r {
+        Role::Leg => "leg",
+        Role::Arm => "arm",
+        Role::Wing => "wing",
+        Role::Tail => "tail",
+        Role::Head => "head",
+        Role::Extra => "extra",
+    }
+}
+
 pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
     let size = body.size;
     let nb = bones.len();
@@ -372,13 +383,13 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
     // order within each limb, from the body outward
     for li in 0..an.limbs.len() {
         let mut ids: Vec<usize> = (0..nb).filter(|&b| bones[b].limb == Some(li)).collect();
-        ids.sort_by(|&a, &b| along[a].partial_cmp(&along[b]).unwrap());
+        ids.sort_by(|&a, &b| along[a].total_cmp(&along[b]));
         for (k, &b) in ids.iter().enumerate() {
             bones[b].index = k;
         }
     }
     let mut trunk: Vec<usize> = (0..nb).filter(|&b| bones[b].trunk).collect();
-    trunk.sort_by(|&a, &b| along[a].partial_cmp(&along[b]).unwrap());
+    trunk.sort_by(|&a, &b| along[a].total_cmp(&along[b]));
     for (k, &b) in trunk.iter().enumerate() {
         bones[b].index = k;
     }
@@ -437,6 +448,7 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
     let inside_cells = body.solid.inside.iter().filter(|&&b| b).count().max(1);
     let mut limb_scores = vec![];
     let mut limb_rows = vec![];
+    let mut min_limb = f64::INFINITY;
     for (li, l) in an.limbs.iter().enumerate() {
         let ids: Vec<usize> = (0..nb)
             .filter(|&b| bones[b].limb == Some(li) && bones[b].deforms)
@@ -455,8 +467,7 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
                     .filter(|&k| k != b && bones[k].deforms && bones[k].limb.is_none())
                     .min_by(|&a, &c| {
                         geom::norm(geom::sub(bones[a].tail, bones[b].head))
-                            .partial_cmp(&geom::norm(geom::sub(bones[c].tail, bones[b].head)))
-                            .unwrap()
+                            .total_cmp(&geom::norm(geom::sub(bones[c].tail, bones[b].head)))
                     })
                     .filter(|&k| geom::norm(geom::sub(bones[k].tail, bones[b].head)) <= 0.05 * size)
                 {
@@ -514,26 +525,47 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
                 _ => 1.0,
             }
         };
+        if !minor && l.role != Role::Extra {
+            min_limb = min_limb.min(s);
+        }
         limb_scores.push((s, weight));
-        limb_rows.push(
-            json!({"limb": l.name, "bones": ids.len(), "covered": (cov * 100.0).round() / 100.0, "body_share": share}),
-        );
+        let mut limb_pass = true;
         if cov < 0.5 || ids.is_empty() {
             let sev = if l.role == Role::Extra || minor {
                 "warn"
             } else {
                 "fail"
             };
+            if sev == "fail" {
+                limb_pass = false;
+            }
             findings.push(
                 json!({"code": "S_NO_CHAIN", "severity": sev, "part": l.name,
                 "detail": format!("bones run along {:.0}% of it", cov * 100.0)}),
             );
         } else if !enough {
             let sev = if minor { "warn" } else { "fail" };
+            if sev == "fail" {
+                limb_pass = false;
+            }
             findings.push(json!({"code": "S_SHORT_CHAIN", "severity": sev, "part": l.name,
                 "detail": format!("{} bone(s) where it needs {} to bend", chain.len(), needed(l.role))}));
         }
+        limb_rows.push(json!({
+            "limb": l.name,
+            "role": role_name(l.role),
+            "bones": ids.len(),
+            "covered": (cov * 100.0).round() / 100.0,
+            "body_share": share,
+            "score": (s * 100.0).round() / 100.0,
+            "pass": limb_pass,
+        }));
     }
+    let min_limb_score = if min_limb.is_finite() {
+        (min_limb * 100.0).round() / 100.0
+    } else {
+        1.0
+    };
     let wsum: f64 = limb_scores.iter().map(|x| x.1).sum();
     let limbs = if wsum > 0.0 {
         limb_scores.iter().map(|x| x.0 * x.1).sum::<f64>() / wsum
@@ -600,14 +632,17 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
                         .filter(|&x| bones[x].limb == Some(j) && bones[x].deforms)
                         .count(),
                 );
+                let (sa, sb) = (limb_scores[i].0, limb_scores[j].0);
+                let one_missing = (na == 0) != (nb_ == 0);
+                let score_gap = (sa - sb).abs() > 0.35;
                 pairs.1 += 1;
-                if na.abs_diff(nb_) <= 1 {
+                if na.abs_diff(nb_) <= 1 && !one_missing && !score_gap {
                     pairs.0 += 1;
                     if na != nb_ {
                         findings.push(json!({"code": "S_LOPSIDED", "severity": "warn", "part": stem(&a.name), "detail": format!("{na} bones on one side, {nb_} on the other")}));
                     }
                 } else {
-                    findings.push(json!({"code": "S_LOPSIDED", "severity": "fail", "part": stem(&a.name), "detail": format!("{na} bones on one side, {nb_} on the other")}));
+                    findings.push(json!({"code": "S_LOPSIDED", "severity": "fail", "part": stem(&a.name), "detail": format!("{na} bones (score {:.2}) on one side, {nb_} bones (score {:.2}) on the other", sa, sb)}));
                 }
             }
         }
@@ -629,6 +664,7 @@ pub fn check(body: &Body, an: &Anatomy, mut bones: Vec<Bone>) -> Verdict {
         "upright": an.upright,
         "faces": if an.forward > 0.0 { "+z" } else { "-z" },
         "score": (score * 10.0).round() / 10.0,
+        "min_limb_score": min_limb_score,
         "pass": failing == 0,
         "bones": nb,
         "limbs": limb_rows,

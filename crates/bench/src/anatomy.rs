@@ -17,6 +17,7 @@ struct Limb {
     path: Vec<usize>,
     joints: usize,
     length: f64,
+    mass: f64,
     /// +1 on +X, -1 on -X.
     side: i32,
     attach: V3,
@@ -61,7 +62,7 @@ pub fn check(rig: &Rig) -> Value {
     let size = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
     let len = size.iter().cloned().fold(0.0, f64::max);
     let mut xs: Vec<f64> = rig.rest_pos.iter().map(|p| p[0]).collect();
-    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    xs.sort_by(|a, b| a.total_cmp(b));
     let x0 = xs[xs.len() / 2];
     let (mut lxlo, mut lxhi) = (f64::INFINITY, f64::NEG_INFINITY);
     for p in rig
@@ -178,11 +179,13 @@ pub fn check(rig: &Rig) -> Value {
             }
         }
         let tip = pos[*best.1.last().unwrap()];
+        let (_, mass) = skin_of(&below(r));
         limbs.push(Limb {
             root: r,
             joints: best.1.len(),
             path: best.1,
             length: best.0.max(0.0),
+            mass,
             side: if sum_x / count as f64 >= 0.0 { 1 } else { -1 },
             attach: pos[r],
             tip,
@@ -234,7 +237,7 @@ pub fn check(rig: &Rig) -> Value {
             }
         }
     }
-    cand.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
+    cand.sort_by(|x, y| x.0.total_cmp(&y.0));
     for (d, a, b) in cand {
         // a body in a lopsided pose holds its shoulders unevenly
         if d > (if lopsided_body { 0.25 } else { 0.15 }) * len
@@ -246,8 +249,11 @@ pub fn check(rig: &Rig) -> Value {
         limbs[a].partner = Some(b);
         limbs[b].partner = Some(a);
         let (la, lb) = (&limbs[a], &limbs[b]);
-        let ratio = if la.length.min(lb.length) > 1e-9 {
-            la.length.max(lb.length) / la.length.min(lb.length)
+        let (lo_len, hi_len) = (la.length.min(lb.length), la.length.max(lb.length));
+        let ratio = if lo_len > 1e-9 {
+            hi_len / lo_len
+        } else if hi_len > 0.05 * len {
+            f64::INFINITY
         } else {
             1.0
         };
@@ -262,6 +268,21 @@ pub fn check(rig: &Rig) -> Value {
                     lb.length
                 ),
             );
+        }
+        if !lopsided_body {
+            let (lo_mass, hi_mass) = (la.mass.min(lb.mass), la.mass.max(lb.mass));
+            if hi_mass >= 5.0 && lo_mass / hi_mass < 0.35 {
+                fail(
+                    "B_FALLOFF",
+                    format!(
+                        "a left and its right hold very different amounts of skin: {} holds {:.1}, {} holds {:.1}",
+                        label(la),
+                        la.mass,
+                        label(lb),
+                        lb.mass
+                    ),
+                );
+            }
         }
     }
     let mut unpaired: Vec<usize> = (0..limbs.len())
@@ -331,11 +352,7 @@ pub fn check(rig: &Rig) -> Value {
                 mass >= 0.01 * verts
                     && (pairs.is_empty() || limbs[i].attach[axis] > jmax - 0.1 * len)
             })
-            .max_by(|&a, &b| {
-                limbs[a].attach[axis]
-                    .partial_cmp(&limbs[b].attach[axis])
-                    .unwrap()
-            });
+            .max_by(|&a, &b| limbs[a].attach[axis].total_cmp(&limbs[b].attach[axis]));
         if let Some(h) = leaning_head {
             has_head = true;
             limbs[h].kind = "head";
@@ -531,6 +548,7 @@ pub fn check(rig: &Rig) -> Value {
         .map(|l| {
             json!({
                 "from": rig.names[l.root], "to": rig.names[*l.path.last().unwrap()], "joints": l.joints, "length": r3(l.length),
+                "skin_mass": r3(l.mass),
                 "side": if l.side > 0 { "+x" } else { "-x" }, "kind": l.kind,
                 "partner": l.partner.map(|p| rig.names[limbs[p].root].clone()),
                 "reaches_the_ground": l.tip[1] - ground < 0.12 * size[1],
