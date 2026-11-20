@@ -154,7 +154,7 @@ fn strip_front_left_distal(src: &Path, dst: &Path) {
         .names
         .iter()
         .enumerate()
-        .filter(|(_, n)| n.starts_with("leg_front") && n.ends_with(".L"))
+        .filter(|(_, n)| n.contains("leg_front") && n.ends_with(".L"))
         .map(|(i, _)| i)
         .collect();
     front_l.sort();
@@ -163,8 +163,17 @@ fn strip_front_left_distal(src: &Path, dst: &Path) {
         "expected >=2 bones on leg_front.L, got {:?}",
         info.names
     );
-    for &ji in &front_l[1..] {
-        drop_slots.insert(info.skin_slot[ji] as u16);
+    // Keep only the top bone (whose parent is not also in front_l); strip all descendants.
+    let set: std::collections::HashSet<usize> = front_l.iter().copied().collect();
+    let root_fl = front_l
+        .iter()
+        .copied()
+        .find(|&i| info.parents[i] < 0 || !set.contains(&(info.parents[i] as usize)))
+        .unwrap_or(front_l[0]);
+    for &ji in &front_l {
+        if ji != root_fl {
+            drop_slots.insert(info.skin_slot[ji] as u16);
+        }
     }
     let root_slot = info.skin_slot[0] as u16;
     let doc = g.doc().unwrap();
@@ -216,16 +225,25 @@ fn split_front_left_bone(src: &Path, dst: &Path) {
     let mut front_l: Vec<usize> = names
         .iter()
         .enumerate()
-        .filter(|(_, n)| n.starts_with("leg_front") && n.ends_with(".L"))
+        .filter(|(_, n)| n.contains("leg_front") && n.ends_with(".L"))
         .map(|(i, _)| i)
         .collect();
     front_l.sort();
     assert!(front_l.len() >= 2, "expected >=2 leg_front.L bones: {names:?}");
-    let p_idx = front_l[0];
-    let c_idx = front_l[1];
+    let set: std::collections::HashSet<usize> = front_l.iter().copied().collect();
+    let p_idx = front_l
+        .iter()
+        .copied()
+        .find(|&i| parents[i] < 0 || !set.contains(&(parents[i] as usize)))
+        .unwrap_or(front_l[0]);
+    let c_idx = front_l
+        .iter()
+        .copied()
+        .find(|&i| parents[i] == p_idx as i64)
+        .unwrap_or(front_l[1]);
     let mid = geom::scale(geom::add(info.heads[p_idx], info.heads[c_idx]), 0.5);
     let new_idx = names.len();
-    names.push("leg_front_mid.L".to_string());
+    names.push("DEF-leg_front.mid.L".to_string());
     parents.push(p_idx as i64);
     worlds.push(geom::from_trs(mid, [0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0]));
     parents[c_idx] = new_idx as i64;
