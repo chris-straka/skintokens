@@ -124,6 +124,22 @@ class PickScoreTest(unittest.TestCase):
         self.assertFalse(trusted(96.0, 94.5))
         self.assertEqual(fair_score(100.0, 0.0, True, CLEAN_ANATOMY, 0.3), 100.0)
 
+    def test_subtle_falloff_anatomy_fails_rig_score_and_picker(self):
+        falloff_anatomy = {
+            "pass": False,
+            "findings": [{"code": "B_FALLOFF", "severity": "fail"}],
+            "limbs": CLEAN_ANATOMY["limbs"],
+        }
+        an = anatomy_summary(falloff_anatomy)
+        self.assertFalse(an["pass"])
+        self.assertIn("B_FALLOFF", an["codes"])
+        score = rig_score({"score": 96.0, "pass": True, "blended_share": 0.30}, 0.5, falloff_anatomy)
+        self.assertLess(score, 80.0)
+        body = {"skeleton": {"score": 96.0, "pass": True, "blended_share": 0.30}, "tears_pct": 0.5, "anatomy": CLEAN_ANATOMY}
+        bad = {"seed": 1, "rigged": True, "skeleton": {"score": 97.0, "pass": True, "blended_share": 0.30}, "tears_pct": 0.2, "anatomy": falloff_anatomy}
+        res = pick_candidate(body, [bad])
+        self.assertEqual(res["which"], "body")
+
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
