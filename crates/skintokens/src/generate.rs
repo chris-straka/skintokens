@@ -295,9 +295,7 @@ pub fn beam_search(
                     (k, i)
                 })
                 .collect();
-            keys.select_nth_unstable_by(keep - 1, |x, y| {
-                y.0.total_cmp(&x.0).then(x.1.cmp(&y.1))
-            });
+            keys.select_nth_unstable_by(keep - 1, |x, y| y.0.total_cmp(&x.0).then(x.1.cmp(&y.1)));
             keys.truncate(keep);
             keys.sort_by(|x, y| y.0.total_cmp(&x.0).then(x.1.cmp(&y.1)));
             keys.into_iter().map(|x| x.1).collect()

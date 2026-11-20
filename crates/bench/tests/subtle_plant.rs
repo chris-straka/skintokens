@@ -80,17 +80,25 @@ fn build_skinned_glb(
     let (mut pos, mut idx, mut js, mut ws) = (vec![], vec![], vec![], vec![]);
     for (bi, bp) in boxes.iter().enumerate() {
         let ov = overrides.iter().find(|x| x.0 == bi).copied();
-        push_box(&mut pos, &mut idx, &mut js, &mut ws, bp.lo, bp.hi, |lv, _| {
-            if let Some((_, keep, fb)) = ov {
-                if lv < keep {
-                    bp.joint
+        push_box(
+            &mut pos,
+            &mut idx,
+            &mut js,
+            &mut ws,
+            bp.lo,
+            bp.hi,
+            |lv, _| {
+                if let Some((_, keep, fb)) = ov {
+                    if lv < keep {
+                        bp.joint
+                    } else {
+                        fb
+                    }
                 } else {
-                    fb
+                    bp.joint
                 }
-            } else {
-                bp.joint
-            }
-        });
+            },
+        );
     }
     let nv = pos.len() / 3;
     let mut mn = vec![f64::MAX; 3];
@@ -109,7 +117,8 @@ fn build_skinned_glb(
     let ib: Vec<u8> = idx.iter().flat_map(|x| x.to_le_bytes()).collect();
     let pa = g.push_accessor(&pb, 5126, "VEC3", nv, Some((mn, mx)), false);
     let ia = g.push_accessor(&ib, 5123, "SCALAR", idx.len(), None, false);
-    g.json["meshes"] = json!([{"name": "body", "primitives": [{"attributes": {"POSITION": pa}, "indices": ia}]}]);
+    g.json["meshes"] =
+        json!([{"name": "body", "primitives": [{"attributes": {"POSITION": pa}, "indices": ia}]}]);
     g.json["nodes"] = json!([{"name": "body", "mesh": 0}]);
     g.json["scenes"] = json!([{"nodes": [0]}]);
     g.json["scene"] = json!(0);
@@ -121,8 +130,7 @@ fn build_skinned_glb(
         .iter()
         .map(|j| geom::from_trs(j.2, [0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0]))
         .collect();
-    attach_skeleton(&mut g, &parts, &names, &parents, &worlds, &js, &ws)
-        .expect("attach skeleton");
+    attach_skeleton(&mut g, &parts, &names, &parents, &worlds, &js, &ws).expect("attach skeleton");
     g
 }
 
@@ -141,17 +149,61 @@ fn make_quadruped() -> Glb {
         ("leg_hind_1.R", 9, [-0.14, 0.12, -0.32]),
     ];
     let boxes = [
-        BoxPart { lo: [-0.14, 0.45, -0.45], hi: [0.14, 0.72, 0.05], joint: 0 },
-        BoxPart { lo: [-0.14, 0.45, 0.05], hi: [0.14, 0.72, 0.45], joint: 1 },
-        BoxPart { lo: [-0.08, 0.68, 0.44], hi: [0.08, 0.90, 0.72], joint: 2 },
-        BoxPart { lo: [0.10, 0.24, 0.28], hi: [0.18, 0.48, 0.36], joint: 3 },
-        BoxPart { lo: [0.10, 0.00, 0.28], hi: [0.18, 0.24, 0.36], joint: 4 },
-        BoxPart { lo: [-0.18, 0.24, 0.28], hi: [-0.10, 0.48, 0.36], joint: 5 },
-        BoxPart { lo: [-0.18, 0.00, 0.28], hi: [-0.10, 0.24, 0.36], joint: 6 },
-        BoxPart { lo: [0.10, 0.24, -0.36], hi: [0.18, 0.48, -0.28], joint: 7 },
-        BoxPart { lo: [0.10, 0.00, -0.36], hi: [0.18, 0.24, -0.28], joint: 8 },
-        BoxPart { lo: [-0.18, 0.24, -0.36], hi: [-0.10, 0.48, -0.28], joint: 9 },
-        BoxPart { lo: [-0.18, 0.00, -0.36], hi: [-0.10, 0.24, -0.28], joint: 10 },
+        BoxPart {
+            lo: [-0.14, 0.45, -0.45],
+            hi: [0.14, 0.72, 0.05],
+            joint: 0,
+        },
+        BoxPart {
+            lo: [-0.14, 0.45, 0.05],
+            hi: [0.14, 0.72, 0.45],
+            joint: 1,
+        },
+        BoxPart {
+            lo: [-0.08, 0.68, 0.44],
+            hi: [0.08, 0.90, 0.72],
+            joint: 2,
+        },
+        BoxPart {
+            lo: [0.10, 0.24, 0.28],
+            hi: [0.18, 0.48, 0.36],
+            joint: 3,
+        },
+        BoxPart {
+            lo: [0.10, 0.00, 0.28],
+            hi: [0.18, 0.24, 0.36],
+            joint: 4,
+        },
+        BoxPart {
+            lo: [-0.18, 0.24, 0.28],
+            hi: [-0.10, 0.48, 0.36],
+            joint: 5,
+        },
+        BoxPart {
+            lo: [-0.18, 0.00, 0.28],
+            hi: [-0.10, 0.24, 0.36],
+            joint: 6,
+        },
+        BoxPart {
+            lo: [0.10, 0.24, -0.36],
+            hi: [0.18, 0.48, -0.28],
+            joint: 7,
+        },
+        BoxPart {
+            lo: [0.10, 0.00, -0.36],
+            hi: [0.18, 0.24, -0.28],
+            joint: 8,
+        },
+        BoxPart {
+            lo: [-0.18, 0.24, -0.36],
+            hi: [-0.10, 0.48, -0.28],
+            joint: 9,
+        },
+        BoxPart {
+            lo: [-0.18, 0.00, -0.36],
+            hi: [-0.10, 0.24, -0.28],
+            joint: 10,
+        },
     ];
     build_skinned_glb(&boxes, &[], &joints)
 }
@@ -177,17 +229,61 @@ fn make_biped(arm_mode: ArmMode) -> Glb {
         ("leg_1.R", 9, [-0.12, 0.25, 0.0]),
     ];
     let boxes = [
-        BoxPart { lo: [-0.15, 0.90, -0.10], hi: [0.15, 1.25, 0.10], joint: 0 },
-        BoxPart { lo: [-0.16, 1.25, -0.10], hi: [0.16, 1.52, 0.10], joint: 1 },
-        BoxPart { lo: [-0.09, 1.54, -0.10], hi: [0.09, 1.80, 0.10], joint: 2 },
-        BoxPart { lo: [0.18, 1.36, -0.05], hi: [0.36, 1.48, 0.05], joint: 3 }, // box 3: armL0
-        BoxPart { lo: [0.36, 1.36, -0.05], hi: [0.54, 1.48, 0.05], joint: 4 }, // box 4: armL1
-        BoxPart { lo: [-0.36, 1.36, -0.05], hi: [-0.18, 1.48, 0.05], joint: 5 },
-        BoxPart { lo: [-0.54, 1.36, -0.05], hi: [-0.36, 1.48, 0.05], joint: 6 },
-        BoxPart { lo: [0.06, 0.45, -0.06], hi: [0.18, 0.90, 0.06], joint: 7 },
-        BoxPart { lo: [0.06, 0.00, -0.06], hi: [0.18, 0.45, 0.06], joint: 8 },
-        BoxPart { lo: [-0.18, 0.45, -0.06], hi: [-0.06, 0.90, 0.06], joint: 9 },
-        BoxPart { lo: [-0.18, 0.00, -0.06], hi: [-0.06, 0.45, 0.06], joint: 10 },
+        BoxPart {
+            lo: [-0.15, 0.90, -0.10],
+            hi: [0.15, 1.25, 0.10],
+            joint: 0,
+        },
+        BoxPart {
+            lo: [-0.16, 1.25, -0.10],
+            hi: [0.16, 1.52, 0.10],
+            joint: 1,
+        },
+        BoxPart {
+            lo: [-0.09, 1.54, -0.10],
+            hi: [0.09, 1.80, 0.10],
+            joint: 2,
+        },
+        BoxPart {
+            lo: [0.18, 1.36, -0.05],
+            hi: [0.36, 1.48, 0.05],
+            joint: 3,
+        }, // box 3: armL0
+        BoxPart {
+            lo: [0.36, 1.36, -0.05],
+            hi: [0.54, 1.48, 0.05],
+            joint: 4,
+        }, // box 4: armL1
+        BoxPart {
+            lo: [-0.36, 1.36, -0.05],
+            hi: [-0.18, 1.48, 0.05],
+            joint: 5,
+        },
+        BoxPart {
+            lo: [-0.54, 1.36, -0.05],
+            hi: [-0.36, 1.48, 0.05],
+            joint: 6,
+        },
+        BoxPart {
+            lo: [0.06, 0.45, -0.06],
+            hi: [0.18, 0.90, 0.06],
+            joint: 7,
+        },
+        BoxPart {
+            lo: [0.06, 0.00, -0.06],
+            hi: [0.18, 0.45, 0.06],
+            joint: 8,
+        },
+        BoxPart {
+            lo: [-0.18, 0.45, -0.06],
+            hi: [-0.06, 0.90, 0.06],
+            joint: 9,
+        },
+        BoxPart {
+            lo: [-0.18, 0.00, -0.06],
+            hi: [-0.06, 0.45, 0.06],
+            joint: 10,
+        },
     ];
     let overrides: Vec<(usize, usize, u16)> = match arm_mode {
         ArmMode::Clean => vec![],
@@ -203,7 +299,12 @@ fn make_biped(arm_mode: ArmMode) -> Glb {
 
 fn run_anatomy(glb: &Path, json_out: &Path) -> (i32, Value) {
     let out = Command::new(bench_bin())
-        .args(["anatomy", glb.to_str().unwrap(), "--json", json_out.to_str().unwrap()])
+        .args([
+            "anatomy",
+            glb.to_str().unwrap(),
+            "--json",
+            json_out.to_str().unwrap(),
+        ])
         .output()
         .expect("run creature-bench anatomy");
     let code = out.status.code().unwrap_or(-1);
@@ -213,14 +314,14 @@ fn run_anatomy(glb: &Path, json_out: &Path) -> (i32, Value) {
             String::from_utf8_lossy(&out.stderr)
         )
     });
-    (code, serde_json::from_str(&text).expect("parse anatomy json"))
+    (
+        code,
+        serde_json::from_str(&text).expect("parse anatomy json"),
+    )
 }
 
 fn tmp_dir(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!(
-        "skintokens6-{tag}-{}",
-        std::process::id()
-    ));
+    let d = std::env::temp_dir().join(format!("skintokens6-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     d
@@ -269,8 +370,13 @@ fn plant_diagonal_and_mirror_modes_are_distinct_and_fail_anatomy() {
         ])
         .output()
         .unwrap();
-    assert!(out.status.success(), "default plant failed: {}", String::from_utf8_lossy(&out.stderr));
-    let def_rep: Value = serde_json::from_str(&std::fs::read_to_string(&def_json).unwrap()).unwrap();
+    assert!(
+        out.status.success(),
+        "default plant failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let def_rep: Value =
+        serde_json::from_str(&std::fs::read_to_string(&def_json).unwrap()).unwrap();
     assert_eq!(def_rep["mode"], json!("diagonal"), "{def_rep}");
 
     // Explicit --mode diagonal.
@@ -288,8 +394,13 @@ fn plant_diagonal_and_mirror_modes_are_distinct_and_fail_anatomy() {
         ])
         .output()
         .unwrap();
-    assert!(out.status.success(), "diagonal plant failed: {}", String::from_utf8_lossy(&out.stderr));
-    let diag_rep: Value = serde_json::from_str(&std::fs::read_to_string(&diag_json).unwrap()).unwrap();
+    assert!(
+        out.status.success(),
+        "diagonal plant failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let diag_rep: Value =
+        serde_json::from_str(&std::fs::read_to_string(&diag_json).unwrap()).unwrap();
     assert_eq!(diag_rep["mode"], json!("diagonal"), "{diag_rep}");
     assert_eq!(diag_rep["pairs"], def_rep["pairs"]);
 
@@ -308,10 +419,18 @@ fn plant_diagonal_and_mirror_modes_are_distinct_and_fail_anatomy() {
         ])
         .output()
         .unwrap();
-    assert!(out.status.success(), "mirror plant failed: {}", String::from_utf8_lossy(&out.stderr));
-    let mir_rep: Value = serde_json::from_str(&std::fs::read_to_string(&mir_json).unwrap()).unwrap();
+    assert!(
+        out.status.success(),
+        "mirror plant failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let mir_rep: Value =
+        serde_json::from_str(&std::fs::read_to_string(&mir_json).unwrap()).unwrap();
     assert_eq!(mir_rep["mode"], json!("mirror"), "{mir_rep}");
-    assert_ne!(mir_rep["pairs"], diag_rep["pairs"], "mirror must differ from diagonal on a quadruped");
+    assert_ne!(
+        mir_rep["pairs"], diag_rep["pairs"],
+        "mirror must differ from diagonal on a quadruped"
+    );
     let pairs = mir_rep["pairs"].as_array().expect("mirror pairs");
     assert_eq!(pairs.len(), 4, "all 4 limb joint pairs swapped: {mir_rep}");
     for p in pairs {
@@ -370,7 +489,11 @@ fn plant_falloff_keeps_bones_and_fails_anatomy_on_quadruped_and_biped_arm() {
         ])
         .output()
         .unwrap();
-    assert!(out.status.success(), "falloff plant failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "falloff plant failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let rep: Value = serde_json::from_str(&std::fs::read_to_string(&fall_json).unwrap()).unwrap();
     assert_eq!(rep["mode"], json!("falloff"), "{rep}");
     assert!(
@@ -378,7 +501,10 @@ fn plant_falloff_keeps_bones_and_fails_anatomy_on_quadruped_and_biped_arm() {
         "falloff must reassign limb vertices: {rep}"
     );
     assert!(
-        !rep["cleared_joints"].as_array().map(|a| a.is_empty()).unwrap_or(true),
+        !rep["cleared_joints"]
+            .as_array()
+            .map(|a| a.is_empty())
+            .unwrap_or(true),
         "falloff must report cleared_joints: {rep}"
     );
     let orig_info = Glb::read(&quad).unwrap().skin_info().unwrap();
@@ -409,7 +535,11 @@ fn plant_falloff_keeps_bones_and_fails_anatomy_on_quadruped_and_biped_arm() {
         ])
         .output()
         .unwrap();
-    assert!(out.status.success(), "biped falloff plant failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "biped falloff plant failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let (code, an) = run_anatomy(&bfall_glb, &d.join("biped_falloff_an.json"));
     assert_eq!(code, 1, "biped falloff must fail anatomy: {an}");
     assert_eq!(an["pass"], json!(false), "{an}");
@@ -417,7 +547,9 @@ fn plant_falloff_keeps_bones_and_fails_anatomy_on_quadruped_and_biped_arm() {
     // 3) Subtle non-ground arm falloff: distal arm stripped (arm_0.L stays live with 1 joint,
     // length 0.0) must fail anatomy rather than slipping past the length==0 ratio loophole.
     let arm_distal = d.join("arm_distal.glb");
-    make_biped(ArmMode::DistalStripped).write(&arm_distal).unwrap();
+    make_biped(ArmMode::DistalStripped)
+        .write(&arm_distal)
+        .unwrap();
     let (code, an) = run_anatomy(&arm_distal, &d.join("arm_distal_an.json"));
     assert_eq!(code, 1, "distal arm falloff must fail anatomy: {an}");
     assert_eq!(an["pass"], json!(false), "{an}");
@@ -425,7 +557,9 @@ fn plant_falloff_keeps_bones_and_fails_anatomy_on_quadruped_and_biped_arm() {
     // 4) Subtle partial mass falloff: both arm joints stay live (same joint count & bone length),
     // only skin mass drops below 20% of its mirrored partner -> must fail with B_FALLOFF.
     let arm_partial = d.join("arm_partial.glb");
-    make_biped(ArmMode::PartialMass).write(&arm_partial).unwrap();
+    make_biped(ArmMode::PartialMass)
+        .write(&arm_partial)
+        .unwrap();
     let (code, an) = run_anatomy(&arm_partial, &d.join("arm_partial_an.json"));
     assert_eq!(code, 1, "partial arm mass falloff must fail anatomy: {an}");
     assert_eq!(an["pass"], json!(false), "{an}");

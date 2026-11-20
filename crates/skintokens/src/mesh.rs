@@ -585,8 +585,7 @@ impl Welded {
             if cand.len() >= K {
                 scratch.clear();
                 scratch.extend(cand.values());
-                let (_, kth, _) =
-                    scratch.select_nth_unstable_by(K - 1, |a, b| a.total_cmp(b));
+                let (_, kth, _) = scratch.select_nth_unstable_by(K - 1, |a, b| a.total_cmp(b));
                 if *kth <= dc {
                     break;
                 }

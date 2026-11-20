@@ -465,10 +465,8 @@ fn plant(a: &Args) -> Result<()> {
             (None, weighted.clone())
         };
         let clear_set: std::collections::HashSet<usize> = clear_joints.iter().copied().collect();
-        let cleared_names: Vec<String> = clear_joints
-            .iter()
-            .map(|&j| rig.names[j].clone())
-            .collect();
+        let cleared_names: Vec<String> =
+            clear_joints.iter().map(|&j| rig.names[j].clone()).collect();
 
         let mut g = skintokens::glb::Glb {
             json: rig.glb.json.clone(),

@@ -81,7 +81,8 @@ fn box_dog_glb() -> Glb {
     let ib: Vec<u8> = idx.iter().flat_map(|x| x.to_le_bytes()).collect();
     let pa = g.push_accessor(&pb, 5126, "VEC3", nv, Some((mn, mx)), false);
     let ia = g.push_accessor(&ib, 5123, "SCALAR", idx.len(), None, false);
-    g.json["meshes"] = json!([{"name": "dog", "primitives": [{"attributes": {"POSITION": pa}, "indices": ia}]}]);
+    g.json["meshes"] =
+        json!([{"name": "dog", "primitives": [{"attributes": {"POSITION": pa}, "indices": ia}]}]);
     g.json["nodes"] = json!([{"name": "dog", "mesh": 0}]);
     g.json["scenes"] = json!([{"nodes": [0]}]);
     g.json["scene"] = json!(0);
@@ -111,10 +112,7 @@ fn run_check(glb: &Path, json_out: &Path) -> (i32, Value) {
 }
 
 fn tmp_dir(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!(
-        "skintokens6-check-{tag}-{}",
-        std::process::id()
-    ));
+    let d = std::env::temp_dir().join(format!("skintokens6-check-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     d
@@ -229,7 +227,10 @@ fn split_front_left_bone(src: &Path, dst: &Path) {
         .map(|(i, _)| i)
         .collect();
     front_l.sort();
-    assert!(front_l.len() >= 2, "expected >=2 leg_front.L bones: {names:?}");
+    assert!(
+        front_l.len() >= 2,
+        "expected >=2 leg_front.L bones: {names:?}"
+    );
     let set: std::collections::HashSet<usize> = front_l.iter().copied().collect();
     let p_idx = front_l
         .iter()
@@ -294,7 +295,10 @@ fn clean_box_dog_reports_per_limb_scores_and_passes() {
     let min_limb = rep["min_limb_score"]
         .as_f64()
         .unwrap_or_else(|| panic!("missing min_limb_score in check report: {rep}"));
-    assert!(min_limb >= 0.8, "expected min_limb_score >= 0.8, got {min_limb}: {rep}");
+    assert!(
+        min_limb >= 0.8,
+        "expected min_limb_score >= 0.8, got {min_limb}: {rep}"
+    );
     let limbs = rep["limbs"].as_array().expect("limbs array");
     assert!(limbs.len() >= 5, "expected quadruped limbs: {rep}");
     for row in limbs {
@@ -302,8 +306,14 @@ fn clean_box_dog_reports_per_limb_scores_and_passes() {
             .as_f64()
             .unwrap_or_else(|| panic!("limb row missing numeric score: {row}"));
         assert!((0.0..=1.0).contains(&s), "score out of [0,1]: {row}");
-        assert!(row["role"].as_str().is_some(), "limb row missing role: {row}");
-        assert!(row["pass"].as_bool().is_some(), "limb row missing pass bool: {row}");
+        assert!(
+            row["role"].as_str().is_some(),
+            "limb row missing role: {row}"
+        );
+        assert!(
+            row["pass"].as_bool().is_some(),
+            "limb row missing pass bool: {row}"
+        );
         if row["role"] != json!("extra") {
             assert_eq!(row["pass"], json!(true), "clean limb should pass: {row}");
             assert!(s >= 0.8, "clean limb score too low: {row}");
@@ -325,7 +335,10 @@ fn one_limb_falloff_drops_per_limb_score_and_fails_symmetry() {
     let min_limb = rep["min_limb_score"]
         .as_f64()
         .unwrap_or_else(|| panic!("missing min_limb_score: {rep}"));
-    assert!(min_limb <= 0.5, "min_limb_score should drop <= 0.5 on falloff: {rep}");
+    assert!(
+        min_limb <= 0.5,
+        "min_limb_score should drop <= 0.5 on falloff: {rep}"
+    );
     let fl = rep["limbs"]
         .as_array()
         .unwrap()
@@ -333,7 +346,10 @@ fn one_limb_falloff_drops_per_limb_score_and_fails_symmetry() {
         .find(|r| r["limb"] == json!("leg_front.L"))
         .unwrap_or_else(|| panic!("no leg_front.L in limbs: {rep}"));
     assert_eq!(fl["pass"], json!(false), "leg_front.L must fail: {fl}");
-    assert!(fl["score"].as_f64().unwrap() <= 0.5, "leg_front.L score too high: {fl}");
+    assert!(
+        fl["score"].as_f64().unwrap() <= 0.5,
+        "leg_front.L score too high: {fl}"
+    );
     assert!(
         rep["sides_match"].as_f64().unwrap() < 1.0,
         "broken 1-vs-2 falloff leg pair must fail symmetry: {rep}"
@@ -360,7 +376,11 @@ fn healthy_three_vs_two_bone_leg_pair_still_passes_symmetry() {
     let (code, rep) = run_check(&split, &d.join("check.json"));
     assert_eq!(code, 0, "healthy 3-vs-2 leg pair should pass: {rep}");
     assert_eq!(rep["pass"], json!(true), "{rep}");
-    assert_eq!(rep["sides_match"], json!(1.0), "healthy 3-vs-2 symmetry should be 1.0: {rep}");
+    assert_eq!(
+        rep["sides_match"],
+        json!(1.0),
+        "healthy 3-vs-2 symmetry should be 1.0: {rep}"
+    );
     assert!(
         rep["min_limb_score"].as_f64().unwrap() >= 0.8,
         "healthy 3-vs-2 min_limb_score should stay >= 0.8: {rep}"

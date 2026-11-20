@@ -167,15 +167,11 @@ pub fn skin(body: &Body, sk: &Skeleton, verts: &[V3], tris: &[[u32; 3]], blend: 
                 *o = (crate::skeleton::seg_dist(p, sk.bones[b].head, sk.bones[b].tail) / cell)
                     as f32;
             }
-            let a = (0..nb)
-                .min_by(|&x, &y| d[x].total_cmp(&d[y]))
-                .unwrap_or(0);
+            let a = (0..nb).min_by(|&x, &y| d[x].total_cmp(&d[y])).unwrap_or(0);
             w.push(vec![(a as u16, 1.0)]);
             continue;
         }
-        let a = (0..nb)
-            .min_by(|&x, &y| d[x].total_cmp(&d[y]))
-            .unwrap_or(0);
+        let a = (0..nb).min_by(|&x, &y| d[x].total_cmp(&d[y])).unwrap_or(0);
         let mut row: Vec<(u16, f32)> = vec![(a as u16, 1.0)];
         if d[a].is_finite() {
             for &b in &near[a] {
