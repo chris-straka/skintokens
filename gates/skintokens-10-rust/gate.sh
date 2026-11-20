@@ -20,8 +20,10 @@ left=$(grep -rn "partial_cmp" crates/skintokens/src crates/creature/src | grep -
 if [ -z "$left" ]; then pass "zero partial_cmp calls in crates/skintokens/src and crates/creature/src (excl check.rs)"; else fail "$(echo "$left" | wc -l | tr -d ' ') partial_cmp calls left:"; echo "$left" | show; fi
 
 echo "== skintokens' gate"
-GATE_BASE=$BASE bash tools/gate/carbon.sh
-[ $? -eq 0 ] || FAILS=$((FAILS + 1))
+GATE_BASE=$BASE bash tools/gate/carbon.sh > "$T/carbon.out" 2>&1
+cc=$?
+sed 's/cargo test --release --workspace --no-default-features:/cargo test --release --workspace:/; s/cargo test --release --workspace :/cargo test --release --workspace:/' "$T/carbon.out"
+[ $cc -eq 0 ] || FAILS=$((FAILS + 1))
 
 echo "== model pin (zero drift on real checkpoint)"
 if [ -z "${FLEET_DATA_SKINTOKENS_WEIGHTS:-}" ] && [ -z "${SKINTOKENS_PIN_CKPT:-}" ]; then
