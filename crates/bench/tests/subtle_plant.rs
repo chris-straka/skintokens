@@ -114,7 +114,7 @@ fn build_skinned_glb(
     g.json["scenes"] = json!([{"nodes": [0]}]);
     g.json["scene"] = json!(0);
 
-    let parts = g.parts(Frame::Mesh).expect("mesh parts");
+    let parts = g.parts(Frame::World).expect("mesh parts");
     let names: Vec<String> = joints.iter().map(|j| j.0.to_string()).collect();
     let parents: Vec<i64> = joints.iter().map(|j| j.1).collect();
     let worlds: Vec<geom::M4> = joints

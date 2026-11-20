@@ -206,11 +206,7 @@ fn split_front_left_bone(src: &Path, dst: &Path) {
     let info = g_in.skin_info().unwrap();
     let parts = g_in.parts(Frame::Rest).unwrap();
     let mut names = info.names.clone();
-    let mut parents: Vec<i64> = info
-        .parents
-        .iter()
-        .map(|p| p.map(|x| x as i64).unwrap_or(-1))
-        .collect();
+    let mut parents: Vec<i64> = info.parents.clone();
     let mut worlds: Vec<geom::M4> = info
         .heads
         .iter()
@@ -264,7 +260,7 @@ fn split_front_left_bone(src: &Path, dst: &Path) {
     }
 
     let mut g_out = box_dog_glb();
-    let bare_parts = g_out.parts(Frame::Mesh).unwrap();
+    let bare_parts = g_out.parts(Frame::World).unwrap();
     attach_skeleton(&mut g_out, &bare_parts, &names, &parents, &worlds, &js, &ws).unwrap();
     g_out.write(dst).unwrap();
 }
