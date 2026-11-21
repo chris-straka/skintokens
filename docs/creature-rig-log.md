@@ -415,7 +415,31 @@ On the twelve benchmark animals, the old creature score (`bend * skeleton
     and `route` `5.66%` / `11/12` / **`0.65%`** / **`1.69%`** / **`0.64%`**).
   - UniRig places joints closer on unseen non-Quaternius bodies, while
     SkinTokens delivers >2x lower skin deformation error on both sets.
-- **Outside skeleton rivals — Puppeteer & MagicArticulate setup (`skintokens-8`, fleet `kn533sry`):**
+- **Outside skeleton rivals — Puppeteer & MagicArticulate GPU bench (`skintokens-8`, fleet `kn533sry`, `zmnw2ntc`, `v5bc6s56`):**
   - **Licences verified:** `Seed3D/Puppeteer` skeleton (`puppeteer_skeleton_w_diverse_pose.pth`) **Apache-2.0** (skinning stage excluded: depends on NVIDIA PartField, non-commercial); `Seed3D/MagicArticulate` skeleton (`checkpoint_trainonv2_hier.pth`) **Apache-2.0** (no skinning code released); shared shape encoder `Maikou/Michelangelo` (`shapevae-256.ckpt`) **LGPL-3.0** weights / **GPL-3.0** code (tool-side only).
   - Added `tools/bench/setup_skeleton_rivals.sh`, `tools/bench/run_skeleton_rivals.py` (SDPA patch without `flash-attn`, glTF `+Y`-up world OBJ export, single-root tree sanitizer, rigid + `skintokens skin` GLB builder), and `tools/test_skeleton_rivals.py`.
-  - Fleet `kn533sry` completed full setup on `f` (`/data/rigwork/puppeteer` + `/data/rigwork/venv-puppeteer`, `torch 2.6.0+cu124`, `transformers 4.46.1`, `mesh2sdf`, zero PartField, all 3 checkpoints cached), then hit PyTorch 2.6 `weights_only=True` `UnpicklingError` in `Michelangelo/michelangelo/models/tsal/asl_pl_module.py:68` during the 2-animal smoke pass (`fox`, `horse`). Patched in `run_skeleton_rivals.py` (`asl_pl_module.py` patch + `TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1`, unit-tested); capped strictly to that single GPU run to keep `f`'s GPU free (no Puppeteer/MagicArticulate `creature-bench` numbers yet; cached env is ready for a fast 1-command run later).
+  - Fleet `zmnw2ntc` ran SDPA skeleton inference (`apply_marching_cubes=true`, seed 42) across all `12/12` in-sample and `12/12` frozen held-out meshes (`0` failures), and `v5bc6s56` skinned every predicted skeleton with `skintokens skin` (`sk_wrap.sh`) and scored both skinned and rigid baselines with `creature-bench score` (`12/12` in-sample, `12/12` held-out, `0` failures):
+
+| Set | Rig | N | Joints med | Missing chain | Skin mean med | Skin p95 med | Weights-only med |
+|---|---|---:|---:|---:|---:|---:|---:|
+| In-sample | `predicted` (SkinTokens best seed) | 12 | **3.08%** | **4/12** | **0.71%** | **1.95%** | **0.50%** |
+| In-sample | `route` (SkinTokens picked) | 12 | 5.00% | 8/12 | 1.10% | 2.82% | 0.82% |
+| In-sample | `puppeteer` + `skintokens skin` | 12 | 3.53% | 6/12 | 0.89% | 2.29% | 0.62% |
+| In-sample | `puppeteer` + rigid | 12 | 3.54% | 9/12 | 1.17% | 2.94% | 1.31% |
+| In-sample | `magicarticulate` + `skintokens skin` | 12 | 4.91% | 7/12 | 1.08% | 2.78% | 0.76% |
+| In-sample | `magicarticulate` + rigid | 12 | 5.07% | 9/12 | 1.26% | 3.34% | 1.26% |
+| In-sample | `unirig` (VAST-AI/UniRig, SDPA) | 12 | 3.60% | 7/12 | 1.24% | 3.05% | 1.52% |
+| In-sample | `body` (body-read alone) | 12 | 6.86% | 11/12 | 1.52% | 3.49% | 1.22% |
+| Held-out | `predicted` (SkinTokens best seed) | 12 | 5.38% | 11/12 | **0.59%** | **1.58%** | **0.53%** |
+| Held-out | `route` (SkinTokens picked) | 12 | 5.66% | 11/12 | **0.65%** | **1.69%** | **0.64%** |
+| Held-out | `puppeteer` + `skintokens skin` | 12 | **3.94%** | 12/12 | 0.77% | 1.62% | 0.67% |
+| Held-out | `puppeteer` + rigid | 12 | 4.10% | 12/12 | 0.97% | 2.52% | 0.78% |
+| Held-out | `magicarticulate` + `skintokens skin` | 12 | 5.28% | **10/12** | 0.85% | 1.83% | 0.76% |
+| Held-out | `magicarticulate` + rigid | 12 | 5.25% | **10/12** | 0.92% | 2.62% | 0.67% |
+| Held-out | `unirig` (VAST-AI/UniRig, SDPA) | 12 | 4.47% | 12/12 | 1.36% | 3.84% | 1.39% |
+| Held-out | `body` (body-read alone) | 12 | 7.78% | 12/12 | 1.80% | 5.04% | 1.21% |
+
+  - **Takeaway (`docs/creature-bench.md`):** On unseen held-out animals, **Puppeteer** leads on joint placement (`3.94%` vs UniRig `4.47%`, MagicArticulate `5.28%`, SkinTokens `predicted` `5.38%` / `route` `5.66%`), while **SkinTokens** still leads on skin deformation (`0.59%` mean / `1.58%` p95 / `0.53%` weights-only) and cuts Puppeteer/MagicArticulate p95 error by 30–36% when re-skinning their skeletons (`0.77%` / `1.62%` and `0.85%` / `1.83%` vs rigid `0.97%` / `2.52%` and `0.92%` / `2.62%`, and far better than UniRig's own skin stage `1.36%` / `3.84%`).
+- **Plumbing & safety consolidation (`skintokens-10`, fleet `44w258xc`, `9ktkgw27`):**
+  - Prior `main` commits (`69422da`, `72fcdd2`) landed `tools/toolpaths.py`, `tools/pngfont.py`, `write_blind_pack` non-pack refusal + `PackRefusesStrangeFoldersTest`, `crates/skintokens/tests/nan_safe.rs`, and `total_cmp` sorts across `crates/skintokens/src` and `crates/creature/src` (excl. guarded `check.rs`).
+  - Remaining consolidation completed on `lane/skintokens-8-rivals`: extracted single shared 3-tool evaluator `tools/rigjudge.py` (`judge`) used by both `tools/creature_blind.py` (`judge_rig_metrics`) and `tools/bench/score_artists.py` (`judge`, removing duplicate `find`/`run`/`judge`), added `required=False` to `toolpaths.find` (used by `tools/creature_route.py` for `skintokens`), and hardened `write_blind_pack` against forged non-pack `pairs.json`/key files, symlink keys, empty strings, and `"/"`. Verified RED (`svcegakf`) -> GREEN (`44w258xc`) and all `skintokens-10`/`skintokens-10-rust`/`carbon.sh` gates (`9ktkgw27`).
