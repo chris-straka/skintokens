@@ -145,6 +145,31 @@ class PackRefusesStrangeFoldersTest(unittest.TestCase):
             with self.assertRaises((ValueError, RuntimeError, OSError, SystemExit)):
                 write_blind_pack(items, half, 1)
             self.assertTrue(os.path.exists(os.path.join(half, "pairs.json")))
+
+            # Unrelated pairs.json + .key.json without blind-pack format markers are refused too.
+            unrelated = os.path.join(tmp, "unrelated")
+            os.makedirs(unrelated)
+            with open(os.path.join(unrelated, "pairs.json"), "w") as f:
+                f.write('{"unrelated": true}')
+            with open(unrelated + ".key.json", "w") as f:
+                f.write('{"unrelated": true}')
+            with open(os.path.join(unrelated, "keep.txt"), "w") as f:
+                f.write("keep")
+            with self.assertRaises((ValueError, RuntimeError, OSError, SystemExit)):
+                write_blind_pack(items, unrelated, 1)
+            self.assertTrue(os.path.exists(os.path.join(unrelated, "keep.txt")))
+
+            # Passing "/" must not resolve to os.getcwd() via rstrip("/").
+            pack = os.path.join(tmp, "cwd_pack")
+            write_blind_pack(items, pack, 1)
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(pack)
+                with self.assertRaises((ValueError, RuntimeError, OSError, PermissionError, SystemExit)):
+                    write_blind_pack(items, "/", 2)
+                self.assertTrue(os.path.exists(os.path.join(pack, "pairs.json")))
+            finally:
+                os.chdir(old_cwd)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
