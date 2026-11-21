@@ -25,23 +25,13 @@ import argparse
 import json
 import os
 import random
-import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pick_score  # noqa: E402
-
-
-def find(name, explicit, env, fallbacks):
-    for p in [explicit, os.environ.get(env)] + fallbacks:
-        if p and os.path.exists(p):
-            return p
-    raise SystemExit(f"{name} not found: set {env}")
-
-
-def run(cmd):
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
-    return r.returncode, r.stdout, r.stderr
+from rigjudge import judge  # noqa: E402
+import toolpaths  # noqa: E402
+from toolpaths import find  # noqa: E402
 
 
 def picker_baselines(picker, loo=None, seed=0):
@@ -82,33 +72,6 @@ def format_picker_baselines(b):
     )
 
 
-def judge(cr, wf, cb, glb, work, tag, cut_at_limit=False):
-    rom = os.path.join(work, tag + ".rom.ron")
-    sj = os.path.join(work, tag + ".skel.json")
-    aj = os.path.join(work, tag + ".anatomy.json")
-    sk = pick_score.checked_json("creature-rig check", run([cr, "check", glb, "--json", sj, "--rom", rom]), sj)
-    bend = pick_score.checked_json("weights check", run([wf, "check", glb, "--json", "--poses", rom]))
-    an = pick_score.checked_json("creature-bench anatomy", run([cb, "anatomy", glb, "--json", aj]), aj)
-    tears = pick_score.tears_pct(bend)
-    score = pick_score.rig_score(sk, bend, an)
-    an_sum = pick_score.anatomy_summary(an)
-    return {
-        "skeleton": sk.get("score", 0.0),
-        "skeleton_pass": bool(sk.get("pass")),
-        "blended_share": sk.get("blended_share"),
-        "anatomy_pass": an_sum["pass"],
-        "anatomy_fails": an_sum["codes"],
-        "articulated_pairs": an_sum["articulated_pairs"],
-        "bend": bend.get("score", 0.0),
-        "tears_pct": tears,
-        "old": pick_score.old_score(bend.get("score", 0.0), sk.get("score", 0.0), bool(sk.get("pass"))),
-        "rig_score": score,
-        "anatomy": an,
-        "skeleton_raw": sk,
-        "cut_at_token_limit": cut_at_limit,
-    }
-
-
 def compact(j):
     return {k: v for k, v in j.items() if k not in ("anatomy", "skeleton_raw")}
 
@@ -117,9 +80,9 @@ def truth_score(cb, truth, glb, roles_path, out_json):
     cmd = [cb, "score", truth, glb, "--json", out_json]
     if os.path.exists(roles_path):
         cmd += ["--roles", roles_path]
-    code, _, err = run(cmd)
-    if code != 0 or not os.path.exists(out_json):
-        raise RuntimeError(f"score failed on {glb}: {err[-160:]}")
+    res = toolpaths.run(cmd, timeout=1800)
+    if res["code"] != 0 or not os.path.exists(out_json):
+        raise RuntimeError(f"score failed on {glb}: {res['err'][-160:]}")
     d = json.load(open(out_json))
     return {
         "skin_mean_pct": d["skin"]["mean_pct"],
@@ -140,7 +103,6 @@ def main():
     ap.add_argument("--creature-bench", default="")
     a = ap.parse_args()
 
-    home = os.path.expanduser("~")
     repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     cr = find("creature-rig", a.creature_rig, "CREATURE_RIG_BIN", [
         os.path.join(repo, "target/release/creature-rig"),
@@ -164,11 +126,11 @@ def main():
         row = {"artist": compact(artist)}
 
         crude = os.path.join(work, n + ".crude.glb")
-        if run([cb, "rigid", truth, crude])[0] == 0:
+        if toolpaths.run([cb, "rigid", truth, crude], timeout=1800)["code"] == 0:
             row["crude"] = compact(judge(cr, wf, cb, crude, work, n + ".crude"))
 
         planted = os.path.join(work, n + ".planted.glb")
-        if run([cb, "plant", truth, planted])[0] == 0:
+        if toolpaths.run([cb, "plant", truth, planted], timeout=1800)["code"] == 0:
             row["planted"] = compact(judge(cr, wf, cb, planted, work, n + ".planted"))
 
         rows[n] = row

@@ -283,10 +283,7 @@ def main():
     picked = {"glb": fixed, "rom": rom, "sheet": base + ".sheet.png", "skeleton_png": base + ".skeleton.png", "which": "body"}
     sk = None
     if not a.no_predicted:
-        for p in [a.skintokens, os.environ.get("SKINTOKENS_BIN"), shutil.which("skintokens"), os.path.join(repo, "target/release/skintokens")]:
-            if p and os.path.exists(p):
-                sk = p
-                break
+        sk = find("skintokens", a.skintokens, "SKINTOKENS_BIN", [os.path.join(repo, "target/release/skintokens")], required=False)
     tries = []
     if sk:
         t["predicted_tries"] = tries

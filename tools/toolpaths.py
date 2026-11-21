@@ -8,10 +8,12 @@ import sys
 import time
 
 
-def find(name, explicit, env, fallbacks, first=()):
+def find(name, explicit, env, fallbacks, first=(), required=True):
     for p in [explicit, os.environ.get(env)] + list(first) + [shutil.which(name)] + list(fallbacks):
         if p and os.path.exists(p):
             return p
+    if not required:
+        return None
     print(f"{name} not found: pass --{name}, set {env}, or put it on PATH", file=sys.stderr)
     raise SystemExit(2)
 

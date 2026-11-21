@@ -36,6 +36,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pick_score  # noqa: E402
 from pngfont import FONT_5X7, draw_text, read_png_rgb, text_width, write_png_rgb  # noqa: E402
+from rigjudge import judge as judge_rig_metrics  # noqa: E402
 import toolpaths  # noqa: E402
 
 
@@ -333,41 +334,46 @@ def render_pair_spec(blender, script, rig_a, rig_b, clip, at, paint_ref, work, t
     return rendered[0], rendered[1], {"clip": specs[0]["clip"], "times": times, "cam_spec": cam_arg}
 
 
-def judge_rig_metrics(cr, wf, cb, glb, work, tag):
-    rom = os.path.join(work, tag + ".rom.ron")
-    sj = os.path.join(work, tag + ".skel.json")
-    aj = os.path.join(work, tag + ".anatomy.json")
-    def call(cmd):
-        r = toolpaths.run(cmd, timeout=1800)
-        return r["code"], r["out"], r["err"]
-    sk = pick_score.checked_json("creature-rig check", call([cr, "check", glb, "--json", sj, "--rom", rom]), sj)
-    bend = pick_score.checked_json("weights check", call([wf, "check", glb, "--json", "--poses", rom]))
-    an = pick_score.checked_json("creature-bench anatomy", call([cb, "anatomy", glb, "--json", aj]), aj)
-    tears = pick_score.tears_pct(bend)
-    rscore = pick_score.rig_score(sk, bend, an)
-    oscore = pick_score.old_score(bend.get("score", 0.0), sk.get("score", 0.0), bool(sk.get("pass")))
-    return {
-        "skeleton_raw": sk,
-        "anatomy": an,
-        "tears_pct": tears,
-        "rig_score": rscore,
-        "old_score": oscore,
-        "anatomy_pass": pick_score.anatomy_summary(an)["pass"],
-    }
+def _is_owned_blind_pack(out_dir, key_path):
+    pairs_file = os.path.join(out_dir, "pairs.json")
+    if (
+        not os.path.isfile(pairs_file)
+        or os.path.islink(pairs_file)
+        or not os.path.isfile(key_path)
+        or os.path.islink(key_path)
+    ):
+        return False
+    try:
+        with open(pairs_file, encoding="utf-8") as f:
+            pdoc = json.load(f)
+        with open(key_path, encoding="utf-8") as f:
+            kdoc = json.load(f)
+    except (OSError, ValueError):
+        return False
+    return (
+        isinstance(pdoc, dict)
+        and pdoc.get("format") == "creature-blind-pairs/1"
+        and isinstance(kdoc, dict)
+        and kdoc.get("format") == "creature-blind-key/1"
+    )
 
 
 def write_blind_pack(raw_items, out_dir, seed):
     """Shuffles `raw_items` with `seed`, coins LEFT/RIGHT per pair, writes
     `pair_NN.png` and `pairs.json` into `out_dir`, and writes
     `<out_dir>.key.json` beside `out_dir`."""
-    out_dir = os.path.abspath(out_dir.rstrip("/"))
+    if not out_dir or not str(out_dir).strip():
+        raise ValueError("refusing empty output directory")
+    out_dir = os.path.abspath(str(out_dir).rstrip(os.sep) or os.sep)
     key_path = out_dir + ".key.json"
-    if os.path.exists(out_dir):
+    if os.path.lexists(out_dir):
         if os.path.islink(out_dir) or not os.path.isdir(out_dir):
             raise ValueError(f"refusing to overwrite {out_dir}: not a directory")
         if os.listdir(out_dir):
-            if not (os.path.isfile(os.path.join(out_dir, "pairs.json")) and os.path.isfile(key_path)):
-                raise ValueError(f"refusing to delete {out_dir}: not a blind pack (need pairs.json and {key_path}, or an empty folder)")
+            if not _is_owned_blind_pack(out_dir, key_path):
+                raise ValueError(
+                    f"refusing to delete {out_dir}: not a blind pack (need pairs.json and {key_path}, or an empty folder)"
+                )
             shutil.rmtree(out_dir)
     os.makedirs(out_dir, exist_ok=True)
 
