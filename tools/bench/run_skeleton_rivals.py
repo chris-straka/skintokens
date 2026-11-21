@@ -969,7 +969,11 @@ def run_one_rival(
 
         # Score rival skeleton + SkinTokens skin
         if not skin_ok:
-            msg = "skintokens skin failed"
+            tail = ""
+            skin_log = os.path.join(rdir, "skintokens_skin.log")
+            if os.path.isfile(skin_log):
+                tail = open(skin_log, encoding="utf-8", errors="replace").read().strip()[-300:]
+            msg = f"skintokens skin failed" + (f": {tail}" if tail else "")
             print(f"[{label}/{rival_key}] {tag_label}: FAIL ({msg})", flush=True)
             failed.append({"id": tag_label, "reason": msg})
             continue
