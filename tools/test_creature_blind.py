@@ -188,5 +188,35 @@ class PackRefusesStrangeFoldersTest(unittest.TestCase):
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
+
+class CameraFovTest(unittest.TestCase):
+    def test_default_follow_fov_is_75_never_45(self):
+        # Static guard: neither creature_blind.py nor render_gamecam.py may hardcode 45 deg FOV.
+        tools_dir = os.path.dirname(os.path.abspath(__file__))
+        for rel in ("creature_blind.py", os.path.join("bench", "render_gamecam.py")):
+            with open(os.path.join(tools_dir, rel), encoding="utf-8") as f:
+                src = f.read()
+            self.assertNotIn("math.radians(45", src, f"{rel} still hardcodes 45 deg FOV")
+            self.assertNotIn("45 deg", src, f"{rel} docs still claim 45 deg FOV")
+
+        import creature_blind  # noqa: E402
+        self.assertTrue(hasattr(creature_blind, "resolve_follow_fov_deg"), "missing resolve_follow_fov_deg")
+        old_hlh = os.environ.pop("HLH_METRICS", None)
+        old_met = os.environ.pop("METRICS_FILE", None)
+        try:
+            self.assertAlmostEqual(creature_blind.resolve_follow_fov_deg(), 75.0)
+            with tempfile.TemporaryDirectory() as tmp:
+                mpath = os.path.join(tmp, "metrics.ron")
+                with open(mpath, "w", encoding="utf-8") as f:
+                    f.write('// comment\n{\n  "camera": {"distance": 3.0, "focus": 1.5, "pitch": -18.3, "fov": 68.0},\n}\n')
+                self.assertAlmostEqual(creature_blind.resolve_follow_fov_deg(metrics_path=mpath), 68.0)
+                self.assertAlmostEqual(creature_blind.resolve_follow_fov_deg(metrics_path=mpath, fov_deg=72.0), 72.0)
+        finally:
+            if old_hlh is not None:
+                os.environ["HLH_METRICS"] = old_hlh
+            if old_met is not None:
+                os.environ["METRICS_FILE"] = old_met
+
+
 if __name__ == "__main__":
     unittest.main()

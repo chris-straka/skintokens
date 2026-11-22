@@ -34,6 +34,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from gamecam import resolve_follow_fov_deg  # noqa: E402
 import pick_score  # noqa: E402
 from pngfont import FONT_5X7, draw_text, read_png_rgb, text_width, write_png_rgb  # noqa: E402
 from rigjudge import judge as judge_rig_metrics  # noqa: E402
@@ -281,16 +282,20 @@ def score_blind_run(key, answers):
 
 # --------------------------------------------------------- rendering driver
 
-def render_pair_spec(blender, script, rig_a, rig_b, clip, at, paint_ref, work, tag):
+def render_pair_spec(blender, script, rig_a, rig_b, clip, at, paint_ref, work, tag, metrics_path=None, fov_deg=None):
     """Measures shared camera bounds over both rigs, renders each rig in its
     own clean headless Blender process with that shared `--cam-spec`, and
     returns `(a_pngs, b_pngs, spec_info)`."""
+    resolved_fov = resolve_follow_fov_deg(metrics_path=metrics_path, fov_deg=fov_deg)
+    fov_args = ["--fov", f"{resolved_fov:.4f}"]
+    if metrics_path:
+        fov_args += ["--metrics", metrics_path]
     specs = []
     for k, rpath in enumerate((rig_a, rig_b)):
         cmd = [
             blender, "-b", "--factory-startup", "-P", script, "--",
             "--rig", rpath, "--clip", clip, "--at", at, "--measure-only", "yes",
-        ]
+        ] + fov_args
         if paint_ref:
             cmd += ["--paint-from", paint_ref]
         res = toolpaths.run(cmd, timeout=1800)
@@ -303,7 +308,7 @@ def render_pair_spec(blender, script, rig_a, rig_b, clip, at, paint_ref, work, t
     u0, u1 = min(ca[0], cb[0]), max(ca[1], cb[1])
     v0, v1 = min(ca[2], cb[2]), max(ca[3], cb[3])
     ground_z = min(ca[5], cb[5])
-    fov = math.radians(45.0)
+    fov = math.radians(resolved_fov)
     span_u = max(u1 - u0, 1e-3) / 0.72
     span_v = max(v1 - v0, 1e-3) / 0.68
     dist = max(
@@ -323,7 +328,7 @@ def render_pair_spec(blender, script, rig_a, rig_b, clip, at, paint_ref, work, t
             blender, "-b", "--factory-startup", "-P", script, "--",
             "--rig", rpath, "--clip", clip, "--times", times_arg,
             "--cam-spec", cam_arg, "--out", prefix,
-        ]
+        ] + fov_args
         if paint_ref:
             cmd += ["--paint-from", paint_ref]
         res = toolpaths.run(cmd, timeout=1800)
@@ -331,8 +336,7 @@ def render_pair_spec(blender, script, rig_a, rig_b, clip, at, paint_ref, work, t
         if res["code"] != 0 or not all(os.path.exists(p) for p in pngs):
             raise RuntimeError(f"gamecam render failed on {rpath}: {(res['err'] or res['out'])[-240:]}")
         rendered.append(pngs)
-    return rendered[0], rendered[1], {"clip": specs[0]["clip"], "times": times, "cam_spec": cam_arg}
-
+    return rendered[0], rendered[1], {"clip": specs[0]["clip"], "times": times, "cam_spec": cam_arg, "fov_deg": resolved_fov}
 
 def _is_owned_blind_pack(out_dir, key_path):
     pairs_file = os.path.join(out_dir, "pairs.json")
@@ -524,7 +528,7 @@ def cmd_bench(a):
                 or clip_names[0]
             )
             a_pngs, b_pngs, rinfo = render_pair_spec(
-                blender, script, pred_clips, body_clips, walk_clip, a.at, truth, work, f"claim_{n}"
+                blender, script, pred_clips, body_clips, walk_clip, a.at, truth, work, f"claim_{n}", a.metrics, a.fov
             )
             ps_m, bs_m = ps["skin"]["mean_pct"], bs["skin"]["mean_pct"]
             truth_win = "tie" if abs(ps_m - bs_m) <= 0.02 else ("predicted" if ps_m < bs_m else "body")
@@ -554,7 +558,7 @@ def cmd_bench(a):
         # Mandatory can't-tell control: two independent Blender renders of the same rig & camera.
         cn, c_clips, c_raw_glb, c_rscore, c_walk, c_truth, _, _ = control_source
         c_pngs_a, c_pngs_b, c_info = render_pair_spec(
-            blender, script, c_clips, c_clips, c_walk, a.at, c_truth, work, f"ctrl_{cn}"
+            blender, script, c_clips, c_clips, c_walk, a.at, c_truth, work, f"ctrl_{cn}", a.metrics, a.fov
         )
         raw_items.append({
             "category": "control",
@@ -580,7 +584,7 @@ def cmd_bench(a):
             and (not pl_m["anatomy_pass"] or pl_m["tears_pct"] >= 5.0)
         )
         u_pngs, p_pngs, p_info = render_pair_spec(
-            blender, script, c_clips, planted_clips, c_walk, a.at, c_truth, work, f"plant_{cn}"
+            blender, script, c_clips, planted_clips, c_walk, a.at, c_truth, work, f"plant_{cn}", a.metrics, a.fov
         )
         raw_items.append({
             "category": "planted",
@@ -628,7 +632,7 @@ def cmd_make(a):
             ma = judge_rig_metrics(cr, wf, cb, rigs[0], work, f"{name}_a")
             mb = judge_rig_metrics(cr, wf, cb, rigs[1], work, f"{name}_b")
             a_pngs, b_pngs, rinfo = render_pair_spec(
-                blender, script, rigs[0], rigs[1], clip, a.at, pref, work, f"claim_{name}"
+                blender, script, rigs[0], rigs[1], clip, a.at, pref, work, f"claim_{name}", a.metrics, a.fov
             )
             p_win = "A" if ma["rig_score"] >= mb["rig_score"] else "B"
             o_win = "A" if ma["old_score"] >= mb["old_score"] else "B"
@@ -650,7 +654,7 @@ def cmd_make(a):
                 first_ref = (name, rigs[0], ma["rig_score"], clip, pref, a_pngs, rinfo)
 
         cn, c_glb, c_score, c_clip, c_pref, _, _ = first_ref
-        c_pngs_a, c_pngs_b, c_info = render_pair_spec(blender, script, c_glb, c_glb, c_clip, a.at, c_pref, work, f"ctrl_{cn}")
+        c_pngs_a, c_pngs_b, c_info = render_pair_spec(blender, script, c_glb, c_glb, c_clip, a.at, c_pref, work, f"ctrl_{cn}", a.metrics, a.fov)
         raw_items.append({
             "category": "control",
             "subject": cn,
@@ -673,7 +677,7 @@ def cmd_make(a):
             and (c_score - pl_m["rig_score"]) >= 15.0
             and (not pl_m["anatomy_pass"] or pl_m["tears_pct"] >= 5.0)
         )
-        u_pngs, p_pngs, p_info = render_pair_spec(blender, script, c_glb, planted_glb, c_clip, a.at, c_pref, work, f"plant_{cn}")
+        u_pngs, p_pngs, p_info = render_pair_spec(blender, script, c_glb, planted_glb, c_clip, a.at, c_pref, work, f"plant_{cn}", a.metrics, a.fov)
         raw_items.append({
             "category": "planted",
             "subject": cn,
@@ -726,14 +730,14 @@ def main():
     p_bench.add_argument("--animals", default="fox,trex,velociraptor,bat")
     p_bench.add_argument("--seed", type=int, default=20261116)
     p_bench.add_argument("--at", default="0.20,0.50,0.80")
-    for t in ("blender", "creature-bench", "creature-rig", "weights"):
+    for t in ("blender", "creature-bench", "creature-rig", "weights", "metrics", "fov"):
         p_bench.add_argument(f"--{t}", default="")
 
     p_make = sub.add_parser("make", help="build blind walk pairs from explicit animated GLBs")
     p_make.add_argument("--out", required=True)
     p_make.add_argument("--seed", type=int, default=20261116)
     p_make.add_argument("--at", default="0.20,0.50,0.80")
-    for t in ("blender", "creature-bench", "creature-rig", "weights"):
+    for t in ("blender", "creature-bench", "creature-rig", "weights", "metrics", "fov"):
         p_make.add_argument(f"--{t}", default="")
     p_make.add_argument("runs", nargs="+", help="NAME=rig_a.glb,rig_b.glb[:clip[:paint_ref.glb]]")
 

@@ -44,8 +44,17 @@ if [ "$RUN_ROUTE" -eq 1 ]; then
     d="$BENCH/animals/$id"
     if [ ! -f "$d/$TAG/report.json" ] || ! grep -qs '"picked"' "$d/$TAG/report.json"; then
       echo "running creature_route on held-out animal (id masked) ..." >&2
+      rc=0
       python3 "$REPO/tools/creature_route.py" "$d/bare.glb" "$d/$TAG" \
-        --name "$id" --convention none --keep-tries > "$d/$TAG.log" 2>&1 || true
+        --name "$id" --convention none --keep-tries > "$d/$TAG.log" 2>&1 || rc=$?
+      if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
+        echo "heldout.sh: creature_route crashed with exit $rc (see $d/$TAG.log)" >&2
+        exit "$rc"
+      fi
+      if [ ! -f "$d/$TAG/report.json" ] || ! grep -qs '"picked"' "$d/$TAG/report.json"; then
+        echo "heldout.sh: creature_route wrote no picked report (see $d/$TAG.log)" >&2
+        exit 2
+      fi
     fi
   done <<< "$IDS"
 fi
@@ -54,7 +63,13 @@ fi
 WORK_TMP="$(mktemp -d)"
 trap 'rm -rf "$WORK_TMP"' EXIT
 
-python3 "$HERE/score_artists.py" "$BENCH" --picker-check --json "$WORK_TMP/picker.json" > "$WORK_TMP/score_artists.log" 2>&1 || true
+rc=0
+python3 "$HERE/score_artists.py" "$BENCH" --picker-check --json "$WORK_TMP/picker.json" > "$WORK_TMP/score_artists.log" 2>&1 || rc=$?
+if [ "$rc" -ne 0 ]; then
+  cat "$WORK_TMP/score_artists.log" >&2 || true
+  echo "heldout.sh: score_artists.py failed with exit $rc" >&2
+  exit "$rc"
+fi
 
 python3 - "$BENCH" "$MANIFEST" "$WORK_TMP/picker.json" "$TAG" "$OUT_JSON" <<'PY'
 import json
@@ -85,7 +100,9 @@ cal_summary = {
 def score_one(truth, cand, out_p):
     r = subprocess.run([cb, "score", truth, cand, "--json", out_p], capture_output=True, text=True, timeout=600)
     if r.returncode != 0 or not os.path.isfile(out_p):
-        return None
+        err = (r.stderr or r.stdout or "").strip()[-300:]
+        print(f"heldout.sh: creature-bench score failed (exit {r.returncode}): {err}", file=sys.stderr)
+        sys.exit(2 if r.returncode in (0, None) else r.returncode)
     d = json.load(open(out_p))
     return {
         "joints_pct": d["skeleton"]["joint_error_pct"],
@@ -115,10 +132,13 @@ for aid in ids:
 
     # Crude rigid control
     crude_glb = os.path.join(score_tmp, f"{aid}.crude.glb")
-    if subprocess.run([cb, "rigid", truth, crude_glb], capture_output=True).returncode == 0:
-        s_crude = score_one(truth, crude_glb, os.path.join(score_tmp, f"{aid}.crude.json"))
-        if s_crude:
-            routes["crude"].append(s_crude)
+    r_rig = subprocess.run([cb, "rigid", truth, crude_glb], capture_output=True, text=True)
+    if r_rig.returncode != 0:
+        err = (r_rig.stderr or r_rig.stdout or "").strip()[-300:]
+        print(f"heldout.sh: creature-bench rigid failed (exit {r_rig.returncode}): {err}", file=sys.stderr)
+        sys.exit(2 if r_rig.returncode in (0, None) else r_rig.returncode)
+    s_crude = score_one(truth, crude_glb, os.path.join(score_tmp, f"{aid}.crude.json"))
+    routes["crude"].append(s_crude)
 
     # Final picked route rig
     picked_glb = os.path.join(rdir, f"{aid}.glb")

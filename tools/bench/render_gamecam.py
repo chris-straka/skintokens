@@ -1,10 +1,11 @@
 """Headless Blender: render one creature rig at synchronized frames of one
 clip through the game camera, with no text or diagnostic marks in the frame.
 
-    blender -b --factory-startup -P tools/bench/render_gamecam.py -- \
-        --rig PATH.glb --clip Walk [--out PREFIX] [--at 0.20,0.50,0.80] \
-        [--times s1,s2,s3] [--paint-from REF.glb] \
-        [--cam-spec u0,u1,v0,v1,dist,ground_v] [--measure-only no] \
+    blender -b --factory-startup -P tools/bench/render_gamecam.py -- \\
+        --rig PATH.glb --clip Walk [--out PREFIX] [--at 0.20,0.50,0.80] \\
+        [--times s1,s2,s3] [--paint-from REF.glb] \\
+        [--cam-spec u0,u1,v0,v1,dist,ground_v] [--measure-only no] \\
+        [--metrics PATH/metrics.ron] [--fov 75.0] \\
         [--width 560] [--height 360] [--fps 24]
 
 Why one rig per Blender invocation:
@@ -12,10 +13,11 @@ Why one rig per Blender invocation:
   action slots across armatures. Rendering LEFT and RIGHT in separate clean
   headless scenes through one shared `--cam-spec` guarantees zero cross-rig
   contamination and pixel-identical (`RMSE == 0`) control renders.
-- Camera matches the game's follow camera (`45 deg` vertical FOV, `-18.3 deg`
-  downward pitch, `55 deg` front-three-quarter orbit so all limbs, head and
-  tail silhouette read cleanly), scaled to the creature's stride bounds so
-  the whole body fills ~68% of the frame height on a plain ground plane.
+- Camera matches the game's follow camera (`75 deg` default vertical FOV,
+  overridable via `--metrics` / `_tools/blender/scale/limits.py` or `--fov`,
+  `-18.3 deg` downward pitch, `55 deg` front-three-quarter orbit so all limbs,
+  head and tail silhouette read cleanly), scaled to the creature's stride
+  bounds so the whole body fills ~68% of the frame height on a plain ground plane.
 """
 import json
 import math
@@ -25,6 +27,11 @@ import sys
 
 import bpy
 from mathutils import Matrix, Vector
+
+_tools_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _tools_dir not in sys.path:
+    sys.path.insert(0, _tools_dir)
+from gamecam import resolve_follow_fov_deg  # noqa: E402
 
 
 def options():
@@ -195,9 +202,10 @@ def main():
         span = max(f1 - f0, 0.0)
         f_list = [f0 + span * float(x) for x in o["at"].split(",")]
 
-    # HLH follow-camera geometry: 45 deg vertical FOV, -18.3 deg (-0.32 rad)
-    # downward pitch, 55 deg front-three-quarter orbit.
-    fov = math.radians(45.0)
+    # HLH follow-camera geometry: 75 deg vertical FOV (or metrics/CLI override),
+    # -18.3 deg (-0.32 rad) downward pitch, 55 deg front-three-quarter orbit.
+    fov_deg = resolve_follow_fov_deg(metrics_path=o.get("metrics"), fov_deg=o.get("fov"))
+    fov = math.radians(fov_deg)
     yaw, pitch = math.radians(55.0), math.radians(18.3)
     d = Vector((math.sin(yaw) * math.cos(pitch), -math.cos(yaw) * math.cos(pitch), math.sin(pitch)))
     right = Vector((0.0, 0.0, 1.0)).cross(d).normalized() * -1.0
@@ -217,7 +225,7 @@ def main():
         box = vals[:4]
         dist, ground_z = vals[4], vals[5]
     else:
-        # Whole figure fills ~68% of vertical frame height (matching 1.75m at 3.0m / 45deg).
+        # Whole figure fills ~68% of vertical frame height (matching 1.75m at 1.56m / 75deg).
         span_u = max(box[1] - box[0], 1e-3) / 0.72
         span_v = max(box[3] - box[2], 1e-3) / 0.68
         fit_w = span_u / (2.0 * math.tan(fov * 0.5) * (cell_w / cell_h))
@@ -226,6 +234,7 @@ def main():
 
     spec = {
         "clip": act.name if act else "",
+        "fov_deg": round(fov_deg, 4),
         "frame_range": [round(f0, 4), round(f1, 4)],
         "sampled_frames": [round(x, 4) for x in f_list],
         "sampled_times": [round(x / fps, 4) for x in f_list],

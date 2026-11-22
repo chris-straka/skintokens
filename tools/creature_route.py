@@ -67,15 +67,19 @@ def tail(text, n=300):
 
 def check(wf, glb, rom):
     r = run([wf, "check", glb, "--json", "--poses", rom], timeout=1800)
+    if r["code"] not in (0, 1):
+        return {"score": 0.0, "pass": False, "code": r["code"],
+                "fails": ["check did not run: " + tail(r["err"] or r["out"], 120)], "tears_pct": 100.0}
     try:
         d = json.loads(r["out"])
     except ValueError:
-        return {"score": 0.0, "pass": False, "fails": ["check did not run: " + tail(r["err"], 120)], "tears_pct": 100.0}
+        return {"score": 0.0, "pass": False, "code": 2,
+                "fails": ["check wrote invalid json: " + tail(r["err"] or r["out"], 120)], "tears_pct": 100.0}
     fails = [f"{f.get('code')} {f.get('region')}: {f.get('detail')}" for f in d.get("findings", [])
              if f.get("severity") == "fail"]
-    return {"score": d.get("score", 0.0), "pass": bool(d.get("pass")), "fails": fails, "verts": d.get("verts"),
-            "bones": d.get("bones"), "poses": d.get("poses"), "not_tested": d.get("skipped_poses", []),
-            "tears_pct": pick_score.tears_pct(d)}
+    return {"score": d.get("score", 0.0), "pass": bool(d.get("pass")), "code": r["code"], "fails": fails,
+            "verts": d.get("verts"), "bones": d.get("bones"), "poses": d.get("poses"),
+            "not_tested": d.get("skipped_poses", []), "tears_pct": pick_score.tears_pct(d)}
 
 
 def make_clips(mf, rig, base, name, four_legged):
@@ -97,8 +101,8 @@ def make_clips(mf, rig, base, name, four_legged):
             p = json.load(f)
         kept = p.get("joints_in") == p.get("joints_out")
         info["joints"] = [p.get("joints_in"), p.get("joints_out")]
-    except (OSError, ValueError):
-        pass
+    except (OSError, ValueError) as exc:
+        info["profile_error"] = str(exc)
     src, more = rig, "idle,attack"
     if four_legged and kept:
         gait = base + ".gait.glb"
@@ -212,8 +216,17 @@ def main():
     candidates = []
     for b in BLENDS[1:]:
         c = f"{base}.band{b}.glb"
-        if run([cr, "rig", mesh, c, "--blend", str(b)] + hint, timeout=900)["code"] == 0:
+        if os.path.exists(c):
+            os.remove(c)
+        cr_cand = run([cr, "rig", mesh, c, "--blend", str(b)] + hint, timeout=900)
+        if cr_cand["code"] == 0 and os.path.exists(c):
             candidates.append(c)
+        else:
+            t.setdefault("candidate_errors", []).append(
+                {"blend": b, "code": cr_cand["code"], "error": tail(cr_cand["err"] or cr_cand["out"], 120)}
+            )
+            save()
+            return 2
     print(f"{name}: {t['body']}, {len(info['bones'])} bones ({', '.join(f'{k} {v}' for k, v in t['limbs'].items())})"
           + ("; turned to face forward" if t["turned_half_a_turn"] else ""))
 
@@ -226,9 +239,14 @@ def main():
     # 4. Fix and gate.
     raw = check(wf, posed, rom)
     t["raw"] = raw
+    if raw.get("code") not in (0, 1):
+        save()
+        return 2
     if a.no_fix or raw["pass"]:
         shutil.copyfile(posed, fixed)
     else:
+        if os.path.exists(fixed):
+            os.remove(fixed)
         cmd = [wf, "fix", posed, "--out", fixed, "--sheet", base + ".sheet.png", "--poses", rom]
         for c in candidates:
             cmd += ["--candidate", c]
@@ -240,43 +258,70 @@ def main():
         r = run(cmd + shlex.split(a.fix_args), timeout=a.fix_timeout, env=env)
         t["fix"] = {"code": r["code"], "secs": r["secs"],
                     "picked": [ln.strip() for ln in r["out"].splitlines() if " via " in ln][:24]}
-        if not os.path.exists(fixed):
+        if r["code"] not in (0, 1) or not os.path.exists(fixed):
             t["fix"]["error"] = tail(r["err"] or r["out"])
-            shutil.copyfile(posed, fixed)
+            save()
+            return 2
     final = check(wf, fixed, rom)
     t.update(score=final["score"], fails=final["fails"], not_tested=final.get("not_tested", []),
              tears_pct=final.get("tears_pct", 100.0))
     t["pass"] = final["pass"]
+    if final.get("code") not in (0, 1):
+        save()
+        return 2
 
     def skeleton_of(glb, out_json, rom_out=None, sheet=None):
+        if os.path.exists(out_json):
+            os.remove(out_json)
+        if rom_out and os.path.exists(rom_out):
+            os.remove(rom_out)
         cmd = [cr, "check", glb, "--json", out_json]
         if rom_out:
             cmd += ["--rom", rom_out]
         if sheet:
             cmd += ["--sheet", sheet]
         r = run(cmd)
+        if r["code"] not in (0, 1):
+            return {"score": 0.0, "pass": False, "code": r["code"],
+                    "fails": ["skeleton check did not run: " + tail(r["err"] or r["out"], 120)]}
         try:
             with open(out_json) as f:
                 s = json.load(f)
-            return {"score": s["score"], "pass": s["pass"], "blended_share": s.get("blended_share"),
+            if rom_out and not os.path.exists(rom_out):
+                return {"score": 0.0, "pass": False, "code": 2, "fails": ["skeleton check wrote no rom"]}
+            return {"score": s["score"], "pass": s["pass"], "code": r["code"],
+                    "blended_share": s.get("blended_share"),
                     "fails": [f"{x['code']} {x['part']}: {x['detail']}" for x in s["findings"] if x["severity"] == "fail"]}
         except (OSError, ValueError, KeyError):
-            return {"score": 0.0, "pass": False, "fails": ["skeleton check did not run: " + tail(r["err"], 120)]}
+            return {"score": 0.0, "pass": False, "code": 2,
+                    "fails": ["skeleton check did not run: " + tail(r["err"] or r["out"], 120)]}
 
     def anatomy_of(glb, out_json):
+        if os.path.exists(out_json):
+            os.remove(out_json)
         r = run([cb, "anatomy", glb, "--json", out_json])
+        if r["code"] not in (0, 1):
+            return {"pass": False, "code": r["code"],
+                    "findings": [{"code": "ANATOMY_DID_NOT_RUN", "severity": "fail",
+                                  "detail": tail(r["err"] or r["out"], 160)}], "limbs": []}
         try:
             with open(out_json) as f:
-                return json.load(f)
+                d = json.load(f)
+            d["code"] = r["code"]
+            return d
         except (OSError, ValueError):
             # a check that did not run fails, it never passes
-            return {"pass": False, "findings": [{"code": "ANATOMY_DID_NOT_RUN", "severity": "fail",
-                                                 "detail": tail(r["err"] or r["out"], 160)}], "limbs": []}
+            return {"pass": False, "code": 2,
+                    "findings": [{"code": "ANATOMY_DID_NOT_RUN", "severity": "fail",
+                                  "detail": tail(r["err"] or r["out"], 160)}], "limbs": []}
 
     # 5. The skeleton and independent anatomy checks.
     t["skeleton"] = skeleton_of(fixed, base + ".skeleton.json")
     t["anatomy"] = anatomy_of(fixed, base + ".anatomy.json")
     t["rig_score"] = pick_score.rig_score(t["skeleton"], t.get("tears_pct", 100.0), t["anatomy"])
+    if t["skeleton"].get("code") not in (0, 1) or t["anatomy"].get("code") not in (0, 1):
+        save()
+        return 2
 
     # 5b. The model's own rig of the same mesh (three seeds), judged by the
     # calibrated reader-neutral picker (`tools/pick_score.py`).
@@ -299,36 +344,56 @@ def main():
                 try:
                     with open(pb + ".skintokens.json") as f:
                         p["cut_at_token_limit"] = bool((json.load(f).get("rig") or {}).get("skeleton_cut_at_token_limit"))
-                except (OSError, ValueError):
-                    pass
+                except (OSError, ValueError) as exc:
+                    p["skintokens_report_error"] = str(exc)
             if ok:
                 r = run([mf, "standardize", "--input", pb + ".rig.glb", "--output", pb + ".std.glb", "--class",
                          "quadruped", "--report", pb + ".standardize.json"])
                 ok = r["code"] == 0 and os.path.exists(pb + ".std.glb")
             if not ok:
                 p["error"] = tail(r["err"] or r["out"])
+                save()
                 continue
             p["rigged"] = True
             pposed = pb + ".std.glb"
             if not a.no_clips:
                 pposed, p["clips_made"] = make_clips(mf, pposed, pb, name, info["kind"] == "four-legged")
             p["clips"] = pposed != pb + ".std.glb"
-            skeleton_of(pposed, pb + ".skeleton.json", rom_out=pb + ".rom.ron")
+            psk_rom = skeleton_of(pposed, pb + ".skeleton.json", rom_out=pb + ".rom.ron")
+            if psk_rom.get("code") not in (0, 1) or not os.path.exists(pb + ".rom.ron"):
+                p["rigged"] = False
+                p["error"] = "; ".join(psk_rom.get("fails", ["skeleton_of failed"]))
+                save()
+                continue
             praw = check(wf, pposed, pb + ".rom.ron")
+            if praw.get("code") not in (0, 1):
+                p["rigged"] = False
+                p["error"] = "; ".join(praw.get("fails", ["check failed"]))
+                save()
+                continue
             if a.no_fix or praw["pass"]:
                 shutil.copyfile(pposed, pb + ".glb")
             else:
-                run([wf, "fix", pposed, "--out", pb + ".glb", "--sheet", pb + ".sheet.png", "--poses", pb + ".rom.ron"]
-                    + shlex.split(a.fix_args), timeout=a.fix_timeout)
-                if not os.path.exists(pb + ".glb"):
-                    shutil.copyfile(pposed, pb + ".glb")
+                if os.path.exists(pb + ".glb"):
+                    os.remove(pb + ".glb")
+                r_pfix = run([wf, "fix", pposed, "--out", pb + ".glb", "--sheet", pb + ".sheet.png", "--poses", pb + ".rom.ron"]
+                             + shlex.split(a.fix_args), timeout=a.fix_timeout)
+                if r_pfix["code"] not in (0, 1) or not os.path.exists(pb + ".glb"):
+                    p["rigged"] = False
+                    p["error"] = "weights fix failed: " + tail(r_pfix["err"] or r_pfix["out"])
+                    save()
+                    continue
             pfinal = check(wf, pb + ".glb", pb + ".rom.ron")
             p.update(raw=praw["score"], score=pfinal["score"], fails=pfinal["fails"],
                      tears_pct=pfinal.get("tears_pct", 100.0))
             p["pass"] = pfinal["pass"]
             p["skeleton"] = skeleton_of(pb + ".glb", pb + ".skeleton.json", sheet=pb + ".skeleton.png")
             p["anatomy"] = anatomy_of(pb + ".glb", pb + ".anatomy.json")
-            p["rig_score"] = pick_score.rig_score(p["skeleton"], p["tears_pct"], p["anatomy"])
+            if pfinal.get("code") not in (0, 1) or p["skeleton"].get("code") not in (0, 1) or p["anatomy"].get("code") not in (0, 1):
+                p["rigged"] = False
+                p["error"] = "predicted candidate check failed"
+            else:
+                p["rig_score"] = pick_score.rig_score(p["skeleton"], p["tears_pct"], p["anatomy"])
             save()
 
     choice = pick_score.pick_candidate(t, tries)
@@ -356,31 +421,54 @@ def main():
     # leaves fewer failing findings and the skeleton and anatomy checks
     # still pass.
     final_rom = base + ".final.rom.ron"
-    run([cr, "check", picked["glb"], "--json", base + ".final.skeleton.json", "--rom", final_rom])
+    if os.path.exists(final_rom):
+        os.remove(final_rom)
+    r_fc = run([cr, "check", picked["glb"], "--json", base + ".final.skeleton.json", "--rom", final_rom])
+    if r_fc["code"] not in (0, 1):
+        t["last_fix"] = {"error": tail(r_fc["err"] or r_fc["out"])}
+        save()
+        return 2
     if os.path.exists(final_rom) and not a.no_fix:
         before = check(wf, picked["glb"], final_rom)
+        if before.get("code") not in (0, 1):
+            t["last_fix"] = {"before": before}
+            save()
+            return 2
         last = {"before": {"score": before["score"], "fails": before["fails"]}}
         if not before["pass"]:
             out2 = base + ".final.glb"
+            if os.path.exists(out2):
+                os.remove(out2)
             env = dict(os.environ)
             r = run([wf, "fix", picked["glb"], "--out", out2, "--poses", final_rom] + shlex.split(a.fix_args),
                     timeout=a.fix_timeout, env=env)
-            if os.path.exists(out2):
-                after = check(wf, out2, final_rom)
-                sk2 = skeleton_of(out2, base + ".final2.skeleton.json")
-                an2 = anatomy_of(out2, base + ".final2.anatomy.json")
-                an_ok = pick_score.anatomy_summary(an2)["pass"]
-                kept = (len(after["fails"]) < len(before["fails"]) and sk2["pass"] and an_ok)
-                last.update(after={"score": after["score"], "fails": after["fails"]}, kept=kept)
-                if kept:
-                    picked["glb"], picked["rom"] = out2, final_rom
-            else:
+            if r["code"] not in (0, 1) or not os.path.exists(out2):
                 last["error"] = tail(r["err"] or r["out"])
+                t["last_fix"] = last
+                save()
+                return 2
+            after = check(wf, out2, final_rom)
+            sk2 = skeleton_of(out2, base + ".final2.skeleton.json")
+            an2 = anatomy_of(out2, base + ".final2.anatomy.json")
+            if after.get("code") not in (0, 1) or sk2.get("code") not in (0, 1) or an2.get("code") not in (0, 1):
+                t["last_fix"] = last
+                save()
+                return 2
+            an_ok = pick_score.anatomy_summary(an2)["pass"]
+            kept = (len(after["fails"]) < len(before["fails"]) and sk2["pass"] and an_ok)
+            last.update(after={"score": after["score"], "fails": after["fails"]}, kept=kept)
+            if kept:
+                picked["glb"], picked["rom"] = out2, final_rom
         t["last_fix"] = last
         save()
 
     # 6. Contract.
     r = run([rf, "--json", "--class", a.klass, picked["glb"]])
+    if r["code"] not in (0, 1):
+        t["contract"] = False
+        t["rfcheck"] = [tail(r["err"] or r["out"], 120)]
+        save()
+        return 2
     t["contract"] = r["code"] == 0
     try:
         d = json.loads(r["out"])
@@ -398,7 +486,11 @@ def main():
     if os.path.exists(picked["sheet"]):
         shutil.copyfile(picked["sheet"], sheet)
     else:
-        run([wf, "sheet", picked["glb"], "--out", sheet, "--poses", picked["rom"]])
+        r_sh = run([wf, "sheet", picked["glb"], "--out", sheet, "--poses", picked["rom"]])
+        if r_sh["code"] not in (0, 1) or not os.path.exists(sheet):
+            t["sheet_error"] = tail(r_sh["err"] or r_sh["out"])
+            save()
+            return 2
     report.setdefault("best_seed", a.seed)
     report["ok"] = bool(best["pass"] and best["skeleton"]["pass"] and t["contract"])
     save()
