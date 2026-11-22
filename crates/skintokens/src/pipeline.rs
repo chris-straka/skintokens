@@ -9,11 +9,15 @@ use skintokens_nn::Rng;
 
 use crate::generate::GenConfig;
 use crate::geom::{self, M4, V3};
-use crate::glb::{Frame, Glb, Part};
+use crate::glb::{Frame, Glb};
 use crate::mesh::{self, Mesh, Normalize, Transfer};
 use crate::model::{self, TokenRig};
 use crate::naming;
 use crate::tokenizer;
+
+pub use skintokens_geom::rig_edit::{
+    attach_skeleton, helper_joints, joints_doc, set_accessor, strip_rig,
+};
 
 /// Normalized model input for one GLB.
 struct Prepared {
@@ -191,7 +195,9 @@ fn bone_frames(joints: &mut [V3], parents: &[i64], rng: &mut Rng) -> Vec<[V3; 3]
             tails[i] = geom::add(joints[i], geom::scale(d, length));
         }
     }
-    tails[root] = geom::add(joints[root], [0.0, 0.0, length]);
+    if !joints.is_empty() {
+        tails[root] = geom::add(joints[root], [0.0, 0.0, length]);
+    }
     (0..n)
         .map(|i| {
             let d = geom::sub(tails[i], joints[i]);
@@ -216,203 +222,6 @@ fn rot_to_gltf(c: [V3; 3]) -> [V3; 3] {
     ]
 }
 
-/// Removes skins, animations, skinning attributes and detaches old joint
-/// nodes from the scene (an already rigged input is re-rigged from scratch).
-/// A node that is not a joint but hangs under one (eyes, a helmet, a weapon
-/// parented to a bone) is moved up to its nearest ancestor that is not a
-/// joint, or to the scene root, where it keeps its place in the world.
-pub fn strip_rig(g: &mut Glb) {
-    let mut joints = std::collections::HashSet::new();
-    for s in g.json["skins"].as_array().into_iter().flatten() {
-        for j in s["joints"].as_array().into_iter().flatten() {
-            if let Some(j) = j.as_u64() {
-                joints.insert(j);
-            }
-        }
-    }
-    // nodes that would be cut off with their joint: (node, new parent or
-    // None for the scene root, its matrix under that parent)
-    let worlds = g.world_matrices();
-    let parents = g.parents();
-    let mut rehome: Vec<(usize, Option<usize>, geom::M4)> = vec![];
-    for (i, p) in parents.iter().enumerate() {
-        let Some(p) = *p else { continue };
-        if joints.contains(&(i as u64)) || !joints.contains(&(p as u64)) {
-            continue;
-        }
-        let mut up = parents[p];
-        while let Some(a) = up {
-            if !joints.contains(&(a as u64)) {
-                break;
-            }
-            up = parents[a];
-        }
-        let local = match up {
-            Some(a) => geom::mul(&geom::inverse(&worlds[a]), &worlds[i]),
-            None => worlds[i],
-        };
-        rehome.push((i, up, local));
-    }
-    let obj = g.json.as_object_mut().unwrap();
-    obj.remove("skins");
-    obj.remove("animations");
-    for nd in g.json["nodes"].as_array_mut().into_iter().flatten() {
-        if let Some(o) = nd.as_object_mut() {
-            o.remove("skin");
-            if let Some(c) = o.get_mut("children").and_then(|c| c.as_array_mut()) {
-                c.retain(|x| !x.as_u64().map(|v| joints.contains(&v)).unwrap_or(false));
-                if c.is_empty() {
-                    o.remove("children");
-                }
-            }
-        }
-    }
-    for sc in g.json["scenes"].as_array_mut().into_iter().flatten() {
-        if let Some(c) = sc["nodes"].as_array_mut() {
-            c.retain(|x| !x.as_u64().map(|v| joints.contains(&v)).unwrap_or(false));
-        }
-    }
-    let moved: std::collections::HashSet<u64> = rehome.iter().map(|r| r.0 as u64).collect();
-    for nd in g.json["nodes"].as_array_mut().into_iter().flatten() {
-        if let Some(c) = nd.get_mut("children").and_then(|c| c.as_array_mut()) {
-            c.retain(|x| !x.as_u64().map(|v| moved.contains(&v)).unwrap_or(false));
-        }
-    }
-    for (i, up, local) in rehome {
-        let flat: Vec<f64> = local.iter().flat_map(|c| c.iter().copied()).collect();
-        if let Some(o) = g.json["nodes"][i].as_object_mut() {
-            for k in ["translation", "rotation", "scale"] {
-                o.remove(k);
-            }
-            o.insert("matrix".into(), json!(flat));
-        }
-        match up {
-            Some(a) => {
-                let o = g.json["nodes"][a].as_object_mut().unwrap();
-                let c = o.entry("children").or_insert(json!([]));
-                if let Some(c) = c.as_array_mut() {
-                    c.push(json!(i));
-                }
-            }
-            None => {
-                let sc = g.json["scene"].as_u64().unwrap_or(0) as usize;
-                if let Some(c) = g.json["scenes"][sc]["nodes"].as_array_mut() {
-                    c.push(json!(i));
-                }
-            }
-        }
-    }
-    for m in g.json["meshes"].as_array_mut().into_iter().flatten() {
-        for p in m["primitives"].as_array_mut().into_iter().flatten() {
-            if let Some(a) = p["attributes"].as_object_mut() {
-                a.retain(|k, _| !k.starts_with("JOINTS_") && !k.starts_with("WEIGHTS_"));
-            }
-        }
-    }
-}
-
-/// Adds a skeleton and its skin to `g` (any old rig already stripped): the
-/// joints as nodes under a new `Armature` node at the scene root, one skin
-/// per distinct mesh placement, and JOINTS_0/WEIGHTS_0 on every primitive.
-/// `worlds` are the joints' rest matrices in glTF world space, `parents`
-/// -1 for a root; `js`/`ws` run over the vertices of `parts` in order.
-pub fn attach_skeleton(
-    g: &mut Glb,
-    parts: &[Part],
-    names: &[String],
-    parents: &[i64],
-    worlds: &[M4],
-    js: &[[u16; 4]],
-    ws: &[[f32; 4]],
-) -> Result<()> {
-    let node_worlds = g.world_matrices();
-    // joint nodes under a new armature node at the scene root
-    let base = g.nodes().len();
-    let arm = base + names.len();
-    let mut kids: Vec<Vec<usize>> = vec![vec![]; names.len()];
-    for (i, &p) in parents.iter().enumerate() {
-        if p >= 0 {
-            kids[p as usize].push(i);
-        }
-    }
-    let mut new_nodes = vec![];
-    for i in 0..names.len() {
-        let local = if parents[i] >= 0 {
-            geom::mul(&geom::inverse(&worlds[parents[i] as usize]), &worlds[i])
-        } else {
-            worlds[i]
-        };
-        let q = geom::quat_from_cols(geom::cols(&local));
-        let t = geom::translation(&local);
-        let mut nd = json!({"name": names[i], "translation": t, "rotation": q});
-        if !kids[i].is_empty() {
-            nd["children"] = json!(kids[i].iter().map(|&k| base + k).collect::<Vec<_>>());
-        }
-        new_nodes.push(nd);
-    }
-    let roots: Vec<usize> = (0..names.len())
-        .filter(|&i| parents[i] < 0)
-        .map(|i| base + i)
-        .collect();
-    new_nodes.push(json!({"name": "Armature", "children": roots}));
-    let nodes = g.json["nodes"]
-        .as_array_mut()
-        .ok_or_else(|| anyhow!("no nodes"))?;
-    nodes.extend(new_nodes);
-    let si = g.json["scene"].as_u64().unwrap_or(0) as usize;
-    if let Some(sn) = g.json["scenes"]
-        .get_mut(si)
-        .and_then(|s| s["nodes"].as_array_mut())
-    {
-        sn.push(json!(arm));
-    } else {
-        bail!("GLB has no scene to add the armature to");
-    }
-    // one skin per distinct mesh-node world matrix (inverse bind = joint^-1 * mesh)
-    let mut skins: Vec<(M4, usize)> = vec![];
-    let joint_nodes: Vec<usize> = (0..names.len()).map(|i| base + i).collect();
-    let mut node_skin: HashMap<usize, usize> = HashMap::new();
-    for p in parts {
-        if node_skin.contains_key(&p.node) {
-            continue;
-        }
-        let mw = node_worlds[p.node];
-        let k = match skins
-            .iter()
-            .position(|(m, _)| (0..4).all(|c| (0..4).all(|r| (m[c][r] - mw[c][r]).abs() < 1e-9)))
-        {
-            Some(k) => k,
-            None => {
-                let ibm: Vec<M4> = worlds
-                    .iter()
-                    .map(|w| geom::mul(&geom::inverse(w), &mw))
-                    .collect();
-                let acc = g.push_mat4s(&ibm);
-                skins.push((mw, acc));
-                skins.len() - 1
-            }
-        };
-        node_skin.insert(p.node, k);
-    }
-    g.json["skins"] = json!(skins
-        .iter()
-        .map(|(_, acc)| json!({"joints": joint_nodes, "inverseBindMatrices": acc, "skeleton": roots[0]}))
-        .collect::<Vec<_>>());
-    for (&n, &k) in &node_skin {
-        g.json["nodes"][n]["skin"] = json!(k);
-    }
-    let mut offset = 0;
-    for p in parts.iter() {
-        let (s, e) = (offset, offset + p.positions.len());
-        offset = e;
-        let (ja, wa) = g.push_skin_attrs(&js[s..e], &ws[s..e]);
-        let attrs = &mut g.json["meshes"][p.mesh]["primitives"][p.prim]["attributes"];
-        attrs["JOINTS_0"] = json!(ja);
-        attrs["WEIGHTS_0"] = json!(wa);
-    }
-    Ok(())
-}
-
 pub fn rig(
     input: &Glb,
     model: &TokenRig,
@@ -422,6 +231,7 @@ pub fn rig(
     how: Transfer,
 ) -> Result<RigResult> {
     let parts = input.parts(Frame::World)?;
+    let first_part = parts.first().ok_or_else(|| anyhow!("no mesh part"))?;
     let mut rng = Rng::new(seed);
     let model_parts: Vec<(Vec<V3>, Vec<[u32; 3]>)> = parts
         .iter()
@@ -456,14 +266,18 @@ pub fn rig(
         json: input.json.clone(),
         bin: input.bin.clone(),
     };
-    strip_rig(&mut g);
+    strip_rig(&mut g)?;
     let node_worlds = g.world_matrices();
     // names: humanoid naming works on heads in the first mesh's bind space
     let mut names: Vec<String> = sk.names.clone();
     let mut missing = vec![];
     let mut details = json!({"joints_raw": names.len()});
     if humanoid {
-        let m0 = geom::inverse(&node_worlds[parts[0].node]);
+        let m0 = geom::inverse(
+            node_worlds
+                .get(first_part.node)
+                .ok_or_else(|| anyhow!("first part node {} out of range", first_part.node))?,
+        );
         let heads: Vec<[f64; 3]> = worlds
             .iter()
             .map(|w| geom::apply(&m0, geom::translation(w)))
@@ -503,98 +317,6 @@ pub fn rig(
 
 // ------------------------------------------------------------------ skin
 
-/// Twist/helper bones (motionforge's DEF-*_twist.*): {helper node: driver
-/// node}. Marked by node extras.helper_bone.driver, else by the name
-/// `<driver>_twist.<side>`.
-pub fn helper_joints(g: &Glb, joint_nodes: &[usize]) -> HashMap<usize, usize> {
-    let names: Vec<String> = joint_nodes
-        .iter()
-        .map(|&n| g.nodes()[n]["name"].as_str().unwrap_or("").to_string())
-        .collect();
-    let mut out = HashMap::new();
-    for (k, &n) in joint_nodes.iter().enumerate() {
-        let mut driver = g.nodes()[n]["extras"]["helper_bone"]["driver"]
-            .as_str()
-            .map(String::from);
-        if driver.is_none() {
-            if let Some((base, side)) = names[k].rsplit_once('.') {
-                if (side == "L" || side == "R") && base.ends_with("_twist") {
-                    driver = Some(format!("{}.{side}", &base[..base.len() - "_twist".len()]));
-                }
-            }
-        }
-        if let Some(d) = driver {
-            if let Some(di) = names.iter().position(|x| *x == d) {
-                if di != k {
-                    out.insert(n, joint_nodes[di]);
-                }
-            }
-        }
-    }
-    out
-}
-
-/// Writes rows into an existing accessor in place (its type and layout
-/// kept), as the previous wrapper did.
-fn set_accessor(g: &mut Glb, acc: usize, rows: &[[f64; 4]]) -> Result<()> {
-    let a = g.json["accessors"][acc].clone();
-    if a.get("sparse").is_some() {
-        bail!("sparse skin accessors are not supported");
-    }
-    let bv = &g.json["bufferViews"][a["bufferView"]
-        .as_u64()
-        .ok_or_else(|| anyhow!("accessor without bufferView"))?
-        as usize];
-    let ct = a["componentType"].as_u64().unwrap_or(0);
-    let (size, max) = match ct {
-        5121 => (1usize, 255.0),
-        5123 => (2, 65535.0),
-        5125 => (4, 4294967295.0),
-        5126 => (4, 0.0),
-        _ => bail!("unsupported component type {ct}"),
-    };
-    let nc = 4usize;
-    let start = bv["byteOffset"].as_u64().unwrap_or(0) as usize
-        + a["byteOffset"].as_u64().unwrap_or(0) as usize;
-    let stride = bv["byteStride"]
-        .as_u64()
-        .map(|s| s as usize)
-        .unwrap_or(size * nc);
-    let normalized = a["normalized"].as_bool().unwrap_or(false);
-    if rows.len() != a["count"].as_u64().unwrap_or(0) as usize {
-        bail!("accessor count mismatch");
-    }
-    let mut mn = [f64::INFINITY; 4];
-    let mut mx = [f64::NEG_INFINITY; 4];
-    for (k, r) in rows.iter().enumerate() {
-        for c in 0..nc {
-            let o = start + k * stride + c * size;
-            let v = if normalized && ct != 5126 {
-                (r[c] * max).round()
-            } else {
-                r[c]
-            };
-            let bytes: Vec<u8> = match ct {
-                5121 => vec![v.clamp(0.0, 255.0) as u8],
-                5123 => (v.clamp(0.0, 65535.0) as u16).to_le_bytes().to_vec(),
-                5125 => (v.max(0.0) as u32).to_le_bytes().to_vec(),
-                _ => (v as f32).to_le_bytes().to_vec(),
-            };
-            g.bin
-                .get_mut(o..o + size)
-                .ok_or_else(|| anyhow!("accessor out of range"))?
-                .copy_from_slice(&bytes);
-            mn[c] = mn[c].min(v);
-            mx[c] = mx[c].max(v);
-        }
-    }
-    if a.get("min").is_some() || a.get("max").is_some() {
-        g.json["accessors"][acc]["min"] = json!(mn);
-        g.json["accessors"][acc]["max"] = json!(mx);
-    }
-    Ok(())
-}
-
 pub struct SkinResult {
     pub glb: Glb,
     pub details: Value,
@@ -608,8 +330,12 @@ pub fn skin(
     how: Transfer,
 ) -> Result<SkinResult> {
     let info = input.skin_info()?;
-    let skin_joints: Vec<usize> = input.json["skins"][0]["joints"]
-        .as_array()
+    let skin_joints: Vec<usize> = input
+        .json
+        .get("skins")
+        .and_then(|s| s.get(0))
+        .and_then(|s| s.get("joints"))
+        .and_then(|v| v.as_array())
         .into_iter()
         .flatten()
         .filter_map(|v| v.as_u64().map(|x| x as usize))
@@ -640,7 +366,9 @@ pub fn skin(
                     let mut slot = jr[c] as usize;
                     if let Some(n) = skin_joints.get(slot) {
                         if let Some(d) = helpers.get(n) {
-                            slot = node_to_slot[d];
+                            if let Some(&ds) = node_to_slot.get(d) {
+                                slot = ds;
+                            }
                         }
                     }
                     if let Some(&vi) = slot_to_vis.get(&slot) {
@@ -654,7 +382,7 @@ pub fn skin(
     let kept_vis = mesh::trim(&vis_parents, &has_skin);
     let kept: Vec<usize> = kept_vis.iter().map(|&v| visible[v]).collect();
     let parents = mesh::reparent(&vis_parents, &kept_vis);
-    if parents.iter().filter(|&&p| p < 0).count() != 1 || parents[0] != -1 {
+    if parents.is_empty() || parents.iter().filter(|&&p| p < 0).count() != 1 || parents[0] != -1 {
         bail!("the skeleton must have exactly one root joint");
     }
     let arm = |v: V3| mesh::to_model(geom::apply(&info.to_armature, v).map(|x| x as f32 as f64));
@@ -704,9 +432,21 @@ pub fn skin(
             prep.mesh.offsets[pi],
             prep.mesh.offsets[pi] + p.positions.len(),
         );
-        let attrs = &input.json["meshes"][p.mesh]["primitives"][p.prim]["attributes"];
-        let (ja, wa) = (attrs["JOINTS_0"].as_u64(), attrs["WEIGHTS_0"].as_u64());
-        let (Some(ja), Some(wa)) = (ja, wa) else {
+        if e > js.len() || e > ws.len() {
+            bail!("predicted skin attributes shorter than mesh part vertex count");
+        }
+        let attrs = input
+            .json
+            .get("meshes")
+            .and_then(|m| m.get(p.mesh))
+            .and_then(|m| m.get("primitives"))
+            .and_then(|pr| pr.get(p.prim))
+            .and_then(|pr| pr.get("attributes"))
+            .ok_or_else(|| anyhow!("missing attributes on mesh {} prim {}", p.mesh, p.prim))?;
+        let (Some(ja), Some(wa)) = (
+            attrs.get("JOINTS_0").and_then(|v| v.as_u64()),
+            attrs.get("WEIGHTS_0").and_then(|v| v.as_u64()),
+        ) else {
             bail!("skinned primitive without JOINTS_0/WEIGHTS_0")
         };
         let jrows: Vec<[f64; 4]> = js[s..e]
@@ -716,14 +456,17 @@ pub fn skin(
                 let mut r = [0.0; 4];
                 for c in 0..4 {
                     r[c] = if w[c] > 0.0 {
-                        slots[j[c] as usize] as f64
+                        *slots
+                            .get(j[c] as usize)
+                            .ok_or_else(|| anyhow!("predicted joint index {} out of range", j[c]))?
+                            as f64
                     } else {
                         0.0
                     };
                 }
-                r
+                Ok(r)
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
         let wrows: Vec<[f64; 4]> = ws[s..e].iter().map(|w| w.map(|x| x as f64)).collect();
         set_accessor(&mut g, ja as usize, &jrows)?;
         set_accessor(&mut g, wa as usize, &wrows)?;
@@ -738,111 +481,4 @@ pub fn skin(
         "transfer": transfer,
     });
     Ok(SkinResult { glb: g, details })
-}
-
-// ---------------------------------------------------------------- joints
-
-/// skintokens-joints/1 (same schema as unirig-joints/1): first skin, joints
-/// in skin order, heads from the inverse bind matrices, normalizer over
-/// every primitive's POSITION as stored.
-pub fn joints_doc(g: &Glb, subject: Option<&str>, source: &str) -> Result<Value> {
-    let doc = g.doc()?;
-    let skin = doc.skins().next().ok_or_else(|| anyhow!("no skin"))?;
-    let joints: Vec<usize> = skin.joints().map(|j| j.index()).collect();
-    let ibm: Vec<[[f32; 4]; 4]> = skin
-        .reader(g.buffer())
-        .read_inverse_bind_matrices()
-        .map(|m| m.collect())
-        .unwrap_or_else(|| {
-            vec![
-                [
-                    [1.0, 0.0, 0.0, 0.0],
-                    [0.0, 1.0, 0.0, 0.0],
-                    [0.0, 0.0, 1.0, 0.0],
-                    [0.0, 0.0, 0.0, 1.0]
-                ];
-                joints.len()
-            ]
-        });
-    let parent_of = g.parents();
-    let index: HashMap<usize, usize> = joints.iter().enumerate().map(|(k, &j)| (j, k)).collect();
-    let parents: Vec<Option<usize>> = joints
-        .iter()
-        .map(|&j| {
-            let mut p = parent_of[j];
-            while let Some(x) = p {
-                if let Some(&k) = index.get(&x) {
-                    return Some(k);
-                }
-                p = parent_of[x];
-            }
-            None
-        })
-        .collect();
-    let heads: Vec<V3> = ibm
-        .iter()
-        .map(|m| {
-            let m: M4 = std::array::from_fn(|c| std::array::from_fn(|r| m[c][r] as f64));
-            geom::translation(&geom::inverse(&m))
-        })
-        .collect();
-    let names: Vec<String> = joints
-        .iter()
-        .map(|&j| {
-            g.nodes()[j]["name"]
-                .as_str()
-                .map(String::from)
-                .unwrap_or(format!("joint_{j}"))
-        })
-        .collect();
-    let mut lo = [f64::INFINITY; 3];
-    let mut hi = [f64::NEG_INFINITY; 3];
-    for m in doc.meshes() {
-        for p in m.primitives() {
-            if let Some(ps) = p.reader(g.buffer()).read_positions() {
-                for v in ps {
-                    for a in 0..3 {
-                        lo[a] = lo[a].min(v[a] as f64);
-                        hi[a] = hi[a].max(v[a] as f64);
-                    }
-                }
-            }
-        }
-    }
-    if !lo[0].is_finite() {
-        bail!("no mesh positions");
-    }
-    let center = geom::scale(geom::add(lo, hi), 0.5);
-    let ext = geom::sub(hi, lo);
-    let s = ext[0].max(ext[1]).max(ext[2]) / 2.0;
-    let scale = if s != 0.0 { s } else { 1.0 };
-    let mut kids: HashMap<usize, Vec<usize>> = HashMap::new();
-    for (i, p) in parents.iter().enumerate() {
-        if let Some(p) = p {
-            kids.entry(*p).or_default().push(i);
-        }
-    }
-    let js: Vec<Value> = (0..joints.len())
-        .map(|i| {
-            let k = kids.get(&i).cloned().unwrap_or_default();
-            json!({
-                "name": names[i],
-                "parent": parents[i],
-                "world": heads[i],
-                "normalized": geom::scale(geom::sub(heads[i], center), 1.0 / scale),
-                "tail_world": if k.len() == 1 { json!(heads[k[0]]) } else { Value::Null },
-                "confidence": Value::Null,
-            })
-        })
-        .collect();
-    Ok(json!({
-        "format": "skintokens-joints/1",
-        "subject": subject,
-        "seed": Value::Null,
-        "source": source,
-        "frame": "source mesh frame as stored (glTF, Y-up); positions in source units",
-        "normalizer": {"center": center, "scale": scale,
-                       "formula": "(world - center) / scale over the mesh bbox; longest extent maps to [-1, 1]"},
-        "joints": js,
-    }))
 }

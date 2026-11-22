@@ -12,6 +12,6 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
-skintokens = { path = "../skintokens", default-features = false }
+skintokens-geom = { path = "../skintokens-geom" }
 serde_json = { version = "1", features = ["preserve_order"] }
 png = "0.17"

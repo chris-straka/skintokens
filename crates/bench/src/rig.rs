@@ -6,8 +6,8 @@ use std::path::Path;
 
 use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
-use skintokens::geom::{self, M4, V3};
-use skintokens::glb::Glb;
+use skintokens_geom::geom::{self, M4, V3};
+use skintokens_geom::glb::Glb;
 
 pub type M3 = [V3; 3];
 
@@ -196,7 +196,10 @@ impl Rig {
         let mut tris: Vec<[u32; 3]> = vec![];
         let mut seen_mesh = std::collections::HashSet::new();
         for ni in glb.scene_nodes() {
-            let node = doc.nodes().nth(ni).unwrap();
+            let node = doc
+                .nodes()
+                .nth(ni)
+                .ok_or_else(|| anyhow!("scene node {ni} missing in glTF document"))?;
             let Some(mesh) = node.mesh() else { continue };
             if !seen_mesh.insert((mesh.index(), node.skin().map(|s| s.index()))) {
                 continue;
@@ -520,7 +523,7 @@ impl Rig {
                     vec![*times.last().unwrap() as f32 as f64],
                 )),
                 false,
-            );
+            )?;
             let mut samplers = vec![];
             let mut channels = vec![];
             for (j, &node) in self.joints.iter().enumerate() {
@@ -548,7 +551,7 @@ impl Rig {
                     .iter()
                     .flat_map(|q| q.iter().flat_map(|v| (*v as f32).to_le_bytes()))
                     .collect();
-                let r_acc = g.push_accessor(&rb, 5126, "VEC4", rots.len(), None, false);
+                let r_acc = g.push_accessor(&rb, 5126, "VEC4", rots.len(), None, false)?;
                 samplers.push(json!({"input": t_acc, "output": r_acc, "interpolation": "LINEAR"}));
                 channels.push(json!({"sampler": samplers.len() - 1, "target": {"node": node, "path": "rotation"}}));
                 let rest_t = self.rest[node].t;
@@ -560,7 +563,7 @@ impl Rig {
                         .iter()
                         .flat_map(|t| t.iter().flat_map(|v| (*v as f32).to_le_bytes()))
                         .collect();
-                    let a = g.push_accessor(&b, 5126, "VEC3", trs.len(), None, false);
+                    let a = g.push_accessor(&b, 5126, "VEC3", trs.len(), None, false)?;
                     samplers.push(json!({"input": t_acc, "output": a, "interpolation": "LINEAR"}));
                     channels.push(json!({"sampler": samplers.len() - 1, "target": {"node": node, "path": "translation"}}));
                 }
@@ -582,7 +585,9 @@ impl Rig {
             for &nd in &joints {
                 if nodes[nd]["matrix"].is_array() {
                     let trs = self.rest[nd];
-                    let o = nodes[nd].as_object_mut().unwrap();
+                    let o = nodes[nd]
+                        .as_object_mut()
+                        .ok_or_else(|| anyhow!("node {nd} is not an object"))?;
                     o.remove("matrix");
                     o.insert("translation".into(), json!(trs.t));
                     o.insert("rotation".into(), json!(trs.r));

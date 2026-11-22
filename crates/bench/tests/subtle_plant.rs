@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::{json, Value};
-use skintokens::geom;
-use skintokens::glb::{Frame, Glb};
-use skintokens::pipeline::attach_skeleton;
+use skintokens_geom::geom;
+use skintokens_geom::glb::{Frame, Glb};
+use skintokens_geom::rig_edit::attach_skeleton;
 
 fn bench_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_creature-bench"))
@@ -115,8 +115,12 @@ fn build_skinned_glb(
     };
     let pb: Vec<u8> = pos.iter().flat_map(|x| x.to_le_bytes()).collect();
     let ib: Vec<u8> = idx.iter().flat_map(|x| x.to_le_bytes()).collect();
-    let pa = g.push_accessor(&pb, 5126, "VEC3", nv, Some((mn, mx)), false);
-    let ia = g.push_accessor(&ib, 5123, "SCALAR", idx.len(), None, false);
+    let pa = g
+        .push_accessor(&pb, 5126, "VEC3", nv, Some((mn, mx)), false)
+        .unwrap();
+    let ia = g
+        .push_accessor(&ib, 5123, "SCALAR", idx.len(), None, false)
+        .unwrap();
     g.json["meshes"] =
         json!([{"name": "body", "primitives": [{"attributes": {"POSITION": pa}, "indices": ia}]}]);
     g.json["nodes"] = json!([{"name": "body", "mesh": 0}]);

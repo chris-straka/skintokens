@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::{json, Value};
-use skintokens::geom;
-use skintokens::glb::{Frame, Glb};
-use skintokens::pipeline::attach_skeleton;
+use skintokens_geom::geom;
+use skintokens_geom::glb::{Frame, Glb};
+use skintokens_geom::rig_edit::attach_skeleton;
 
 fn rig_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_creature-rig"))
@@ -79,8 +79,12 @@ fn box_dog_glb() -> Glb {
     };
     let pb: Vec<u8> = pos.iter().flat_map(|x| x.to_le_bytes()).collect();
     let ib: Vec<u8> = idx.iter().flat_map(|x| x.to_le_bytes()).collect();
-    let pa = g.push_accessor(&pb, 5126, "VEC3", nv, Some((mn, mx)), false);
-    let ia = g.push_accessor(&ib, 5123, "SCALAR", idx.len(), None, false);
+    let pa = g
+        .push_accessor(&pb, 5126, "VEC3", nv, Some((mn, mx)), false)
+        .unwrap();
+    let ia = g
+        .push_accessor(&ib, 5123, "SCALAR", idx.len(), None, false)
+        .unwrap();
     g.json["meshes"] =
         json!([{"name": "dog", "primitives": [{"attributes": {"POSITION": pa}, "indices": ia}]}]);
     g.json["nodes"] = json!([{"name": "dog", "mesh": 0}]);
@@ -195,7 +199,7 @@ fn strip_front_left_distal(src: &Path, dst: &Path) {
         }
     }
     for (mi, pi, js, ws) in replacements {
-        let (ja, wa) = g.push_skin_attrs(&js, &ws);
+        let (ja, wa) = g.push_skin_attrs(&js, &ws).unwrap();
         let attrs = g.json["meshes"][mi]["primitives"][pi]["attributes"]
             .as_object_mut()
             .unwrap();

@@ -6,7 +6,7 @@
 //! the ground) it can leave it a quarter turn off, and then an arm and a
 //! leg of one side read as a left and a right.
 
-use skintokens::geom::{self, KdTree, V3};
+use skintokens_geom::geom::{self, KdTree, V3};
 
 pub struct Mirror {
     /// Turn about the up axis (degrees) that brings the mirror plane's

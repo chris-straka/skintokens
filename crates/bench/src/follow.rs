@@ -6,7 +6,7 @@ use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Value};
-use skintokens::geom::{self, M4, V3};
+use skintokens_geom::geom::{self, M4, V3};
 
 use crate::rig::{m3_apply, m3_mul, Rig, M3};
 
@@ -642,7 +642,7 @@ pub fn follow(
         .iter()
         .map(|&j| (rig.names[j].clone(), widest[j]))
         .collect();
-    turned.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    turned.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     let body = masks[0].count().max(1) as f64;
     let json = json!({
         "frames": n,

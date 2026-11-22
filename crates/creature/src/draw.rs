@@ -1,7 +1,7 @@
 //! Plain pictures for checking the analysis by eye: the solid from the
 //! side, the front and the top, a colour per part, lines and dots on top.
 
-use skintokens::geom::V3;
+use skintokens_geom::geom::V3;
 
 use crate::parts::Body;
 

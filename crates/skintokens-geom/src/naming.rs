@@ -9,7 +9,7 @@
 //! non-canonical name (`extra_*`); standardize folds their weights into the
 //! nearest kept ancestor.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const CORE: [&str; 14] = [
     "Hips",
@@ -42,18 +42,24 @@ pub fn name_humanoid(
     names: &[String],
     parents: &[Option<usize>],
     heads: &[[f64; 3]],
-) -> (HashMap<String, String>, Vec<String>) {
+) -> (BTreeMap<String, String>, Vec<String>) {
     let n = names.len();
     let all_missing = || {
         (
-            HashMap::new(),
+            BTreeMap::new(),
             CORE.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
         )
     };
+    if n == 0 || parents.len() != n || heads.len() != n {
+        return all_missing();
+    }
     let mut kids: Vec<Vec<usize>> = vec![vec![]; n];
     for (i, p) in parents.iter().enumerate() {
-        if let Some(p) = p {
-            kids[*p].push(i);
+        if let Some(p) = *p {
+            if p >= n || p == i {
+                return all_missing();
+            }
+            kids[p].push(i);
         }
     }
     let roots: Vec<usize> = (0..n).filter(|&i| parents[i].is_none()).collect();
@@ -62,18 +68,33 @@ pub fn name_humanoid(
     }
     let root = roots[0];
     let mut size = vec![0usize; n];
-    fn count(i: usize, kids: &[Vec<usize>], size: &mut [usize]) -> usize {
-        let s = 1 + kids[i].iter().map(|&k| count(k, kids, size)).sum::<usize>();
+    let mut seen = vec![false; n];
+    fn count(i: usize, kids: &[Vec<usize>], size: &mut [usize], seen: &mut [bool]) -> usize {
+        if seen[i] {
+            return 0;
+        }
+        seen[i] = true;
+        let s = 1 + kids[i]
+            .iter()
+            .map(|&k| count(k, kids, size, seen))
+            .sum::<usize>();
         size[i] = s;
         s
     }
-    count(root, &kids, &mut size);
+    count(root, &kids, &mut size, &mut seen);
+    if size[root] == 0 {
+        return all_missing();
+    }
     let ys: Vec<f64> = heads.iter().map(|h| h[1]).collect();
     let ptp = ys.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
         - ys.iter().cloned().fold(f64::INFINITY, f64::min);
-    let height = if ptp != 0.0 { ptp } else { 1.0 };
+    let height = if ptp.is_finite() && ptp != 0.0 {
+        ptp
+    } else {
+        1.0
+    };
     let mid_x = heads[root][0];
-    let mut out: HashMap<usize, String> = HashMap::new();
+    let mut out: BTreeMap<usize, String> = BTreeMap::new();
     out.insert(root, "Hips".into());
 
     let dx = |k: usize| (heads[k][0] - mid_x).abs();
@@ -86,7 +107,7 @@ pub fn name_humanoid(
                 round3(dx(a))
                     .total_cmp(&round3(dx(b)))
                     .then(size[b].cmp(&size[a]))
-                    .then(std::cmp::Ordering::Equal)
+                    .then(a.cmp(&b))
             })
     };
     let mut chain = vec![];
@@ -98,10 +119,19 @@ pub fn name_humanoid(
         chain.push(c);
         cur = step(c);
     }
-    fn lowest(i: usize, kids: &[Vec<usize>], heads: &[[f64; 3]]) -> f64 {
+    fn lowest(
+        i: usize,
+        kids: &[Vec<usize>],
+        heads: &[[f64; 3]],
+        depth: usize,
+        limit: usize,
+    ) -> f64 {
+        if depth >= limit {
+            return heads[i][1];
+        }
         kids[i]
             .iter()
-            .map(|&k| lowest(k, kids, heads))
+            .map(|&k| lowest(k, kids, heads, depth + 1, limit))
             .fold(heads[i][1], f64::min)
     }
     // one limb per side: the largest subtree on each side; the rest are extras
@@ -129,7 +159,9 @@ pub fn name_humanoid(
     let leg_cands: Vec<usize> = kids[root]
         .iter()
         .copied()
-        .filter(|k| !chain.contains(k) && lowest(*k, &kids, heads) < heads[root][1] - 0.3 * height)
+        .filter(|k| {
+            !chain.contains(k) && lowest(*k, &kids, heads, 0, n) < heads[root][1] - 0.3 * height
+        })
         .collect();
     let (legs, mut odd) = pick_pair(&leg_cands);
     let extra: Vec<usize> = kids[root]
@@ -151,7 +183,7 @@ pub fn name_humanoid(
             chest = Some(j);
         }
     }
-    let Some(chest) = chest else {
+    let Some(ci) = chest.and_then(|c| chain.iter().position(|&x| x == c)) else {
         let mapping = names
             .iter()
             .enumerate()
@@ -172,7 +204,7 @@ pub fn name_humanoid(
                 .collect(),
         );
     };
-    let ci = chain.iter().position(|&c| c == chest).unwrap();
+    let chest = chain[ci];
     let (spine, above) = (chain[..=ci].to_vec(), chain[ci + 1..].to_vec());
     for (k, &j) in spine.iter().enumerate() {
         out.insert(
@@ -193,10 +225,15 @@ pub fn name_humanoid(
             out.insert(j, format!("extra_head{k}"));
         }
     }
-    let walk = |start: usize, labels: &[String], side: &str, out: &mut HashMap<usize, String>| {
+    let walk = |start: usize, labels: &[String], side: &str, out: &mut BTreeMap<usize, String>| {
         let mut j = Some(start);
         let mut k = 0;
+        let mut visited = 0usize;
         while let Some(x) = j {
+            if visited >= n {
+                break;
+            }
+            visited += 1;
             let name = if k < labels.len() {
                 format!("{side}{}", labels[k])
             } else {
@@ -242,7 +279,7 @@ pub fn name_humanoid(
         );
     }
     // facing: toes in front of the ankles; facing -Z mirrors left/right
-    let by_name: HashMap<String, usize> = out.iter().map(|(k, v)| (v.clone(), *k)).collect();
+    let by_name: BTreeMap<String, usize> = out.iter().map(|(k, v)| (v.clone(), *k)).collect();
     let dz: Vec<f64> = ["Left", "Right"]
         .iter()
         .filter_map(|s| {
@@ -262,7 +299,7 @@ pub fn name_humanoid(
             }
         }
     }
-    let got: std::collections::HashSet<&String> = out.values().collect();
+    let got: BTreeSet<&String> = out.values().collect();
     let missing: Vec<String> = CORE
         .iter()
         .filter(|c| !got.contains(&c.to_string()))

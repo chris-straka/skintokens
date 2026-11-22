@@ -1,0 +1,12 @@
+[package]
+name = "skintokens-geom"
+description = "Pure-MIT GLB I/O, geometry, mesh sampling, humanoid naming, and rig-editing helpers"
+license = "MIT"
+edition.workspace = true
+version.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde_json = { version = "1", features = ["preserve_order"] }
+gltf = { version = "1.4", default-features = false, features = ["utils", "names"] }

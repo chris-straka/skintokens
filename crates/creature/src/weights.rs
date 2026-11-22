@@ -5,7 +5,7 @@
 //! it is shared with the neighbouring bone, over a band as wide as the
 //! body is thick there.
 
-use skintokens::geom::{self, V3};
+use skintokens_geom::geom::{self, V3};
 
 use crate::parts::{geodesic, Body};
 use crate::skeleton::Skeleton;
@@ -138,7 +138,7 @@ impl Fields {
 pub fn skin(body: &Body, sk: &Skeleton, verts: &[V3], tris: &[[u32; 3]], blend: f64) -> Skin {
     let nb = sk.bones.len();
     let fields = Fields::build(body, sk);
-    let (id, reps) = skintokens::mesh::weld(verts, 1e-5 * body.size.max(1e-9));
+    let (id, reps) = skintokens_geom::mesh::weld(verts, 1e-5 * body.size.max(1e-9));
     // bones that may share a vertex with bone b: its parent, its children,
     // and the other children of its parent
     let mut near: Vec<Vec<usize>> = vec![vec![]; nb];

@@ -1,7 +1,7 @@
 [package]
 name = "skintokens"
 description = "SkinTokens / TokenRig auto-rigging (skeleton + skin weights) as a file-in, file-out CLI"
-license = "MIT"
+license = "GPL-3.0-only"
 edition.workspace = true
 version.workspace = true
 repository.workspace = true
@@ -21,6 +21,7 @@ cuda = ["candle-core/cuda", "candle-nn/cuda"]
 candle-core.workspace = true
 candle-nn.workspace = true
 anyhow.workspace = true
+skintokens-geom = { path = "../skintokens-geom" }
 skintokens-encoder = { path = "../skintokens-encoder" }
 skintokens-nn = { path = "../skintokens-nn" }
 serde_json = { version = "1", features = ["preserve_order"] }

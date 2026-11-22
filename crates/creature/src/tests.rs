@@ -1,6 +1,6 @@
 //! A creature made of boxes, through the whole tool.
 
-use skintokens::geom::V3;
+use skintokens_geom::geom::V3;
 
 use crate::check;
 use crate::parts::Body;
@@ -281,8 +281,8 @@ fn a_separate_piece_goes_to_its_nearest_bone() {
 /// the bone is.
 #[test]
 fn skin_rest_reads_a_vertex_through_its_joint() {
-    use skintokens::geom;
-    use skintokens::glb::skin_rest;
+    use skintokens_geom::geom;
+    use skintokens_geom::glb::skin_rest;
     let world = geom::from_trs([1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0], [6.0, 6.0, 6.0]);
     let near = |a: Option<V3>, b: [f64; 3]| {
         let a = a.unwrap();

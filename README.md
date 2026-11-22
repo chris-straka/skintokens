@@ -184,21 +184,21 @@ side of Part A remains an upper bound.)
 
 ## How it is built
 
-- `crates/skintokens` (MIT): CLI, GLB I/O (`gltf` crate to read; edits on
-  the raw JSON/binary so untouched data stays byte for byte), mesh
-  pipeline (upstream's trim/normalize/surface sampling, Blender's
-  armature frame and duplicate-face drop), TokenRig's Qwen3 LM, the
-  skeleton tokenizer, transformers' beam sampling with TokenRig's
-  vocabulary switch, the FSQ-CVAE decoder, humanoid naming.
-- `crates/skintokens-encoder` (**GPL-3.0**): the point-cloud shape
-  encoder, ported from Michelangelo-derived code. The binary links it,
-  so the built binary is GPL-3.0; callers only run it as a separate
-  process.
+- `crates/skintokens-geom` (MIT): pure-MIT GLB I/O (`gltf` crate to read; edits on
+  the raw JSON/binary so untouched data stays byte for byte), geometry, mesh
+  pipeline (upstream's trim/normalize/surface sampling, Blender's armature
+  frame and duplicate-face drop), humanoid naming, and skeleton/skin editing.
 - `crates/skintokens-nn` (MIT): shared layers, attention, FPS.
-- `crates/creature` (MIT): `creature-rig`; uses the skintokens crate for
-  GLB I/O only (it links it, so its binary is GPL-3.0 as well).
-- `crates/bench` (MIT): `creature-bench`, the benchmark's measurements;
-  the same GLB I/O and the same note about its binary.
+- `crates/skintokens-encoder` (**GPL-3.0-only**): the point-cloud shape
+  encoder, ported from Michelangelo-derived code.
+- `crates/skintokens` (**GPL-3.0-only**): CLI, pipeline orchestration, TokenRig's
+  Qwen3 LM, skeleton tokenizer, beam sampling, and FSQ-CVAE decoder; links
+  `skintokens-encoder`, so both crate and binary are `GPL-3.0-only` and
+  external MIT callers invoke it strictly as a subprocess CLI.
+- `crates/creature` (MIT): `creature-rig`; links only `skintokens-geom` (MIT)
+  and never `skintokens`, `skintokens-encoder`, or `candle`, keeping its binary MIT.
+- `crates/bench` (MIT): `creature-bench`, the benchmark's measurements; links
+  only `skintokens-geom` (MIT), keeping its binary MIT.
 
 Upstream details kept on purpose (all verified against the Python run):
 the 54k-point cloud is surface samples only; the VAE embedder and rotary
@@ -227,7 +227,7 @@ are there too.
 
 ## Layout
 
-- `crates/` - the three crates above.
+- `crates/` - the workspace crates above (`skintokens-geom`, `skintokens-nn`, `skintokens-encoder`, `skintokens`, `creature`, `bench`).
 - `bin/skintokens` - shim to `target/release/skintokens`.
 - `fetch-weights.sh` - pinned checkpoint download.
 - `tools/joints_samples/` - a `skintokens-joints/1` sample rigforge's tests read.

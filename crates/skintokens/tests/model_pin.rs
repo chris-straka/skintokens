@@ -92,8 +92,12 @@ fn figure() -> Glb {
     };
     let pb: Vec<u8> = pos.iter().flat_map(|x| x.to_le_bytes()).collect();
     let ib: Vec<u8> = idx.iter().flat_map(|x| x.to_le_bytes()).collect();
-    let pa = g.push_accessor(&pb, 5126, "VEC3", n, Some((mn, mx)), false);
-    let ia = g.push_accessor(&ib, 5123, "SCALAR", idx.len(), None, false);
+    let pa = g
+        .push_accessor(&pb, 5126, "VEC3", n, Some((mn, mx)), false)
+        .unwrap();
+    let ia = g
+        .push_accessor(&ib, 5123, "SCALAR", idx.len(), None, false)
+        .unwrap();
     g.json["meshes"] = json!([{"name": "figure", "primitives": [{"attributes": {"POSITION": pa}, "indices": ia}]}]);
     g.json["nodes"] = json!([{"name": "figure", "mesh": 0}]);
     g.json["scenes"] = json!([{"nodes": [0]}]);

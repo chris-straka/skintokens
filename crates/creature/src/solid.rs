@@ -7,7 +7,7 @@
 //! axes say so. Cells the surface passes through always count, so a tail
 //! or a wing thinner than a cell stays connected.
 
-use skintokens::geom::{self, V3};
+use skintokens_geom::geom::{self, V3};
 
 pub struct Solid {
     pub dims: [usize; 3],

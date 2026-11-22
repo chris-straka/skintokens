@@ -7,8 +7,8 @@
 //! there and so tears nothing.
 
 use serde_json::{json, Value};
-use skintokens::geom::{self, V3};
-use skintokens::glb::Glb;
+use skintokens_geom::geom::{self, V3};
+use skintokens_geom::glb::Glb;
 
 use crate::parts::Body;
 use crate::roles::{self, Anatomy, Role, Side};
@@ -138,7 +138,7 @@ pub fn read_rig(g: &Glb) -> anyhow::Result<Vec<Bone>> {
         tail[j] = geom::add(head[j], geom::scale(dir, l));
     }
     let mut mass = vec![0.0f64; n];
-    if let Ok(parts) = g.parts(skintokens::glb::Frame::SkinBind) {
+    if let Ok(parts) = g.parts(skintokens_geom::glb::Frame::SkinBind) {
         for p in &parts {
             if let (Some(js), Some(ws)) = (&p.joints, &p.weights) {
                 for (j, w) in js.iter().zip(ws.iter()) {

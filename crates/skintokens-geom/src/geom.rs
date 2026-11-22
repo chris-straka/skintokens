@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn kdtree_matches_brute_force() {
-        let mut r = skintokens_nn::Rng::new(3);
+        let mut r = crate::rng::Rng::new(3);
         let pts: Vec<V3> = (0..2000)
             .map(|_| [r.uniform(), r.uniform(), r.uniform()])
             .collect();

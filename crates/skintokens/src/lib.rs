@@ -1,12 +1,10 @@
 //! SkinTokens / TokenRig auto-rigging in Rust (candle): the library behind
 //! the `skintokens` CLI.
 
+pub use skintokens_geom::{geom, glb, mesh, naming};
+
 pub mod generate;
-pub mod geom;
-pub mod glb;
-pub mod mesh;
 pub mod model;
-pub mod naming;
 pub mod parity;
 pub mod pipeline;
 pub mod qwen;

@@ -17,8 +17,8 @@ use std::process::ExitCode;
 
 use anyhow::{anyhow, bail, Result};
 use serde_json::json;
-use skintokens::geom::V3;
-use skintokens::glb::{Frame, Glb};
+use skintokens_geom::geom::V3;
+use skintokens_geom::glb::{Frame, Glb};
 
 const HELP: &str = "creature-rig: creature rigs from the body's own shape.
 
@@ -542,7 +542,7 @@ fn cmd_rig(a: &Args) -> Result<()> {
         json: src.json.clone(),
         bin: src.bin.clone(),
     };
-    skintokens::pipeline::strip_rig(&mut g);
+    skintokens_geom::rig_edit::strip_rig(&mut g)?;
     let read = |g: &Glb| -> Result<(Vec<V3>, Vec<[u32; 3]>)> {
         let mut verts = vec![];
         let mut tris = vec![];
@@ -608,19 +608,19 @@ fn cmd_rig(a: &Args) -> Result<()> {
     let sk = skeleton::Skeleton::fit_with(&body, &an, hint.as_deref());
     let skin = weights::skin(&body, &sk, &verts, &tris, blend);
     // bones follow Blender's convention: local +Y along the bone, roll 0
-    let worlds: Vec<skintokens::geom::M4> = sk
+    let worlds: Vec<skintokens_geom::geom::M4> = sk
         .bones
         .iter()
         .map(|b| {
-            let d = skintokens::geom::sub(b.tail, b.head);
-            let l = skintokens::geom::norm(d);
+            let d = skintokens_geom::geom::sub(b.tail, b.head);
+            let l = skintokens_geom::geom::norm(d);
             let d = if l > 0.0 {
-                skintokens::geom::scale(d, 1.0 / l)
+                skintokens_geom::geom::scale(d, 1.0 / l)
             } else {
                 [0.0, 1.0, 0.0]
             };
-            let cols = skintokens::geom::bone_rotation(skintokens::mesh::to_model(d));
-            skintokens::geom::from_rt(cols.map(skintokens::mesh::from_model), b.head)
+            let cols = skintokens_geom::geom::bone_rotation(skintokens_geom::mesh::to_model(d));
+            skintokens_geom::geom::from_rt(cols.map(skintokens_geom::mesh::from_model), b.head)
         })
         .collect();
     let gparts = g.parts(Frame::World)?;
@@ -630,7 +630,7 @@ fn cmd_rig(a: &Args) -> Result<()> {
         .iter()
         .map(|b| b.parent.map(|p| p as i64).unwrap_or(-1))
         .collect();
-    skintokens::pipeline::attach_skeleton(
+    skintokens_geom::rig_edit::attach_skeleton(
         &mut g,
         &gparts,
         &names,

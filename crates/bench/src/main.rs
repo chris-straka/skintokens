@@ -12,7 +12,7 @@ use std::process::ExitCode;
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Value};
-use skintokens::geom::{self, KdTree, V3};
+use skintokens_geom::geom::{self, KdTree, V3};
 
 use bench::{Drive, Truth};
 use rig::Rig;
@@ -322,7 +322,7 @@ fn rigid(a: &Args) -> Result<()> {
     let rig = Rig::read(Path::new(&a.pos[0]))?;
     let al = bench::align(&rig.rest_pos, &rig.rest_pos);
     let truth = Truth::new(&rig, &al, &json!({}));
-    let mut g = skintokens::glb::Glb {
+    let mut g = skintokens_geom::glb::Glb {
         json: rig.glb.json.clone(),
         bin: rig.glb.bin.clone(),
     };
@@ -330,7 +330,10 @@ fn rigid(a: &Args) -> Result<()> {
     let mut v0 = 0usize;
     let mut seen = std::collections::HashSet::new();
     for ni in rig.glb.scene_nodes() {
-        let node = doc.nodes().nth(ni).unwrap();
+        let node = doc
+            .nodes()
+            .nth(ni)
+            .ok_or_else(|| anyhow!("scene node {ni} missing in glTF document"))?;
         let Some(mesh) = node.mesh() else { continue };
         if !seen.insert((mesh.index(), node.skin().map(|s| s.index()))) {
             continue;
@@ -372,10 +375,18 @@ fn rigid(a: &Args) -> Result<()> {
                     }
                     js[v][0] = best.1 as u16;
                 }
-                let (ja, wa) = g.push_skin_attrs(&js, &ws);
-                let attrs = g.json["meshes"][mesh.index()]["primitives"][pi]["attributes"]
-                    .as_object_mut()
-                    .unwrap();
+                let (ja, wa) = g.push_skin_attrs(&js, &ws)?;
+                let attrs = g
+                    .json
+                    .get_mut("meshes")
+                    .and_then(|m| m.get_mut(mesh.index()))
+                    .and_then(|m| m.get_mut("primitives"))
+                    .and_then(|pr| pr.get_mut(pi))
+                    .and_then(|pr| pr.get_mut("attributes"))
+                    .and_then(|a| a.as_object_mut())
+                    .ok_or_else(|| {
+                        anyhow!("missing attributes on mesh {} prim {}", mesh.index(), pi)
+                    })?;
                 attrs.retain(|k, _| !k.starts_with("JOINTS_") && !k.starts_with("WEIGHTS_"));
                 attrs.insert("JOINTS_0".into(), json!(ja));
                 attrs.insert("WEIGHTS_0".into(), json!(wa));
@@ -468,7 +479,7 @@ fn plant(a: &Args) -> Result<()> {
         let cleared_names: Vec<String> =
             clear_joints.iter().map(|&j| rig.names[j].clone()).collect();
 
-        let mut g = skintokens::glb::Glb {
+        let mut g = skintokens_geom::glb::Glb {
             json: rig.glb.json.clone(),
             bin: rig.glb.bin.clone(),
         };
@@ -477,7 +488,10 @@ fn plant(a: &Args) -> Result<()> {
         let mut reassigned_verts = 0usize;
         let mut root_seen = 0usize;
         for ni in rig.glb.scene_nodes() {
-            let node = doc.nodes().nth(ni).unwrap();
+            let node = doc
+                .nodes()
+                .nth(ni)
+                .ok_or_else(|| anyhow!("scene node {ni} missing in glTF document"))?;
             let Some(mesh) = node.mesh() else { continue };
             if !seen.insert((mesh.index(), node.skin().map(|s| s.index()))) {
                 continue;
@@ -535,10 +549,18 @@ fn plant(a: &Args) -> Result<()> {
                         reassigned_verts += 1;
                     }
                 }
-                let (ja, wa) = g.push_skin_attrs(&js, &ws);
-                let attrs = g.json["meshes"][mesh.index()]["primitives"][pi]["attributes"]
-                    .as_object_mut()
-                    .unwrap();
+                let (ja, wa) = g.push_skin_attrs(&js, &ws)?;
+                let attrs = g
+                    .json
+                    .get_mut("meshes")
+                    .and_then(|m| m.get_mut(mesh.index()))
+                    .and_then(|m| m.get_mut("primitives"))
+                    .and_then(|pr| pr.get_mut(pi))
+                    .and_then(|pr| pr.get_mut("attributes"))
+                    .and_then(|a| a.as_object_mut())
+                    .ok_or_else(|| {
+                        anyhow!("missing attributes on mesh {} prim {}", mesh.index(), pi)
+                    })?;
                 attrs.retain(|k, _| !k.starts_with("JOINTS_") && !k.starts_with("WEIGHTS_"));
                 attrs.insert("JOINTS_0".into(), json!(ja));
                 attrs.insert("WEIGHTS_0".into(), json!(wa));
@@ -610,7 +632,7 @@ fn plant(a: &Args) -> Result<()> {
     if pairs.is_empty() {
         bail!("{}: no mirrored left/right limb joints to swap", a.pos[0]);
     }
-    let mut g = skintokens::glb::Glb {
+    let mut g = skintokens_geom::glb::Glb {
         json: rig.glb.json.clone(),
         bin: rig.glb.bin.clone(),
     };
@@ -618,7 +640,10 @@ fn plant(a: &Args) -> Result<()> {
     let mut seen = std::collections::HashSet::new();
     let mut swapped_verts = 0usize;
     for ni in rig.glb.scene_nodes() {
-        let node = doc.nodes().nth(ni).unwrap();
+        let node = doc
+            .nodes()
+            .nth(ni)
+            .ok_or_else(|| anyhow!("scene node {ni} missing in glTF document"))?;
         let Some(mesh) = node.mesh() else { continue };
         if !seen.insert((mesh.index(), node.skin().map(|s| s.index()))) {
             continue;
@@ -657,10 +682,18 @@ fn plant(a: &Args) -> Result<()> {
                     swapped_verts += 1;
                 }
             }
-            let (ja, wa) = g.push_skin_attrs(&js, &ws);
-            let attrs = g.json["meshes"][mesh.index()]["primitives"][pi]["attributes"]
-                .as_object_mut()
-                .unwrap();
+            let (ja, wa) = g.push_skin_attrs(&js, &ws)?;
+            let attrs = g
+                .json
+                .get_mut("meshes")
+                .and_then(|m| m.get_mut(mesh.index()))
+                .and_then(|m| m.get_mut("primitives"))
+                .and_then(|pr| pr.get_mut(pi))
+                .and_then(|pr| pr.get_mut("attributes"))
+                .and_then(|a| a.as_object_mut())
+                .ok_or_else(|| {
+                    anyhow!("missing attributes on mesh {} prim {}", mesh.index(), pi)
+                })?;
             attrs.retain(|k, _| !k.starts_with("JOINTS_") && !k.starts_with("WEIGHTS_"));
             attrs.insert("JOINTS_0".into(), json!(ja));
             attrs.insert("WEIGHTS_0".into(), json!(wa));

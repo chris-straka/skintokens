@@ -160,8 +160,8 @@ pub fn rom(an: &Anatomy, sk: &Skeleton) -> String {
             Role::Tail => {
                 // a tail that hangs straight down lifts backward, not "up"
                 let b = &sk.bones[c[0]];
-                let d = skintokens::geom::sub(b.tail, b.head);
-                let hangs = d[1].abs() > 0.85 * skintokens::geom::norm(d);
+                let d = skintokens_geom::geom::sub(b.tail, b.head);
+                let hangs = d[1].abs() > 0.85 * skintokens_geom::geom::norm(d);
                 let lift: [(&str, &'static str, f64); 2] = if hangs {
                     [("up", "Back", 60.0), ("down", "Forward", 30.0)]
                 } else {

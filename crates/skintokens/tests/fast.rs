@@ -98,19 +98,25 @@ fn humanoid_glb(mirror_z: bool, with_helper: bool) -> Glb {
             (mn, mx)
         },
     );
-    let pa = g.push_accessor(&f32b(&pos), 5126, "VEC3", n, Some((mn, mx)), false);
-    let ia = g.push_accessor(
-        &idx.iter()
-            .flat_map(|x| x.to_le_bytes())
-            .collect::<Vec<u8>>(),
-        5123,
-        "SCALAR",
-        idx.len(),
-        None,
-        false,
-    );
-    let ja = g.push_accessor(&jo, 5121, "VEC4", n, None, false);
-    let wa = g.push_accessor(&f32b(&we), 5126, "VEC4", n, None, false);
+    let pa = g
+        .push_accessor(&f32b(&pos), 5126, "VEC3", n, Some((mn, mx)), false)
+        .unwrap();
+    let ia = g
+        .push_accessor(
+            &idx.iter()
+                .flat_map(|x| x.to_le_bytes())
+                .collect::<Vec<u8>>(),
+            5123,
+            "SCALAR",
+            idx.len(),
+            None,
+            false,
+        )
+        .unwrap();
+    let ja = g.push_accessor(&jo, 5121, "VEC4", n, None, false).unwrap();
+    let wa = g
+        .push_accessor(&f32b(&we), 5126, "VEC4", n, None, false)
+        .unwrap();
     let mut nodes = vec![json!({"name": "mesh", "mesh": 0, "skin": 0})];
     for (n, p, h) in &joints {
         let base = if *p >= 0 {
@@ -163,7 +169,7 @@ fn humanoid_glb(mirror_z: bool, with_helper: bool) -> Glb {
         skin_joints.push(hi);
         ibm.push(ibm[7]);
     }
-    let ib = g.push_mat4s(&ibm);
+    let ib = g.push_mat4s(&ibm).unwrap();
     g.json["nodes"] = Value::Array(nodes);
     g.json["meshes"] = json!([{"primitives": [{"attributes": {"POSITION": pa, "JOINTS_0": ja, "WEIGHTS_0": wa}, "indices": ia}]}]);
     g.json["skins"] = json!([{"joints": skin_joints, "inverseBindMatrices": ib}]);
@@ -366,7 +372,7 @@ fn strip_rig_keeps_nodes_hung_under_bones() {
         .or_insert(json!([]));
     kids.as_array_mut().unwrap().push(json!(hat));
     let before = g.world_matrices()[hat];
-    skintokens::pipeline::strip_rig(&mut g);
+    skintokens::pipeline::strip_rig(&mut g).unwrap();
     assert!(
         g.scene_nodes().contains(&hat),
         "the hat was cut off from the scene"

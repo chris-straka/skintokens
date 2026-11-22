@@ -6,7 +6,7 @@
 //! The model frame is Blender's: glTF (x, y, z) -> (x, -z, y), Z up.
 
 use crate::geom::{self, KdTree, V3};
-use skintokens_nn::Rng;
+use crate::rng::Rng;
 
 /// glTF (Y up) -> model frame (Blender, Z up).
 pub fn to_model(p: V3) -> V3 {
@@ -204,6 +204,9 @@ pub fn sample_with_faces(
         cum.push(total);
     }
     if total <= 0.0 || faces.is_empty() {
+        if vertices.is_empty() {
+            return (out, on);
+        }
         // no area: repeat vertices
         while out.len() < NUM_SAMPLES {
             let i = rng.below(vertices.len());

@@ -10,7 +10,7 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
-use skintokens::geom::{self, V3};
+use skintokens_geom::geom::{self, V3};
 
 use crate::solid::{Solid, NEIGHBOURS};
 

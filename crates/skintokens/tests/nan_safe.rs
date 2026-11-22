@@ -32,3 +32,10 @@ fn name_humanoid_does_not_panic_on_nan_joint_heads() {
     let (map, _missing) = name_humanoid(&names, &parents, &heads);
     assert_eq!(map.len(), names.len());
 }
+
+#[test]
+fn local_matrix_does_not_panic_on_short_trs_arrays() {
+    let node = serde_json::json!({"translation": [1.0], "rotation": [], "scale": [1.0, 2.0]});
+    let m = skintokens::glb::Glb::local_matrix(&node);
+    assert_eq!(m, skintokens::geom::IDENTITY);
+}

@@ -3,7 +3,7 @@
 //! as shares of the body's length (the longest side of the rest pose).
 
 use serde_json::{json, Value};
-use skintokens::geom::{self, KdTree, M4, V3};
+use skintokens_geom::geom::{self, KdTree, M4, V3};
 
 use crate::rig::{m3_apply, m3_mul, m3_t, rotation_of, Rig, M3};
 
@@ -587,12 +587,7 @@ pub fn skeleton(truth: &Truth, route: &Rig, map: &Mapping) -> Value {
             .collect();
         let cap = c.len() + 2;
         if cf.len() > cap {
-            cf.sort_by(|&x, &y| {
-                route.mass[y]
-                    .partial_cmp(&route.mass[x])
-                    .unwrap()
-                    .then(x.cmp(&y))
-            });
+            cf.sort_by(|&x, &y| route.mass[y].total_cmp(&route.mass[x]).then(x.cmp(&y)));
             for &drop_j in &cf[cap..] {
                 eligible[drop_j] = false;
                 oversegmented_bones += 1;
@@ -612,7 +607,7 @@ pub fn skeleton(truth: &Truth, route: &Rig, map: &Mapping) -> Value {
                     j,
                 )
             })
-            .min_by(|x, y| x.0.partial_cmp(&y.0).unwrap())
+            .min_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)))
     };
     let mut joints = vec![];
     let (mut errs, mut trunk, mut unmatched) = (vec![], vec![], 0);
@@ -698,7 +693,7 @@ pub fn skeleton(truth: &Truth, route: &Rig, map: &Mapping) -> Value {
         .count();
     let unparented_roots = route.parent.iter().filter(|p| p.is_none()).count();
     let mut sorted = errs.clone();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted.sort_by(|a, b| a.total_cmp(b));
     json!({
         "joint_error_pct": pct(mean(&errs)),
         "joint_error_max_pct": pct(sorted.last().copied().unwrap_or(0.0)),
@@ -851,8 +846,8 @@ fn best_rotation(pairs: &[(V3, V3, f64)]) -> M3 {
         }
     }
     let top = (0..4)
-        .max_by(|&a, &b| n[a][a].partial_cmp(&n[b][b]).unwrap())
-        .unwrap();
+        .max_by(|&a, &b| n[a][a].total_cmp(&n[b][b]).then(b.cmp(&a)))
+        .unwrap_or(0);
     let (w, x, y, z) = (v[0][top], v[1][top], v[2][top], v[3][top]);
     let l = (w * w + x * x + y * y + z * z).sqrt().max(1e-12);
     let (w, x, y, z) = (w / l, x / l, y / l, z / l);
@@ -1132,7 +1127,7 @@ pub fn skin_error(
             }
         }
         let m = mean(&e);
-        e.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        e.sort_by(|a, b| a.total_cmp(b));
         let p95 = percentile(&e, 0.95);
         if p95 > worst.1 {
             worst = (f, p95);
@@ -1162,13 +1157,13 @@ pub fn skin_error(
         .filter(|&b| region_n[b] > 0.0)
         .map(|b| (truth.rig.names[b].clone(), region_sum[b] / region_n[b]))
         .collect();
-    regions.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    regions.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     let where_worst = (0..nb)
         .filter(|&b| worst_regions.get(b).map(|x| x.1 > 0.0).unwrap_or(false))
         .max_by(|&a, &b| {
             (worst_regions[a].0 / worst_regions[a].1)
-                .partial_cmp(&(worst_regions[b].0 / worst_regions[b].1))
-                .unwrap()
+                .total_cmp(&(worst_regions[b].0 / worst_regions[b].1))
+                .then(b.cmp(&a))
         })
         .map(|b| truth.rig.names[b].clone());
     let json = json!({
@@ -1257,7 +1252,7 @@ pub fn feet(truth: &Truth, fr: &Frames, run: &SkinRun, t2r: &[usize]) -> Value {
         }
     }
     let m = mean(&slide);
-    slide.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    slide.sort_by(|a, b| a.total_cmp(b));
     json!({
         "feet": n_feet,
         "frames_on_the_ground": grounded,
@@ -1378,7 +1373,7 @@ mod tests {
             s: [1.0, 1.0, 1.0],
         };
         let rig = Rig {
-            glb: skintokens::glb::Glb {
+            glb: skintokens_geom::glb::Glb {
                 json: serde_json::json!({}),
                 bin: vec![],
             },
@@ -1442,5 +1437,11 @@ mod tests {
             "secondary unparented bone translated: {:?}",
             geom::translation(&out[1])
         );
+    }
+
+    #[test]
+    fn best_rotation_does_not_panic_on_nan() {
+        let r = best_rotation(&[([f64::NAN, 0.0, 0.0], [1.0, 0.0, 0.0], 1.0)]);
+        assert_eq!(r.len(), 3);
     }
 }

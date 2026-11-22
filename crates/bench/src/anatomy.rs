@@ -7,7 +7,7 @@
 //! with where a limb joins the trunk.
 
 use serde_json::{json, Value};
-use skintokens::geom::{self, V3};
+use skintokens_geom::geom::{self, V3};
 
 use crate::rig::Rig;
 
@@ -497,12 +497,19 @@ pub fn check(rig: &Rig) -> Value {
                 .any(|&j| geom::norm(geom::sub(pos[j], foot_pos)) < 0.30 * len)
         });
         if on_limb * 2 < vs.len() || !near_joint {
-            let mut count: std::collections::HashMap<usize, usize> =
-                std::collections::HashMap::new();
+            let mut count: std::collections::BTreeMap<usize, usize> =
+                std::collections::BTreeMap::new();
             for &v in &vs {
-                *count.entry(rig.dominant[v]).or_default() += 1;
+                let d = rig.dominant[v];
+                if d < rig.names.len() {
+                    *count.entry(d).or_default() += 1;
+                }
             }
-            let holder = count.iter().max_by_key(|x| *x.1).map(|x| *x.0).unwrap();
+            let holder = count
+                .into_iter()
+                .max_by(|(j1, c1), (j2, c2)| c1.cmp(c2).then_with(|| j2.cmp(j1)))
+                .map(|(j, _)| rig.names[j].as_str())
+                .unwrap_or("unweighted");
             let z = vs.iter().map(|&v| rig.rest_pos[v][2]).sum::<f64>() / vs.len() as f64;
             fail(
                 "B_NO_LEG",
@@ -510,7 +517,7 @@ pub fn check(rig: &Rig) -> Value {
                     "the body stands on a foot on its {} side ({} of its length from the back) and has no limb joint near it (held by {})",
                     if mid > 0.0 { "+x" } else { "-x" },
                     format!("{:.0}%", 100.0 * (z - lo[2]) / size[2].max(1e-9)),
-                    rig.names[holder]
+                    holder
                 ),
             );
         }
@@ -687,7 +694,7 @@ mod tests {
             })
             .collect();
         Rig {
-            glb: skintokens::glb::Glb {
+            glb: skintokens_geom::glb::Glb {
                 json: serde_json::json!({}),
                 bin: vec![],
             },
@@ -722,5 +729,21 @@ mod tests {
         let st = check(&test_quad_rig(false, true));
         assert_eq!(st["pass"], json!(false), "{st}");
         assert!(st["findings"].to_string().contains("B_NO_LEG"), "{st}");
+    }
+
+    #[test]
+    fn no_leg_holder_tie_break_is_deterministic() {
+        let mut rig = test_quad_rig(false, true);
+        // Set up equal vertex counts (5 each on joint 0 and joint 1) for the +x foot patch
+        let n = rig.rest_pos.len();
+        for i in 0..5 {
+            let idx = n - 20 + i;
+            rig.dominant[idx] = 0;
+            rig.dominant[idx + 5] = 1;
+        }
+        let first = check(&rig)["findings"].to_string();
+        for _ in 0..40 {
+            assert_eq!(check(&rig)["findings"].to_string(), first);
+        }
     }
 }

@@ -296,7 +296,7 @@ dependencies = [
  "gltf",
  "png",
  "serde_json",
- "skintokens",
+ "skintokens-geom",
 ]
 
 [[package]]
@@ -306,7 +306,7 @@ dependencies = [
  "anyhow",
  "png",
  "serde_json",
- "skintokens",
+ "skintokens-geom",
 ]
 
 [[package]]
@@ -1741,6 +1741,7 @@ dependencies = [
  "gltf",
  "serde_json",
  "skintokens-encoder",
+ "skintokens-geom",
  "skintokens-nn",
 ]
 
@@ -1755,12 +1756,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "skintokens-geom"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "gltf",
+ "serde_json",
+]
+
+[[package]]
 name = "skintokens-nn"
 version = "0.2.0"
 dependencies = [
  "anyhow",
  "candle-core",
  "candle-nn",
+ "skintokens-geom",
 ]
 
 [[package]]

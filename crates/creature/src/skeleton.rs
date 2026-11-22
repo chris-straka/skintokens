@@ -5,7 +5,7 @@
 //! a right limb get the same joints. Every joint is on a centre line, so
 //! every bone is inside the body.
 
-use skintokens::geom::{self, V3};
+use skintokens_geom::geom::{self, V3};
 
 use crate::parts::Body;
 use crate::roles::{self, Anatomy, Kind, Limb, Role, Side};

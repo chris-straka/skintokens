@@ -6,7 +6,7 @@
 //! The frame is the cleaned mesh's: +Y up, +Z forward, +X the creature's
 //! left, standing on the ground, mirrored about x = 0.
 
-use skintokens::geom::{self, V3};
+use skintokens_geom::geom::{self, V3};
 
 use crate::parts::Body;
 
