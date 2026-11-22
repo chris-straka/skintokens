@@ -231,6 +231,7 @@ are there too.
 - `bin/skintokens` - shim to `target/release/skintokens`.
 - `fetch-weights.sh` - pinned checkpoint download.
 - `tools/joints_samples/` - a `skintokens-joints/1` sample rigforge's tests read.
+- `tools/humanoid_hands.py` - five-finger humanoid hands via `bodygraft` and the wrapped base body (`skintokens-7`), judged by `motion`'s `grip_gate.sh --five-finger` (`>= 0.90`) and `meshweights`'s `weights check` hand findings (`<= baseline`).
 - `tools/transfer_bench.sh`, `tools/transfer_bench_summary.py` - the rig
   route (rig, motionforge standardize, meshweights check/fix/check) over a
   folder of meshes, one transfer at a time, and its table.
