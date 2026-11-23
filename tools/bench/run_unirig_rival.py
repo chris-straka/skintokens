@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Run upstream UniRig (SDPA, no flash-attention) as an outside rival on `creature-bench`
-(`skintokens-8` / `unirig-mac-5`, stdlib only).
+(stdlib only; historical benchmark, `unirig-mac` is retired in `docs/evaluation.md`).
 
-    python3 tools/bench/run_unirig_rival.py BENCH_DIR \\
-        --unirig-dir /data/f/Games/_blender/unirig-mac \\
-        --unirig-python /data/rigwork/venv-unirig/bin/python \\
-        --creature-bench /home/f/rigwork/bin_current/creature-bench \\
+    UNIRIG_DIR=/path/to/unirig UNIRIG_PYTHON=/path/to/venv/bin/python \\
+        python3 tools/bench/run_unirig_rival.py BENCH_DIR \\
+        --creature-bench /path/to/creature-bench \\
         [--manifest PATH] [--seed 42] [--out-json OUT.json] [--label insample]
 
 Runs UniRig skeleton + skin + merge on each animal's `bare.glb` (caching output at
@@ -15,6 +14,7 @@ with `creature-bench score`, and prints aggregate medians + per-set JSON.
 import argparse
 import json
 import os
+import shutil
 import statistics
 import subprocess
 import sys
@@ -201,15 +201,24 @@ def run_unirig_one(py: str, unirig_dir: str, bare_glb: str, out_dir: str, aid: s
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("bench_dir")
-    ap.add_argument("--unirig-dir", default="/data/f/Games/_blender/unirig-mac")
-    ap.add_argument("--unirig-python", default="/data/rigwork/venv-unirig/bin/python")
-    ap.add_argument("--creature-bench", default=os.environ.get("CREATURE_BENCH_BIN", "/home/f/rigwork/bin_current/creature-bench"))
+    ap.add_argument("--unirig-dir", default=os.environ.get("UNIRIG_DIR", ""))
+    ap.add_argument("--unirig-python", default=os.environ.get("UNIRIG_PYTHON", ""))
+    ap.add_argument("--creature-bench", default=os.environ.get("CREATURE_BENCH_BIN", shutil.which("creature-bench") or ""))
     ap.add_argument("--manifest", default="")
     ap.add_argument("--label", default="set")
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--out-json", required=True)
+    ap.add_argument("--out-json", required=False, default="")
     ap.add_argument("--redo", action="store_true")
     a = ap.parse_args()
+
+    if not a.unirig_dir or not os.path.isdir(a.unirig_dir):
+        sys.exit("error: pass --unirig-dir PATH or set UNIRIG_DIR to a valid UniRig checkout")
+    if not a.unirig_python or not os.path.isfile(a.unirig_python):
+        sys.exit("error: pass --unirig-python PATH or set UNIRIG_PYTHON to the UniRig python executable")
+    if not a.creature_bench or not os.path.isfile(a.creature_bench):
+        sys.exit("error: pass --creature-bench PATH or set CREATURE_BENCH_BIN")
+    if not a.out_json:
+        sys.exit("error: --out-json is required")
 
     if a.manifest:
         ids = [x["id"] for x in json.load(open(a.manifest))["animals"]]
