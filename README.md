@@ -122,6 +122,7 @@ the body itself:
 
     creature-rig parts MESH.glb [--json P.json] [--sheet P.png]
     creature-rig rig   MESH.glb OUT.glb [--rom ROM.ron] [--json R.json] [--sheet S.png] [--blend 1.6]
+    creature-rig prune IN.glb OUT.glb [--class hero|npc|monster] [--keep-digits] [--json OUT.json] [--res 128]
     creature-rig check RIG.glb [--json C.json] [--rom ROM.ron] [--sheet S.png]
 
 - **parts**: the mesh as a solid on a 128-cell grid (holes and parts
@@ -131,6 +132,7 @@ the body itself:
   are named by where they start and end: legs, arms, neck and head,
   tail, wings, and what kind of body it is (four-legged, two-legged,
   winged, many-limbed, legless). Toes, ears, horns and fur get nothing.
+- **prune**: Can-It-Code joint pruning: iteratively trims leaves whose heads fall outside the solid body (`> 0.02 * height`) and folds five-finger / toe fans unless `--class hero` or `--keep-digits` is given, transferring pruned skin weights conservatively onto the nearest kept ancestor.
 - **rig**: hips and spine along the trunk, a chain down every limb with
   joints where its line turns (a shoulder or hip inside the body first),
   the same joints left and right, bones named `DEF-<part>.<nnn>.<side>`;
@@ -225,9 +227,18 @@ Model-level parity was checked against the Python reference with
 `skintokens parity-net` (see docs/evaluation.md); the real-model numbers
 are there too.
 
+## Unified CLI: `bin/autorig`
+
+    bin/autorig IN.glb OUT.glb [--method auto|skintokens|gamerig|rigforge|body|creature-rig|motion|unirig|puppeteer|magicarticulate]
+                              [--class hero|npc|monster|humanoid|quadruped|custom] [--kind auto|humanoid|quadruped|creature]
+                              [--seeds 0,1,2] [--keep-digits] [--no-prune] [--no-fix] [--report R.json] [--json]
+
+`tools/autorig.py` (`bin/autorig`) is the single auto-rigging entrypoint across `skintokens`, `gamerig` (`rigforge`), `creature-rig` (`body`), `motionforge`, external skeleton predictors (auto-skinned via `skintokens skin` when skeleton-only), and `weights` QA. Every non-hero output is pruned via `creature-rig prune` (and `--class hero` prunes outside spikes while preserving five-finger chains); `auto` ranks multi-seed + volumetric candidates via `creature-bench anatomy`, `weights check`, and `pick_score`. Runs `skintokens` (GPL-3.0-only) strictly as an external subprocess.
+
 ## Layout
 
 - `crates/` - the workspace crates above (`skintokens-geom`, `skintokens-nn`, `skintokens-encoder`, `skintokens`, `creature`, `bench`).
+- `bin/autorig` - unified CLI (`tools/autorig.py`).
 - `bin/skintokens` - shim to `target/release/skintokens`.
 - `fetch-weights.sh` - pinned checkpoint download.
 - `tools/joints_samples/` - a `skintokens-joints/1` sample rigforge's tests read.
