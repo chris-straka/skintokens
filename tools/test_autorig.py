@@ -467,6 +467,14 @@ seed = sys.argv[sys.argv.index("--seed") + 1] if "--seed" in sys.argv else "0"
 with open(sys.argv[3], "wb") as f:
     f.write(f"GLB-SEED-{seed}".encode())
 """)
+            fake_cr = os.path.join(d, "fake_cr")
+            _write_exe(fake_cr, """
+import json, sys
+if "--json" in sys.argv:
+    with open(sys.argv[sys.argv.index("--json") + 1], "w") as f:
+        json.dump({"pass": True, "score": 90.0}, f)
+sys.exit(0)
+""")
             fake_cb, fake_wf, env = _pass_stubs(d)
             in_glb = os.path.join(d, "mesh.glb")
             with open(in_glb, "wb") as f:
@@ -477,7 +485,7 @@ with open(sys.argv[3], "wb") as f:
                 out_glb = os.path.join(d, f"out_{seeds_arg.replace(',', '_')}.glb")
                 r = subprocess.run(
                     [BIN, in_glb, out_glb, "--method", "skintokens", "--seeds", seeds_arg,
-                     "--skintokens", fake_sk, "--no-prune", "--no-fix",
+                     "--skintokens", fake_sk, "--creature-rig", fake_cr, "--no-prune", "--no-fix",
                      "--creature-bench", fake_cb, "--weights", fake_wf, "--json"],
                     capture_output=True, text=True, env=env,
                 )
