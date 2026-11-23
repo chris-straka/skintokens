@@ -176,8 +176,8 @@ fn bone_frames(joints: &mut [V3], parents: &[i64], rng: &mut Rng) -> Vec<[V3; 3]
         }
         if geom::norm(geom::sub(joints[i], joints[p as usize])) <= length * 1e-2 {
             let m = length.max(1e-5);
-            for a in 0..3 {
-                joints[i][a] += rng.normal() * m * 1e-2;
+            for coord in &mut joints[i] {
+                *coord += rng.normal() * m * 1e-2;
             }
         }
     }

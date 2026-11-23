@@ -320,11 +320,11 @@ pub fn detokenize(ids: &[u32]) -> anyhow::Result<Skeleton> {
         bail!("no joints");
     }
     let mut parents = vec![-1i64];
-    for k in 1..joints.len() {
+    for (k, pjk) in pj.iter().enumerate().take(joints.len()).skip(1) {
         let mut best = (f32::INFINITY, -1i64);
         // upstream: reversed scan with strict '<' keeps the latest of equal distances
         for j in (0..k).rev() {
-            let d = d2(&joints[j], &pj[k]);
+            let d = d2(&joints[j], pjk);
             if d < best.0 {
                 best = (d, j as i64);
             }

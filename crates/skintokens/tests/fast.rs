@@ -130,7 +130,7 @@ fn humanoid_glb(mirror_z: bool, with_helper: bool) -> Glb {
     }
     for (i, (_, p, _)) in joints.iter().enumerate() {
         if *p >= 0 {
-            let c = nodes[*p as usize + 1]
+            nodes[*p as usize + 1]
                 .as_object_mut()
                 .unwrap()
                 .entry("children")
@@ -138,7 +138,6 @@ fn humanoid_glb(mirror_z: bool, with_helper: bool) -> Glb {
                 .as_array_mut()
                 .unwrap()
                 .push(json!(i + 1));
-            let _ = c;
         }
     }
     let mut ibm: Vec<[[f64; 4]; 4]> = joints
@@ -195,8 +194,8 @@ fn glb_roundtrip_and_skeleton() {
         HUMANOID.iter().map(|x| x.1).collect::<Vec<_>>()
     );
     for (h, e) in info.heads.iter().zip(HUMANOID.iter()) {
-        for a in 0..3 {
-            assert!((h[a] - e.2[a]).abs() < 1e-5);
+        for (&ha, &ea) in h.iter().zip(&e.2) {
+            assert!((ha - ea).abs() < 1e-5);
         }
     }
     let parts = g.parts(Frame::SkinBind).unwrap();

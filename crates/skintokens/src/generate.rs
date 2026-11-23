@@ -456,6 +456,6 @@ mod tests {
         let skin_then_end: Vec<u32> = (0..11).map(|_| VOCAB + 1).collect();
         done.extend(&skin_then_end);
         assert_eq!(allowed(&g(Some(33)), &done), vec![eos_lm]);
-        assert!(done.len() + 1 <= 33);
+        assert!(done.len() < 33);
     }
 }

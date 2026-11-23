@@ -39,3 +39,10 @@ fn local_matrix_does_not_panic_on_short_trs_arrays() {
     let m = skintokens::glb::Glb::local_matrix(&node);
     assert_eq!(m, skintokens::geom::IDENTITY);
 }
+
+#[test]
+fn kdtree_knn_zero_and_usize_max_do_not_panic() {
+    let tree = skintokens_geom::geom::KdTree::new(vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]);
+    assert!(tree.knn([0.0, 0.0, 0.0], 0).is_empty());
+    assert_eq!(tree.knn([0.0, 0.0, 0.0], usize::MAX).len(), 2);
+}
