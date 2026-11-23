@@ -33,8 +33,9 @@ impl Default for GenConfig {
         let env = |k: &str| std::env::var(k).ok();
         GenConfig {
             num_beams: env("SKINTOKENS_NUM_BEAMS")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(10),
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(10)
+                .max(1),
             do_sample: env("SKINTOKENS_NO_SAMPLE").is_none(),
             top_k: 5,
             top_p: 0.95,
@@ -43,6 +44,51 @@ impl Default for GenConfig {
             max_length: 2048,
             max_new_tokens: None,
         }
+    }
+}
+
+impl GenConfig {
+    /// Parse generation config from environment, rejecting invalid overrides
+    /// (such as `SKINTOKENS_NUM_BEAMS=0` or non-numeric values).
+    pub fn from_env() -> Result<Self> {
+        let mut cfg = GenConfig::default();
+        if let Ok(raw) = std::env::var("SKINTOKENS_NUM_BEAMS") {
+            let nb: usize = raw.trim().parse().map_err(|_| {
+                anyhow::anyhow!("SKINTOKENS_NUM_BEAMS must be a positive integer (got {raw:?})")
+            })?;
+            if nb == 0 {
+                anyhow::bail!("SKINTOKENS_NUM_BEAMS must be >= 1 (got 0)");
+            }
+            cfg.num_beams = nb;
+        }
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
+    /// Reject nonsensical generation parameters that would panic or produce NaNs.
+    pub fn validate(&self) -> Result<()> {
+        if self.num_beams == 0 {
+            anyhow::bail!("num_beams must be >= 1");
+        }
+        if !self.temperature.is_finite() || self.temperature <= 0.0 {
+            anyhow::bail!(
+                "temperature must be finite and > 0 (got {})",
+                self.temperature
+            );
+        }
+        if !self.top_p.is_finite() || self.top_p <= 0.0 {
+            anyhow::bail!("top_p must be finite and > 0 (got {})", self.top_p);
+        }
+        if !self.repetition_penalty.is_finite() || self.repetition_penalty <= 0.0 {
+            anyhow::bail!(
+                "repetition_penalty must be finite and > 0 (got {})",
+                self.repetition_penalty
+            );
+        }
+        if self.max_length == 0 {
+            anyhow::bail!("max_length must be >= 1");
+        }
+        Ok(())
     }
 }
 
@@ -207,6 +253,7 @@ fn row(t: &Tensor, i: usize) -> Result<Vec<f32>> {
 /// Greedy decoding (num_beams=1, no sampling): processors on raw logits,
 /// argmax. Returns the generated tokens (eos included).
 pub fn greedy(model: &Qwen3, prompt: &Tensor, cfg: &GenConfig, g: &Grammar) -> Result<Vec<u32>> {
+    cfg.validate()?;
     let mut cache = model.new_cache();
     let mut logits = model.forward(prompt, &mut cache, false)?;
     let max_new = cfg
@@ -241,6 +288,7 @@ pub fn beam_search(
     g: &Grammar,
     rng: &mut Rng,
 ) -> Result<Vec<u32>> {
+    cfg.validate()?;
     let nb = cfg.num_beams;
     let keep = 2 * nb; // max(2, 1 + n_eos) * num_beams with one eos id
     let max_length = match cfg.max_new_tokens {
@@ -457,5 +505,25 @@ mod tests {
         done.extend(&skin_then_end);
         assert_eq!(allowed(&g(Some(33)), &done), vec![eos_lm]);
         assert!(done.len() < 33);
+    }
+
+    #[test]
+    fn gen_config_validate_rejects_degenerate_params() {
+        let mut cfg = GenConfig::default();
+        assert!(cfg.validate().is_ok());
+
+        cfg.num_beams = 0;
+        assert!(cfg.validate().is_err());
+
+        cfg.num_beams = 4;
+        cfg.temperature = f32::NAN;
+        assert!(cfg.validate().is_err());
+
+        cfg.temperature = 0.0;
+        assert!(cfg.validate().is_err());
+
+        cfg.temperature = 1.0;
+        cfg.repetition_penalty = 0.0;
+        assert!(cfg.validate().is_err());
     }
 }

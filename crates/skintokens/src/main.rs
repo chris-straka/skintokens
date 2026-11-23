@@ -78,6 +78,9 @@ impl Args {
                     None => (f.to_string(), None),
                 };
                 if switches.contains(&k.as_str()) {
+                    if inline.is_some() {
+                        return Err(Usage(format!("--{k} does not take a value")));
+                    }
                     flags.push((k, String::new()));
                 } else if with_value.contains(&k.as_str()) {
                     let val = match inline {
@@ -93,6 +96,8 @@ impl Args {
                 } else {
                     return Err(Usage(format!("unknown option --{k}")));
                 }
+            } else if a.starts_with('-') && a.len() > 1 {
+                return Err(Usage(format!("unknown option {a}")));
             } else {
                 pos.push(a.clone());
             }
@@ -270,6 +275,26 @@ fn merge(a: &mut Value, b: Value) {
     }
 }
 
+fn validate_mesh(g: &glb::Glb, frame: glb::Frame, inp: &str) -> Result<(), Usage> {
+    let parts = g.parts(frame)?;
+    let has_mesh = parts
+        .iter()
+        .any(|p| !p.positions.is_empty() && !p.triangles.is_empty());
+    if !has_mesh {
+        return Err(Usage(format!("{inp}: mesh has no triangles")));
+    }
+    if !parts
+        .iter()
+        .flat_map(|p| &p.positions)
+        .all(|v| v.iter().all(|x| x.is_finite()))
+    {
+        return Err(Usage(format!(
+            "{inp}: mesh has non-finite vertex coordinates"
+        )));
+    }
+    Ok(())
+}
+
 fn cmd_rig(v: &[String]) -> Result<u8, Usage> {
     let a = Args::parse(v, &["report", "class", "seed", "transfer"], &[])?;
     let [inp, out] = &a.pos[..] else {
@@ -283,7 +308,9 @@ fn cmd_rig(v: &[String]) -> Result<u8, Usage> {
     }
     let seed = seed(&a)?;
     let how = transfer(&a)?;
+    let cfg = generate::GenConfig::from_env()?;
     let g = read_input(inp)?;
+    validate_mesh(&g, glb::Frame::World, inp)?;
     let out = PathBuf::from(out);
     let report = report_path(&a, &out);
     let t0 = Instant::now();
@@ -291,14 +318,7 @@ fn cmd_rig(v: &[String]) -> Result<u8, Usage> {
     let model = load_model()?;
     let mut details = base_details(seed);
     details["class"] = json!(cls);
-    match pipeline::rig(
-        &g,
-        &model,
-        &generate::GenConfig::default(),
-        seed,
-        cls == "humanoid",
-        how,
-    ) {
+    match pipeline::rig(&g, &model, &cfg, seed, cls == "humanoid", how) {
         Err(e) => {
             write_report(
                 &report,
@@ -340,17 +360,19 @@ fn cmd_skin(v: &[String]) -> Result<u8, Usage> {
     };
     let seed = seed(&a)?;
     let how = transfer(&a)?;
+    let cfg = generate::GenConfig::from_env()?;
     let g = read_input(inp)?;
-    if let Err(e) = g.skin_info().and_then(|_| g.parts(glb::Frame::SkinBind)) {
+    if let Err(e) = g.skin_info() {
         return Err(Usage(format!("{inp}: skin needs a rigged GLB ({e:#})")));
     }
+    validate_mesh(&g, glb::Frame::SkinBind, inp)?;
     let out = PathBuf::from(out);
     let report = report_path(&a, &out);
     let t0 = Instant::now();
     let _lock = lock()?;
     let model = load_model()?;
     let mut details = base_details(seed);
-    match pipeline::skin(&g, &model, &generate::GenConfig::default(), seed, how) {
+    match pipeline::skin(&g, &model, &cfg, seed, how) {
         Err(e) => {
             write_report(&report, &[], "skin", false, details, Some(format!("{e:#}")))?;
             Ok(1)

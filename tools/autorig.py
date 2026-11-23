@@ -99,16 +99,37 @@ def _gamerig_preset(klass: str, kind: str) -> str:
 
 
 def _parse_seeds(raw: str) -> list[int]:
-    parts = [p.strip() for p in raw.split(",") if p.strip()]
-    if not parts:
+    if not raw or not raw.strip():
         raise ValueError("empty --seeds specification")
+    raw_parts = raw.split(",")
+    if any(not p.strip() for p in raw_parts):
+        raise ValueError(f"malformed empty seed in --seeds {raw!r}")
     seeds: list[int] = []
-    for p in parts:
+    seen: set[int] = set()
+    for p in raw_parts:
+        tok = p.strip()
         try:
-            seeds.append(int(p))
+            val = int(tok)
         except ValueError as exc:
-            raise ValueError(f"invalid seed {p!r} in --seeds") from exc
+            raise ValueError(f"invalid seed {tok!r} in --seeds") from exc
+        if val < 0:
+            raise ValueError(f"seed must be non-negative (got {val})")
+        if val not in seen:
+            seen.add(val)
+            seeds.append(val)
     return seeds
+
+
+def _validate_input_glb(path: str) -> None:
+    if not os.path.isfile(path):
+        raise ValueError(f"input not found: {path}")
+    try:
+        with open(path, "rb") as f:
+            head = f.read(4)
+    except OSError as exc:
+        raise ValueError(f"cannot read input {path}: {exc}") from exc
+    if len(head) < 4 or head != b"glTF":
+        raise ValueError(f"not a valid binary glTF (.glb) file: {path}")
 
 
 def glb_has_skin(path: str) -> bool:
@@ -212,8 +233,12 @@ def resolve_tools(args: argparse.Namespace) -> dict[str, str | None]:
         ),
     }
     if _norm_method(args.method) == "gamerig":
+        if args.gamerig and not os.path.isfile(args.gamerig):
+            raise SystemExit(f"autorig: --gamerig not found: {args.gamerig}")
         t["gamerig"] = _find_gamerig_runner(args.gamerig)
     else:
+        if args.gamerig and not os.path.isfile(args.gamerig):
+            raise SystemExit(f"autorig: --gamerig not found: {args.gamerig}")
         t["gamerig"] = args.gamerig or None
     return t
 
@@ -294,13 +319,13 @@ def score_candidate(
         if rom_out:
             cmd += ["--rom", rom_out]
         r = tp.run(cmd)
-        if r["code"] in (0, 1) and os.path.isfile(sj):
+        if r["code"] not in (0, 1):
+            raise RuntimeError(f"creature-rig check failed ({r['code']}): {_tail(r['err'] or r['out'])}")
+        if os.path.isfile(sj):
             with open(sj, encoding="utf-8") as f:
                 skel_report = json.load(f)
             skel_pass = r["code"] == 0 and bool(skel_report.get("pass", True))
             skel_score = float(skel_report.get("score", 100.0))
-        elif r["code"] not in (0, 1):
-            skel_report = {"skipped": _tail(r["err"] or r["out"])}
 
     bend_report = None
     bend_pass = True
@@ -582,6 +607,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="autorig",
         description="Unified auto-rigger routing across skintokens, gamerig (rigforge), body (creature-rig), motion, and meshweights.",
+        allow_abbrev=False,
     )
     ap.add_argument("input", help="Input bare or pre-rigged mesh (.glb)")
     ap.add_argument("output_pos", nargs="?", default=None, help="Output rigged GLB (or pass --out)")
@@ -589,7 +615,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--method", default="auto", choices=METHODS, help="Rigging method (default: auto)")
     ap.add_argument("--class", dest="class_name", default="monster", choices=CLASS_CHOICES, help="Asset class (hero keeps 5 fingers)")
     ap.add_argument("--kind", default="auto", choices=KIND_CHOICES, help="Body kind (default: auto)")
-    ap.add_argument("--seeds", default="", help="Seed or comma-separated seed list (e.g. 0,1,2)")
+    ap.add_argument("--seeds", default=None, help="Seed or comma-separated seed list (e.g. 0,1,2)")
     ap.add_argument("--poses", default=None, help="Optional range-of-motion .ron for weights")
     ap.add_argument("--rom", default=None, help="Optional output path for generated creature-rig .ron poses")
     ap.add_argument("--motion", default=None, help="Optional reference motion .glb for weights")
@@ -624,14 +650,16 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("need positional OUT.glb or --out OUT.glb")
     if args.output_opt and args.output_pos:
         ap.error("pass output either positionally or via --out, not both")
-    if not os.path.isfile(args.input):
-        print(f"autorig: input not found: {args.input}", file=sys.stderr)
+    try:
+        _validate_input_glb(args.input)
+    except ValueError as exc:
+        print(f"autorig: {exc}", file=sys.stderr)
         return 2
 
     method = _norm_method(args.method)
     default_seeds = "0,1,2" if method in ("auto", "motion") else "0"
     try:
-        seeds = _parse_seeds(args.seeds or default_seeds)
+        seeds = _parse_seeds(default_seeds if args.seeds is None else args.seeds)
     except ValueError as exc:
         print(f"autorig: {exc}", file=sys.stderr)
         return 2

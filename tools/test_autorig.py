@@ -405,6 +405,108 @@ sys.exit(0 if tears < 5.0 else 1)
             self.assertGreaterEqual(ph["outside_cut"], 1, ph)
             self.assertEqual(ph["fingers_folded"], 0, ph)
 
+    def test_cli_rejects_bad_seeds_flags_explicit_missing_tools_and_corrupt_inputs(self):
+        with tempfile.TemporaryDirectory() as d:
+            in_glb = os.path.join(d, "mesh.glb")
+            with open(in_glb, "wb") as f:
+                f.write(b"glTF")
+            out_glb = os.path.join(d, "out.glb")
+            fake_cb, fake_wf, env = _pass_stubs(d)
+            fake_sk = os.path.join(d, "skintokens")
+            _write_exe(fake_sk, "import shutil, sys\nshutil.copyfile(sys.argv[2], sys.argv[3])\n")
+
+            bad_cases = [
+                ["--seeds", ""],
+                ["--seeds", "-1"],
+                ["--seeds", "NaN"],
+                ["--seeds", "1,,2"],
+                ["--seed", "0"],
+                ["--bogus-flag"],
+                ["--skintokens", os.path.join(d, "no_such_skintokens")],
+                ["--creature-rig", os.path.join(d, "no_such_creature_rig")],
+            ]
+            for extra in bad_cases:
+                r = subprocess.run(
+                    [BIN, in_glb, out_glb, "--method", "skintokens", "--no-prune", "--no-fix",
+                     "--creature-bench", fake_cb, "--weights", fake_wf, *extra],
+                    capture_output=True, text=True, env=env,
+                )
+                self.assertEqual(r.returncode, 2, f"expected exit 2 for {extra}, got {r.returncode}: {r.stderr}")
+                self.assertNotIn("Traceback", r.stderr, f"traceback leaked for {extra}: {r.stderr}")
+                self.assertFalse(os.path.exists(out_glb))
+
+            # Conflicting positional output and --out.
+            r_dup = subprocess.run(
+                [BIN, in_glb, out_glb, "--out", os.path.join(d, "other.glb"),
+                 "--method", "skintokens", "--skintokens", fake_sk],
+                capture_output=True, text=True, env=env,
+            )
+            self.assertEqual(r_dup.returncode, 2)
+            self.assertNotIn("Traceback", r_dup.stderr)
+
+            # Empty and non-glTF input files must fail cleanly with exit 2.
+            for fname, payload in [("empty.glb", b""), ("not_glb.glb", b"JUNK_HEADER")]:
+                bad_in = os.path.join(d, fname)
+                with open(bad_in, "wb") as f:
+                    f.write(payload)
+                rb = subprocess.run(
+                    [BIN, bad_in, out_glb, "--method", "skintokens", "--skintokens", fake_sk,
+                     "--no-prune", "--no-fix", "--creature-bench", fake_cb, "--weights", fake_wf],
+                    capture_output=True, text=True, env=env,
+                )
+                self.assertEqual(rb.returncode, 2, f"expected exit 2 for {fname}: {rb.stderr}")
+                self.assertNotIn("Traceback", rb.stderr)
+                self.assertFalse(os.path.exists(out_glb))
+
+    def test_multi_seed_determinism_json_output_and_crashed_check_guard(self):
+        with tempfile.TemporaryDirectory() as d:
+            fake_sk = os.path.join(d, "skintokens")
+            _write_exe(fake_sk, """
+import sys
+seed = sys.argv[sys.argv.index("--seed") + 1] if "--seed" in sys.argv else "0"
+with open(sys.argv[3], "wb") as f:
+    f.write(f"GLB-SEED-{seed}".encode())
+""")
+            fake_cb, fake_wf, env = _pass_stubs(d)
+            in_glb = os.path.join(d, "mesh.glb")
+            with open(in_glb, "wb") as f:
+                f.write(b"glTF")
+
+            winners = []
+            for seeds_arg in ["2,0,1", "0,1,2", "1,0,1"]:
+                out_glb = os.path.join(d, f"out_{seeds_arg.replace(',', '_')}.glb")
+                r = subprocess.run(
+                    [BIN, in_glb, out_glb, "--method", "skintokens", "--seeds", seeds_arg,
+                     "--skintokens", fake_sk, "--no-prune", "--no-fix",
+                     "--creature-bench", fake_cb, "--weights", fake_wf, "--json"],
+                    capture_output=True, text=True, env=env,
+                )
+                self.assertEqual(r.returncode, 0, r.stderr)
+                summary = json.loads(r.stdout)
+                with open(out_glb, "rb") as f:
+                    payload = f.read()
+                winners.append((summary["winner"]["seed"], payload))
+                self.assertEqual(len(summary["candidates"]), len(set(int(x) for x in seeds_arg.split(","))))
+            self.assertEqual(winners, [(0, b"GLB-SEED-0")] * 3)
+
+            # Crashed creature-rig check (exit 2) must not award skeleton_pass=True, score=100.
+            crash_cr = os.path.join(d, "crash_cr")
+            _write_exe(crash_cr, """
+import sys
+sys.stderr.write("corrupt glb\\n")
+sys.exit(2)
+""")
+            out_fail = os.path.join(d, "crashed.glb")
+            rc = subprocess.run(
+                [BIN, in_glb, out_fail, "--method", "skintokens", "--seeds", "0",
+                 "--skintokens", fake_sk, "--creature-rig", crash_cr,
+                 "--no-prune", "--no-fix", "--creature-bench", fake_cb, "--weights", fake_wf],
+                capture_output=True, text=True, env=env,
+            )
+            self.assertEqual(rc.returncode, 2, f"crashed check should fail candidate: {rc.stdout} {rc.stderr}")
+            self.assertNotIn("Traceback", rc.stderr)
+            self.assertFalse(os.path.exists(out_fail))
+
 
 if __name__ == "__main__":
     unittest.main()

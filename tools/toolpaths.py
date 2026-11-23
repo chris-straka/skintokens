@@ -9,7 +9,12 @@ import time
 
 
 def find(name, explicit, env, fallbacks, first=(), required=True):
-    for p in [explicit, os.environ.get(env)] + list(first) + [shutil.which(name)] + list(fallbacks):
+    if explicit:
+        if os.path.exists(explicit):
+            return explicit
+        print(f"{name} not found at explicit path: {explicit}", file=sys.stderr)
+        raise SystemExit(2)
+    for p in [os.environ.get(env)] + list(first) + [shutil.which(name)] + list(fallbacks):
         if p and os.path.exists(p):
             return p
     if not required:
