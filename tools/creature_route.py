@@ -54,6 +54,7 @@ if not os.path.isfile(os.path.join(_here, "toolpaths.py")):
             sys.path.append(_d)
             break
 import pick_score  # noqa: E402
+import autorig  # noqa: E402
 from toolpaths import find, run  # noqa: E402
 
 TRIS = {"hero": 14000, "npc": 7500, "monster": 18000}
@@ -347,7 +348,13 @@ def main():
                 except (OSError, ValueError) as exc:
                     p["skintokens_report_error"] = str(exc)
             if ok:
-                r = run([mf, "standardize", "--input", pb + ".rig.glb", "--output", pb + ".std.glb", "--class",
+                prune_in = pb + ".rig.glb"
+                pruned = pb + ".pruned.glb"
+                p["prune"] = autorig.prune_candidate(
+                    cr, prune_in, pruned, a.klass, a.klass == "hero", pb + ".prune.json", strict=False
+                )
+                std_in = pruned if os.path.isfile(pruned) else prune_in
+                r = run([mf, "standardize", "--input", std_in, "--output", pb + ".std.glb", "--class",
                          "quadruped", "--report", pb + ".standardize.json"])
                 ok = r["code"] == 0 and os.path.exists(pb + ".std.glb")
             if not ok:

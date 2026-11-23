@@ -1,0 +1,6 @@
+#!/bin/bash
+# autorig CLI shim: single canonical entry to auto-rigging across
+# skintokens, gamerig (rigforge), creature-rig (body), motion, and meshweights.
+set -euo pipefail
+here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}")")/.." && pwd)"
+exec python3 "$here/tools/autorig.py" "$@"
