@@ -248,6 +248,33 @@ class CameraFovTest(unittest.TestCase):
                     f.write('// comment\n{\n  "camera": {"distance": 3.0, "focus": 1.5, "pitch": -18.3, "fov": 68.0},\n}\n')
                 self.assertAlmostEqual(creature_blind.resolve_follow_fov_deg(metrics_path=mpath), 68.0)
                 self.assertAlmostEqual(creature_blind.resolve_follow_fov_deg(metrics_path=mpath, fov_deg=72.0), 72.0)
+
+            with tempfile.TemporaryDirectory() as tmp:
+                import toolpaths
+                orig_run = toolpaths.run
+                seen_cmds = []
+
+                def fake_run(cmd, timeout=None):
+                    seen_cmds.append(list(cmd))
+                    if "--measure-only" in cmd:
+                        spec = {"cam_spec": [-0.5, 0.5, -0.5, 0.5, 2.0, 0.0], "sampled_times": [0.0], "clip": "Walk"}
+                        return {"code": 0, "out": "RENDER_GAMECAM_SPEC " + json.dumps(spec) + "\n", "err": ""}
+                    prefix = cmd[cmd.index("--out") + 1]
+                    png = f"{prefix}_1.png"
+                    write_png_rgb(png, 4, 4, bytearray([128, 128, 128] * 16))
+                    return {"code": 0, "out": "", "err": ""}
+
+                toolpaths.run = fake_run
+                try:
+                    a_pngs, b_pngs, info = creature_blind.render_pair_spec(
+                        "blender", "render_gamecam.py", "a.glb", "b.glb", "Walk", "0.0", None, tmp, "tag",
+                    )
+                    self.assertEqual(len(a_pngs), 1)
+                    self.assertEqual(len(b_pngs), 1)
+                    self.assertAlmostEqual(info["fov_deg"], 75.0)
+                    self.assertTrue(all("--python-exit-code" in c for c in seen_cmds))
+                finally:
+                    toolpaths.run = orig_run
         finally:
             if old_hlh is not None:
                 os.environ["HLH_METRICS"] = old_hlh

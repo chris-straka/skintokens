@@ -42,8 +42,9 @@ How a rig is scored and picked now:
      rig as the base (since its hip/shoulder joints sit inside the haunch
      and chest rather than at skin emergence) unless the body-read rig
      tears substantially less (`> TEAR_OVERRIDE_PCT`) or clears `TRUSTED_AT`
-     by `TRUST_MARGIN` where the learned rig does not.
+    by_name` -> this `pick_score` module starts cleanly below.
 """
+import json
 
 TEAR_CODES = ("D_STRETCH", "D_VOLUME", "D_BLEED")
 TRUSTED_AT = 90.0
@@ -64,9 +65,6 @@ def tears_pct(bend):
         if f.get("severity") == "fail" and f.get("code") in TEAR_CODES
     )
     return round(min(100.0, 100.0 * torn / verts), 2)
-
-
-import json
 
 
 class CheckDidNotRun(RuntimeError):
@@ -101,11 +99,11 @@ def anatomy_summary(anatomy):
         if f.get("severity") == "fail"
     ]
     limbs = anatomy.get("limbs", [])
-    by_name = {l.get("from"): l for l in limbs if l.get("from")}
+    by_name = {limb.get("from"): limb for limb in limbs if limb.get("from")}
     art_pairs = 0
-    for l in limbs:
-        if l.get("side") == "+x" and l.get("partner") and int(l.get("joints", 0)) >= 2:
-            p = by_name.get(l.get("partner"))
+    for limb in limbs:
+        if limb.get("side") == "+x" and limb.get("partner") and int(limb.get("joints", 0)) >= 2:
+            p = by_name.get(limb.get("partner"))
             if p is None or int(p.get("joints", 0)) >= 2:
                 art_pairs += 1
     return {

@@ -83,7 +83,8 @@ def truth_score(cb, truth, glb, roles_path, out_json):
     res = toolpaths.run(cmd, timeout=1800)
     if res["code"] != 0 or not os.path.exists(out_json):
         raise RuntimeError(f"score failed on {glb}: {res['err'][-160:]}")
-    d = json.load(open(out_json))
+    with open(out_json) as fh:
+        d = json.load(fh)
     return {
         "skin_mean_pct": d["skin"]["mean_pct"],
         "skin_p95_pct": d["skin"]["p95_pct"],
@@ -116,7 +117,8 @@ def main():
 
     work = a.work or os.path.join(a.bench, "calibration")
     os.makedirs(work, exist_ok=True)
-    names = [ln.split("\t")[0] for ln in open(os.path.join(a.bench, "animals.tsv")) if ln.strip()]
+    with open(os.path.join(a.bench, "animals.tsv")) as fh:
+        names = [ln.split("\t")[0] for ln in fh if ln.strip()]
 
     rows, gate_failures = {}, []
     for n in names:
@@ -185,7 +187,8 @@ def main():
                 cut = False
                 if os.path.exists(skj):
                     try:
-                        cut = bool((json.load(open(skj)).get("rig") or {}).get("skeleton_cut_at_token_limit"))
+                        with open(skj) as fh:
+                            cut = bool((json.load(fh).get("rig") or {}).get("skeleton_cut_at_token_limit"))
                     except (OSError, ValueError):
                         pass
                 p_j = judge(cr, wf, cb, p_glb, work, f"{n}.pred{seed}", cut_at_limit=cut)

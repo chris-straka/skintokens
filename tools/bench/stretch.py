@@ -19,7 +19,8 @@ import sys
 
 
 def read(path):
-    b = open(path, "rb").read()
+    with open(path, "rb") as f:
+        b = f.read()
     n = struct.unpack("<I", b[12:16])[0]
     return json.loads(b[20:20 + n]), b[20 + n:]
 
@@ -28,7 +29,8 @@ def write(path, j, rest):
     js = json.dumps(j, separators=(",", ":")).encode()
     js += b" " * (-len(js) % 4)
     out = struct.pack("<III", 0x46546C67, 2, 12 + 8 + len(js) + len(rest)) + struct.pack("<II", len(js), 0x4E4F534A) + js + rest
-    open(path, "wb").write(out)
+    with open(path, "wb") as f:
+        f.write(out)
 
 
 def main():

@@ -19,7 +19,7 @@ while IFS=$'\t' read -r n src; do
   [ -n "$n" ] || continue
   d=$B/animals/$n
   if [ ! -f "$d/bare.glb" ]; then
-    "$BLENDER" -b --factory-startup -P "$here/tools/bench/prep_truth.py" -- "$src" "$d" --name "$n" > "$d.prep.log" 2>&1 \
+    "$BLENDER" -b --factory-startup --python-exit-code 1 -P "$here/tools/bench/prep_truth.py" -- "$src" "$d" --name "$n" > "$d.prep.log" 2>&1 \
       || { echo "$n: prep failed: $(tail -2 "$d.prep.log")"; continue; }
   fi
   printf '%s\t%s\t%s\n' "$n" "held out" "$(basename "$src")" >> "$B/animals.tsv"
@@ -33,7 +33,8 @@ python3 "$here/tools/bench/score_artists.py" "$B" --picker-check --json "$B/pick
 echo "score_artists exit $?"
 python3 - "$B/picker.json" > "$B/baseline.json" <<'PY'
 import json, sys
-p = json.load(open(sys.argv[1])).get("picker", {})
+with open(sys.argv[1]) as fh:
+    p = json.load(fh).get("picker", {})
 n = len(p)
 agree = sum(1 for v in p.values() if v["agrees"])
 learned = sum(1 for v in p.values() if v["truth_winner"] == "predicted")

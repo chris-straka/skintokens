@@ -45,7 +45,7 @@ while IFS=$'\t' read -r n kind model; do
   [ -f "$rig" ] || { echo "$n: no rig"; continue; }
   one "$n" "$rig" "$O/$n/check"
   "$WF" sheet "$rig" --out "$O/$n/check/posed.png" --poses "$O/$n/check/rom.ron" --cols 6 > /dev/null 2>&1
-  blender -b --factory-startup -P "$HERE/render_side.py" -- "$rig" --out "$O/$n/check/painted.png" --camera-out "$O/$n/check/painted_camera.json" \
+  blender -b --factory-startup --python-exit-code 1 -P "$HERE/render_side.py" -- "$rig" --out "$O/$n/check/painted.png" --camera-out "$O/$n/check/painted_camera.json" \
     --width 900 --height 640 --fill 0.8 --at 0.5 --ground 0.88 > /dev/null 2>&1
   if [ -f "$O/$n/check/skeleton.png" ] && [ -f "$O/$n/check/posed.png" ]; then
     top=$O/$n/check/skeleton.png
@@ -70,7 +70,8 @@ O, SET, TAG = sys.argv[1:4]
 TEARS = ("D_STRETCH", "D_VOLUME", "D_BLEED")
 def load(p):
     try:
-        return json.load(open(p))
+        with open(p) as fh:
+            return json.load(fh)
     except (OSError, ValueError):
         return None
 def tears(d):
@@ -80,7 +81,8 @@ def tears(d):
     return round(100.0 * sum(x["verts"] for x in f) / max(d.get("verts", 1), 1), 2)
 WORD = {"B_LOPSIDED": "left/right", "B_NO_HEAD": "no head", "B_NO_ARMS": "no arms", "B_NO_LEG": "foot without leg", "B_KIND": "misnamed limb", "B_OFF_CENTRE": "centre bone off"}
 rows, js = [], []
-for line in open(SET):
+with open(SET) as set_fh:
+  for line in set_fh:
     p = line.rstrip("\n").split("\t")
     if len(p) < 2 or not p[0]:
         continue
@@ -122,7 +124,9 @@ head = [f"# The owner's creatures, route {TAG}", "",
         "|---|---|---|---|---|---|---|---|"]
 foot = ["", f"Over {len(ok)} rigs: tears without clips median {med([r['tears_noclips_pct'] for r in ok])}%, at or under 0.7% on "
         f"{sum(r['tears_noclips_pct'] <= 0.7 for r in ok)}; no-artist check passes on {sum(r['no_artist_check'] == 'passes' for r in js)} of {len(js)}.", ""]
-open(f"{O}.table.md", "w").write("\n".join(head + rows + foot))
-json.dump(js, open(f"{O}.table.json", "w"), indent=1)
+with open(f"{O}.table.md", "w") as fh:
+    fh.write("\n".join(head + rows + foot))
+with open(f"{O}.table.json", "w") as fh:
+    json.dump(js, fh, indent=1)
 print("\n".join(head[-2:] + rows + foot))
 PY

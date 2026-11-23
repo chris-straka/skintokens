@@ -191,7 +191,7 @@ def pictures(bench, out, summary, routes, blender, repo):
         pick = next((clips[i] for i, c in enumerate(low) if "walk" in c and "slow" not in c), None) \
             or next((clips[i] for i, c in enumerate(low) if "run" in c or "fly" in c), None) or clips[0]
         png, mp4 = os.path.join(out, name + ".png"), os.path.join(out, name + ".mp4")
-        cmd = [blender, "-b", "--factory-startup", "-P", script, "--", "--out", png, "--clip", worst["clip"], "--time", str(worst["time"]),
+        cmd = [blender, "-b", "--factory-startup", "--python-exit-code", "1", "-P", script, "--", "--out", png, "--clip", worst["clip"], "--time", str(worst["time"]),
                "--loop", mp4, "--loop-clip", pick, "--loop-frames", "72"]
         for label, path in rigs:
             cmd += ["--rig", f"{label}={path}"]
@@ -225,11 +225,12 @@ def main():
     kinds, order = {}, []
     tsv = os.path.join(a.bench, "animals.tsv")
     if os.path.exists(tsv):
-        for line in open(tsv):
-            p = line.rstrip("\n").split("\t")
-            if len(p) >= 2 and p[0]:
-                kinds[p[0]] = p[1]
-                order.append(p[0])
+        with open(tsv) as fh:
+            for line in fh:
+                p = line.rstrip("\n").split("\t")
+                if len(p) >= 2 and p[0]:
+                    kinds[p[0]] = p[1]
+                    order.append(p[0])
     names = a.names or order or sorted(os.listdir(os.path.join(a.bench, "animals")))
     summary_path = os.path.join(out, "summary.json")
     summary = {}

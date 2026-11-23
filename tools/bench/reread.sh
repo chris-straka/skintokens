@@ -18,7 +18,9 @@ for n in "$@"; do
   "$CB" anatomy "$OUT/$n.glb" --json "$OUT/$n.anatomy.json" > /dev/null
   python3 - "$OUT/$n.json" "$OUT/$n.anatomy.json" "$n" <<'PY'
 import json, sys
-d, a, n = json.load(open(sys.argv[1])), json.load(open(sys.argv[2])), sys.argv[3]
+with open(sys.argv[1]) as f1, open(sys.argv[2]) as f2:
+    d, a = json.load(f1), json.load(f2)
+n = sys.argv[3]
 fails = [f["code"] for f in a["findings"] if f["severity"] == "fail"]
 print(f"{n:20s} {d['kind']}{', upright' if d['upright'] else ''}; turned {d.get('turned_deg', 0):.0f}; " + ", ".join(f"{l['name']} {len(l['bones'])}" for l in d["limbs"]) + " | " + ("passes" if not fails else "FAILS " + " ".join(fails)))
 PY

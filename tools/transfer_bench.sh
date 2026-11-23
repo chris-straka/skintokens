@@ -46,7 +46,8 @@ import json, sys
 b = sys.argv[1]
 def s(p):
     try:
-        d = json.load(open(p))
+        with open(p) as fh:
+            d = json.load(fh)
     except Exception as e:
         return f"? ({e})"
     f = [x for x in d.get("findings", []) if x.get("severity") == "fail"]

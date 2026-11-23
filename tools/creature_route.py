@@ -154,9 +154,9 @@ def main():
 
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sib = os.path.dirname(repo)
-    cr = find("creature-rig", getattr(a, "creature_rig"), "CREATURE_RIG_BIN", [os.path.join(repo, "target/release/creature-rig")])
+    cr = find("creature-rig", a.creature_rig, "CREATURE_RIG_BIN", [os.path.join(repo, "target/release/creature-rig")])
     # The anatomy check is a gate, not an extra: without it the route does not run.
-    cb = find("creature-bench", getattr(a, "creature_bench"), "CREATURE_BENCH_BIN", [os.path.join(repo, "target/release/creature-bench")])
+    cb = find("creature-bench", a.creature_bench, "CREATURE_BENCH_BIN", [os.path.join(repo, "target/release/creature-bench")])
     mf = find("motionforge", a.motionforge, "MOTIONFORGE_BIN", [os.path.join(sib, "motion/rust/target/release/motionforge")])
     wf = find("weights", a.weights, "WEIGHTS_BIN", [os.path.join(sib, "meshweights/rust/target/release/weights")])
     rf = find("rfcheck", a.rfcheck, "RFCHECK_BIN", [os.path.join(sib, "rfcheck/target/release/rfcheck")])
@@ -184,7 +184,7 @@ def main():
     else:
         blender = find("blender", a.blender, "BLENDER", [], first=["/Applications/Blender.app/Contents/MacOS/Blender"])
         script = os.environ.get("TRIPO_TO_GLB") or os.path.join(sib, "motion/tools/tripo_to_glb.py")
-        r = run([blender, "-b", "--factory-startup", "-P", script, "--", a.model, mesh, "--kind", "auto",
+        r = run([blender, "-b", "--factory-startup", "--python-exit-code", "1", "-P", script, "--", a.model, mesh, "--kind", "auto",
                  "--convention", a.convention, "--tris", str(a.tris or TRIS[a.klass]), "--height", str(a.height)],
                 timeout=900)
         line = [ln for ln in r["out"].splitlines() if ln.startswith("TRIPO_TO_GLB ")]
@@ -213,7 +213,7 @@ def main():
         info = json.load(f)
     t.update(rigged=True, body=info["kind"] + (", upright" if info["upright"] else ""),
              turned_half_a_turn=info.get("turned_half_a_turn", False),
-             limbs={l["name"]: len(l["bones"]) for l in info["limbs"]})
+             limbs={limb["name"]: len(limb["bones"]) for limb in info["limbs"]})
     candidates = []
     for b in BLENDS[1:]:
         c = f"{base}.band{b}.glb"

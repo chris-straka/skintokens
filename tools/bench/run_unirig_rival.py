@@ -221,9 +221,11 @@ def main() -> int:
         sys.exit("error: --out-json is required")
 
     if a.manifest:
-        ids = [x["id"] for x in json.load(open(a.manifest))["animals"]]
+        with open(a.manifest, encoding="utf-8") as fh:
+            ids = [x["id"] for x in json.load(fh)["animals"]]
     else:
-        ids = [l.split("\t")[0] for l in open(os.path.join(a.bench_dir, "animals.tsv")) if l.strip()]
+        with open(os.path.join(a.bench_dir, "animals.tsv"), encoding="utf-8") as fh:
+            ids = [ln.split("\t")[0] for ln in fh if ln.strip()]
 
     with tempfile.TemporaryDirectory() as tmp:
         skel_task, skin_task = write_gpu_sdpa_tasks(a.unirig_dir, tmp)
@@ -259,7 +261,8 @@ def main() -> int:
                 print(f"[{a.label}] {tag_label}: score FAIL ({err})", flush=True)
                 failed.append({"id": tag_label, "reason": f"score failed: {err}"})
                 continue
-            d = json.load(open(sj))
+            with open(sj, encoding="utf-8") as fh:
+                d = json.load(fh)
             rec = {
                 "id": tag_label,
                 "joints_pct": d["skeleton"]["joint_error_pct"],

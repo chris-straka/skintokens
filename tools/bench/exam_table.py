@@ -65,7 +65,7 @@ def main():
                 for x in j["joints"]:
                     worst.setdefault(x["joint"], []).append(x["mean_mm"])
 
-        def cell(k):
+        def cell(k, rows=rows):
             xs = rows[k]
             if not xs:
                 return "not run"

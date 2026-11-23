@@ -9,6 +9,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pick_score import (  # noqa: E402
+    CheckDidNotRun,
     anatomy_summary,
     fair_score,
     old_score,
@@ -193,7 +194,8 @@ class MissingChecksFailTest(unittest.TestCase):
             env = dict(os.environ, PATH="/usr/bin:/bin", CREATURE_RIG_BIN=fake_tool(d, "creature-rig", 0),
                        CREATURE_BENCH_BIN=os.path.join(d, "no-creature-bench"), BLENDER=fake_tool(d, "blender", 9))
             model = os.path.join(d, "m.glb")
-            open(model, "wb").close()
+            with open(model, "wb"):
+                pass
             r = subprocess.run([sys.executable, os.path.join(tools, "creature_route.py"), model, os.path.join(d, "out"),
                                 "--blender", env["BLENDER"]],
                                capture_output=True, text=True, env=env, timeout=120)
@@ -213,7 +215,8 @@ class MissingChecksFailTest(unittest.TestCase):
         for label, judge in self._judges():
             with tempfile.TemporaryDirectory() as d:
                 glb = os.path.join(d, "r.glb")
-                open(glb, "wb").close()
+                with open(glb, "wb"):
+                    pass
                 wf = os.path.join(d, "weights")
                 with open(wf, "w") as f:
                     f.write("#!/bin/sh\necho '" + bend + "'\nexit 1\n")  # a failing rig: exit 1 is a verdict
@@ -227,7 +230,7 @@ class MissingChecksFailTest(unittest.TestCase):
                     crash = fake_tool(d, "crash-" + bad, 3)
                     args = {"creature-rig": (crash, wf, good_cb), "creature-bench": (cr, wf, crash),
                             "weights": (cr, crash, good_cb)}[bad]
-                    with self.assertRaises(Exception, msg=f"{label}: {bad} crashed and the judge scored anyway"):
+                    with self.assertRaises(CheckDidNotRun, msg=f"{label}: {bad} crashed and the judge scored anyway"):
                         judge(*args, glb, d, "t_" + bad)
 
 

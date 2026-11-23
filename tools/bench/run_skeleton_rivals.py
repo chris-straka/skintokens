@@ -35,7 +35,6 @@ For each animal's `bare.glb`, this script:
 import argparse
 import collections
 import json
-import math
 import os
 import shutil
 import statistics
@@ -794,7 +793,8 @@ def score_one(cb_bin: str, truth_glb: str, cand_glb: str, score_json: str, roles
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if r.returncode != 0 or not os.path.isfile(score_json):
         return None
-    d = json.load(open(score_json, encoding="utf-8"))
+    with open(score_json, encoding="utf-8") as fh:
+        d = json.load(fh)
     return {
         "joints_pct": d["skeleton"]["joint_error_pct"],
         "missing_chains": len(d["skeleton"]["missing_chains"]),
@@ -901,7 +901,8 @@ def run_one_rival(
             flush=True,
         )
         if r.returncode != 0:
-            tail = open(log_path, encoding="utf-8", errors="replace").read()[-1500:]
+            with open(log_path, encoding="utf-8", errors="replace") as fh:
+                tail = fh.read()[-1500:]
             print(f"[{label}/{rival_key}] demo.py tail:\n{tail}", flush=True)
 
         for aid in need_ids:
@@ -972,8 +973,9 @@ def run_one_rival(
             tail = ""
             skin_log = os.path.join(rdir, "skintokens_skin.log")
             if os.path.isfile(skin_log):
-                tail = open(skin_log, encoding="utf-8", errors="replace").read().strip()[-300:]
-            msg = f"skintokens skin failed" + (f": {tail}" if tail else "")
+                with open(skin_log, encoding="utf-8", errors="replace") as fh:
+                    tail = fh.read().strip()[-300:]
+            msg = "skintokens skin failed" + (f": {tail}" if tail else "")
             print(f"[{label}/{rival_key}] {tag_label}: FAIL ({msg})", flush=True)
             failed.append({"id": tag_label, "reason": msg})
             continue
@@ -1045,9 +1047,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     masked = bool(a.manifest)
     if a.manifest:
-        ids = [x["id"] for x in json.load(open(a.manifest, encoding="utf-8"))["animals"]]
+        with open(a.manifest, encoding="utf-8") as fh:
+            ids = [x["id"] for x in json.load(fh)["animals"]]
     else:
-        ids = [l.split("\t")[0] for l in open(os.path.join(a.bench_dir, "animals.tsv"), encoding="utf-8") if l.strip()]
+        with open(os.path.join(a.bench_dir, "animals.tsv"), encoding="utf-8") as fh:
+            ids = [ln.split("\t")[0] for ln in fh if ln.strip()]
 
     if a.only_ids:
         if masked:

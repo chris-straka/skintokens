@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Unit tests for the frozen `skintokens-1` held-out manifest & verifier (stdlib only)."""
-import hashlib
 import json
 import os
 import sys

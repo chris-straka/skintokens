@@ -21,6 +21,7 @@ Usage:
 """
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -328,9 +329,9 @@ def render_pair_spec(blender, script, rig_a, rig_b, clip, at, paint_ref, work, t
     if metrics_path:
         fov_args += ["--metrics", metrics_path]
     specs = []
-    for k, rpath in enumerate((rig_a, rig_b)):
+    for rpath in (rig_a, rig_b):
         cmd = [
-            blender, "-b", "--factory-startup", "-P", script, "--",
+            blender, "-b", "--factory-startup", "--python-exit-code", "1", "-P", script, "--",
             "--rig", rpath, "--clip", clip, "--at", at, "--measure-only", "yes",
         ] + fov_args
         if paint_ref:
@@ -362,7 +363,7 @@ def render_pair_spec(blender, script, rig_a, rig_b, clip, at, paint_ref, work, t
     for side_idx, rpath in enumerate((rig_a, rig_b)):
         prefix = os.path.join(work, f"{tag}_s{side_idx}")
         cmd = [
-            blender, "-b", "--factory-startup", "-P", script, "--",
+            blender, "-b", "--factory-startup", "--python-exit-code", "1", "-P", script, "--",
             "--rig", rpath, "--clip", clip, "--times", times_arg,
             "--cam-spec", cam_arg, "--out", prefix,
         ] + fov_args
@@ -604,8 +605,10 @@ def cmd_bench(a):
                 res = toolpaths.run([cb, "score", truth, src_g, "--clips", out_c, "--json", out_j] + extra_roles, timeout=1800)
                 if res["code"] != 0:
                     raise RuntimeError(f"score failed for {n}: {res['err'][-200:]}")
-            ps = json.load(open(pred_sc_j))
-            bs = json.load(open(body_sc_j))
+            with open(pred_sc_j) as f:
+                ps = json.load(f)
+            with open(body_sc_j) as f:
+                bs = json.load(f)
             clip_names = [c["clip"] for c in ps["skin"]["clips"]]
             low = [c.lower() for c in clip_names]
             walk_clip = (

@@ -1,4 +1,5 @@
 """Gate-first tests for unified `autorig` CLI (`bin/autorig` / `tools/autorig.py`)."""
+from __future__ import annotations
 
 import json
 import os
@@ -211,7 +212,7 @@ print(json.dumps({"pass": True, "score": 90.0}))
             in_glb = os.path.join(d, "mesh.glb")
             with open(in_glb, "wb") as f:
                 f.write(b"glTF")
-            for method, klass, kind, want_preset in [
+            for method, klass, kind, _want_preset in [
                 ("gamerig", "hero", "humanoid", "biped_hero"),
                 ("rigforge", "monster", "quadruped", "quadruped_stalker"),
             ]:

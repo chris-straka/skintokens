@@ -121,7 +121,7 @@ def main():
                 shutil.rmtree(shots)
             # the clip holds every `step`-th video frame: render it at that rate
             rate = fps / a.step
-            res = toolpaths.run([blender, "-b", "--factory-startup", "-P", os.path.join(repo, "tools/bench/render_side.py"), "--", followed,
+            res = toolpaths.run([blender, "-b", "--factory-startup", "--python-exit-code", "1", "-P", os.path.join(repo, "tools/bench/render_side.py"), "--", followed,
                                  "--camera", lined, "--clip", c, "--frames", shots, "--fps", str(rate)])
             if res["code"] != 0 or "RENDER_SIDE" not in res["out"]:
                 rep["render_error"] = (res["err"] or res["out"]).strip()[-300:]

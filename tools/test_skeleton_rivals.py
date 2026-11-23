@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Unit tests for `tools/bench/run_skeleton_rivals.py` (stdlib only, synthetic fixtures)."""
-import json
 import os
 import struct
 import sys
@@ -79,7 +78,7 @@ class TestSkeletonRivals(unittest.TestCase):
                     "hier j2 j0\n"  # cycle back to root
                     # j3 disconnected -> should attach to nearest visited (j2)
                 )
-            names, positions, parents = rsr.parse_rig_txt(p)
+            names, _positions, parents = rsr.parse_rig_txt(p)
             self.assertEqual(len(names), 4)
             self.assertEqual(names[0], "j0")
             self.assertEqual(parents[0], -1)
@@ -103,9 +102,9 @@ class TestSkeletonRivals(unittest.TestCase):
             nv, nf = rsr.glb_to_obj(bare, obj)
             self.assertEqual((nv, nf), (4, 2))
             with open(obj, encoding="utf-8") as f:
-                lines = [l.strip() for l in f if l.strip()]
-            self.assertEqual(sum(1 for l in lines if l.startswith("v ")), 4)
-            self.assertEqual(sum(1 for l in lines if l.startswith("f ")), 2)
+                lines = [ln.strip() for ln in f if ln.strip()]
+            self.assertEqual(sum(1 for ln in lines if ln.startswith("v ")), 4)
+            self.assertEqual(sum(1 for ln in lines if ln.startswith("f ")), 2)
 
             names = ["root", "mid", "tip", "far_leaf"]
             positions = [(0.5, 0.2, 0.0), (0.5, 1.0, 0.0), (0.5, 1.9, 0.0), (0.5, 5.0, 0.0)]

@@ -32,9 +32,12 @@ while IFS=$'\t' read -r n kind model; do
   python3 - "$d" "$n" "$kind" <<'PY' | tee -a "$O.txt"
 import json, sys
 d, n, kind = sys.argv[1:4]
-r = json.load(open(f"{d}/report.json")); t = r["tries"][0]
+with open(f"{d}/report.json") as fh:
+    r = json.load(fh)
+t = r["tries"][0]
 best = t["predicted"] if t.get("picked") == "predicted" else t
-a = json.load(open(f"{d}/{n}.anatomy.json"))
+with open(f"{d}/{n}.anatomy.json") as fh:
+    a = json.load(fh)
 fails = [f["code"] for f in a["findings"] if f["severity"] == "fail"]
 print("\t".join(str(x) for x in [n, kind, t.get("body"), t.get("picked"), ", ".join(f"{k} {v}" for k, v in (t.get("limbs") or {}).items()),
       best.get("score"), len(best.get("fails", [])), best["skeleton"]["score"], "passes" if not fails else " ".join(fails)]))

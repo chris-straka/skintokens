@@ -230,7 +230,7 @@ def download(url: str, dest: str) -> None:
 
 
 def run_blender(blender: str, script: str, args: list, log_path: str) -> None:
-    cmd = [blender, "-b", "--factory-startup", "-P", script, "--"] + args
+    cmd = [blender, "-b", "--factory-startup", "--python-exit-code", "1", "-P", script, "--"] + args
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     with open(log_path, "w", encoding="utf-8") as f:
         f.write(r.stdout or "")

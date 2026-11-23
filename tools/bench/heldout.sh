@@ -38,7 +38,9 @@ python3 "$HERE/verify_heldout.py" --manifest "$MANIFEST" --bench "$BENCH"
 
 # 2. Optionally run the creature route on any held-out animal missing <tag>/report.json.
 if [ "$RUN_ROUTE" -eq 1 ]; then
-  IDS="$(python3 -c 'import json,sys; print("\n".join(a["id"] for a in json.load(open(sys.argv[1]))["animals"]))' "$MANIFEST")"
+  IDS="$(python3 -c 'import json,sys
+with open(sys.argv[1]) as fh:
+    print("\n".join(a["id"] for a in json.load(fh)["animals"]))' "$MANIFEST")"
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     d="$BENCH/animals/$id"
@@ -80,7 +82,8 @@ import subprocess
 import sys
 
 bench, manifest_path, picker_json, tag, out_json = sys.argv[1:6]
-manifest = json.load(open(manifest_path))
+with open(manifest_path) as fh:
+    manifest = json.load(fh)
 ids = [a["id"] for a in manifest["animals"]]
 
 cb = os.environ.get("CREATURE_BENCH_BIN") or shutil.which("creature-bench")
@@ -89,7 +92,11 @@ if not cb or not os.path.exists(cb):
     print("heldout.sh: missing CREATURE_BENCH_BIN", file=sys.stderr)
     sys.exit(2)
 
-picker_doc = json.load(open(picker_json)) if os.path.isfile(picker_json) else {}
+if os.path.isfile(picker_json):
+    with open(picker_json) as fh:
+        picker_doc = json.load(fh)
+else:
+    picker_doc = {}
 baselines = picker_doc.get("baselines") or picker_doc.get("picker_baselines") or {}
 gate_failures = picker_doc.get("gate_failures") or []
 cal_summary = {
@@ -103,7 +110,8 @@ def score_one(truth, cand, out_p):
         err = (r.stderr or r.stdout or "").strip()[-300:]
         print(f"heldout.sh: creature-bench score failed (exit {r.returncode}): {err}", file=sys.stderr)
         sys.exit(2 if r.returncode in (0, None) else r.returncode)
-    d = json.load(open(out_p))
+    with open(out_p) as fh:
+        d = json.load(fh)
     return {
         "joints_pct": d["skeleton"]["joint_error_pct"],
         "missing_chains": len(d["skeleton"]["missing_chains"]),
@@ -158,7 +166,8 @@ for aid in ids:
     rep_path = os.path.join(rdir, "report.json")
     pred_glb = None
     if os.path.isfile(rep_path):
-        rep = json.load(open(rep_path))
+        with open(rep_path) as fh:
+            rep = json.load(fh)
         tries = rep.get("tries") or []
         if tries and isinstance(tries[0].get("predicted"), dict):
             seed = tries[0]["predicted"].get("seed")

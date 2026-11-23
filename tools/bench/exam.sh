@@ -43,14 +43,14 @@ while [ $# -ge 2 ]; do
   [ -f "$D/creature.json" ] || "$MF" creature-profile --rig "$RIG" --output "$D/creature.json" --clean-glb "$D/clean.glb" --report "$D/profile.json" --name "$NAME" > "$D/profile.log" 2>&1 || { echo "$NAME: no profile: $(tail -2 "$D/profile.log")"; continue; }
   step "$NAME: poses and renders"
   [ -f "$D/poses.json" ] || "$MF" creature-poses --creature "$D/creature.json" --output "$D/poses.json" --count "${COUNT:-3000}" --seed 1 > /dev/null
-  [ -f "$D/renders/truth.json" ] || blender --background --factory-startup --python "$C/render.py" -- --glb "$D/clean.glb" --creature "$D/creature.json" --clip "$D/poses.json" --out "$D/renders" --mode poses --samples 16 > "$D/render.log" 2>&1 || { echo "$NAME: renders failed: $(tail -3 "$D/render.log")"; continue; }
+  [ -f "$D/renders/truth.json" ] || blender --background --factory-startup --python-exit-code 1 --python "$C/render.py" -- --glb "$D/clean.glb" --creature "$D/creature.json" --clip "$D/poses.json" --out "$D/renders" --mode poses --samples 16 > "$D/render.log" 2>&1 || { echo "$NAME: renders failed: $(tail -3 "$D/render.log")"; continue; }
   step "$NAME: joint finder"
   [ -f "$D/finder.pt" ] || "$PY" "$C/train.py" --renders "$D/renders" --out "$D" --epochs "${EPOCHS:-12}" --batch 16 > "$D/train.log" 2>&1 || { echo "$NAME: training failed: $(tail -3 "$D/train.log")"; continue; }
   step "$NAME: exam"
   "$PY" "$C/exam.py" --creature "$NAME=$D" --out "$D/exam" --seeds 1,2,3 --frames 48 --video --motionforge "$MF" --python "$PY" > "$D/exam.log" 2>&1
   tail -n 2 "$D/exam.log"
   step "$NAME: the outline follower on the same motions"
-  [ -f "$D/camera.json" ] || blender -b --factory-startup -P "$HERE/render_side.py" -- "$D/clean.glb" --out "$D/start.png" --camera-out "$D/camera.json" > /dev/null 2>&1
+  [ -f "$D/camera.json" ] || blender -b --factory-startup --python-exit-code 1 -P "$HERE/render_side.py" -- "$D/clean.glb" --out "$D/start.png" --camera-out "$D/camera.json" > /dev/null 2>&1
   for s in 1 2 3; do
     E=$D/exam/$NAME/seed$s
     [ -f "$E/truth.json" ] || continue
@@ -59,7 +59,7 @@ while [ $# -ge 2 ]; do
     "$MF" creature-solve --creature "$D/creature.json" --detections "$E/det_perfect.json" --output "$E/truth_resolved.json" --glb-in "$D/clean.glb" --glb-out "$E/truth.glb" --clip-name truth --no-pin --smooth-sigma 0 --quat-sigma 0 > "$E/truth_solve.log" 2>&1
     "$MF" creature-compare --creature "$D/creature.json" --truth "$E/truth.json" --solved "$E/truth_resolved.json" --output "$E/truth_glb_error.json" > /dev/null 2>&1
     rm -rf "$E/side_film" "$E/overlays"
-    blender -b --factory-startup -P "$HERE/render_side.py" -- "$E/truth.glb" --camera "$D/camera.json" --clip truth --frames "$E/side_film" --fps 24 > /dev/null 2>&1
+    blender -b --factory-startup --python-exit-code 1 -P "$HERE/render_side.py" -- "$E/truth.glb" --camera "$D/camera.json" --clip truth --frames "$E/side_film" --fps 24 > /dev/null 2>&1
     "$CB" follow "$D/clean.glb" --camera "$D/camera.json" --frames "$E/side_film" --out "$E/followed.glb" --json "$E/follow.json" --name followed --fps 24 --step 1 --overlays "$E/overlays" | cut -c1-160
     "$CB" joints "$E/truth.glb" "$E/solved.glb" --clip truth --other-clip "exam_$s" --json "$E/joints_finder.json" | cut -c1-200
     "$CB" joints "$E/truth.glb" "$E/followed.glb" --clip truth --other-clip followed --json "$E/joints_outline.json" | cut -c1-200
