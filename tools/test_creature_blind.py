@@ -9,22 +9,46 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from creature_blind import (  # noqa: E402
-    a_on_left,
-    presentation_order,
     score_blind_run,
     write_blind_pack,
     write_png_rgb,
 )
+from test_blind_gk import write_fake_gk  # noqa: E402
 
 
 class CreatureBlindTest(unittest.TestCase):
-    def test_seeded_coin_and_order_are_reproducible_and_mixed(self):
-        coins = [a_on_left(20261116, k) for k in range(1, 12)]
-        self.assertEqual(coins, [a_on_left(20261116, k) for k in range(1, 12)])
-        self.assertTrue(any(coins) and not all(coins))
-        order = presentation_order(6, 20261116)
-        self.assertEqual(order, presentation_order(6, 20261116))
-        self.assertEqual(sorted(order), [0, 1, 2, 3, 4, 5])
+    def setUp(self):
+        self._gk_dir = tempfile.mkdtemp(prefix="cblind_gk_")
+        self._gk_log = os.path.join(self._gk_dir, "gk.log")
+        self._fake_gk = os.path.join(self._gk_dir, "gk")
+        write_fake_gk(self._fake_gk, self._gk_log)
+        self._old_gk = os.environ.get("GK_BIN")
+        os.environ["GK_BIN"] = self._fake_gk
+
+    def tearDown(self):
+        if self._old_gk is None:
+            os.environ.pop("GK_BIN", None)
+        else:
+            os.environ["GK_BIN"] = self._old_gk
+        shutil.rmtree(self._gk_dir, ignore_errors=True)
+
+    def test_seeded_order_delegated_to_gk_and_reproducible(self):
+        tmp = tempfile.mkdtemp(prefix="test_cblind_seed_")
+        try:
+            p1 = os.path.join(tmp, "p1.png")
+            p2 = os.path.join(tmp, "p2.png")
+            write_png_rgb(p1, 16, 12, bytearray([80, 120, 160] * (16 * 12)))
+            write_png_rgb(p2, 16, 12, bytearray([180, 70, 60] * (16 * 12)))
+            items = [
+                {"category": "claim", "subject": "fox", "a_name": "A", "b_name": "B", "a_pngs": [p1], "b_pngs": [p2]},
+                {"category": "control", "subject": "fox", "a_name": "same_a", "b_name": "same_b", "a_pngs": [p1], "b_pngs": [p1], "expected": "cant_tell"},
+            ]
+            k1_path = write_blind_pack(items, os.path.join(tmp, "pack1"), 20261116)
+            k2_path = write_blind_pack(items, os.path.join(tmp, "pack2"), 20261116)
+            with open(k1_path) as f1, open(k2_path) as f2:
+                self.assertEqual(json.load(f1)["pairs"], json.load(f2)["pairs"])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
     def test_pack_keeps_key_outside_and_verifies_zero_rmse_control(self):
         tmp = tempfile.mkdtemp(prefix="test_cblind_")
@@ -116,9 +140,22 @@ class CreatureBlindTest(unittest.TestCase):
 
 
 class PackRefusesStrangeFoldersTest(unittest.TestCase):
-    """skintokens-10: `write_blind_pack` replaces only a blind pack it made (its pairs.json
-    inside, its key beside); any other folder named by --out is refused, untouched. Until
-    then it deleted whatever --out named (`shutil.rmtree`)."""
+    """skintokens-10: `write_blind_pack` replaces only a blind pack it made (its judge.json
+    or pairs.json inside, its key beside); any other folder named by --out is refused, untouched."""
+
+    def setUp(self):
+        self._gk_dir = tempfile.mkdtemp(prefix="cblind_refuse_gk_")
+        self._fake_gk = os.path.join(self._gk_dir, "gk")
+        write_fake_gk(self._fake_gk, os.path.join(self._gk_dir, "gk.log"))
+        self._old_gk = os.environ.get("GK_BIN")
+        os.environ["GK_BIN"] = self._fake_gk
+
+    def tearDown(self):
+        if self._old_gk is None:
+            os.environ.pop("GK_BIN", None)
+        else:
+            os.environ["GK_BIN"] = self._old_gk
+        shutil.rmtree(self._gk_dir, ignore_errors=True)
 
     def _items(self, tmp):
         p1 = os.path.join(tmp, "p1.png")
@@ -140,16 +177,16 @@ class PackRefusesStrangeFoldersTest(unittest.TestCase):
             # A pack's own folder without its key beside it is refused too.
             half = os.path.join(tmp, "half")
             os.makedirs(half)
-            with open(os.path.join(half, "pairs.json"), "w") as f:
+            with open(os.path.join(half, "judge.json"), "w") as f:
                 f.write("{}")
             with self.assertRaises((ValueError, RuntimeError, OSError, SystemExit)):
                 write_blind_pack(items, half, 1)
-            self.assertTrue(os.path.exists(os.path.join(half, "pairs.json")))
+            self.assertTrue(os.path.exists(os.path.join(half, "judge.json")))
 
-            # Unrelated pairs.json + .key.json without blind-pack format markers are refused too.
+            # Unrelated judge.json + .key.json without blind-pack version/pairs markers are refused too.
             unrelated = os.path.join(tmp, "unrelated")
             os.makedirs(unrelated)
-            with open(os.path.join(unrelated, "pairs.json"), "w") as f:
+            with open(os.path.join(unrelated, "judge.json"), "w") as f:
                 f.write('{"unrelated": true}')
             with open(unrelated + ".key.json", "w") as f:
                 f.write('{"unrelated": true}')
@@ -167,7 +204,7 @@ class PackRefusesStrangeFoldersTest(unittest.TestCase):
                 os.chdir(pack)
                 with self.assertRaises((ValueError, RuntimeError, OSError, PermissionError, SystemExit)):
                     write_blind_pack(items, "/", 2)
-                self.assertTrue(os.path.exists(os.path.join(pack, "pairs.json")))
+                self.assertTrue(os.path.exists(os.path.join(pack, "judge.json")))
             finally:
                 os.chdir(old_cwd)
         finally:

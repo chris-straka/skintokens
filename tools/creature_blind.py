@@ -1,16 +1,10 @@
 #!/usr/bin/env python3
-"""Blind same-frame walk/pose A/B benchmark at the game camera (stdlib only).
+"""Blind same-frame walk/pose A/B benchmark at the game camera (`gk blind`).
 
-Builds unmarked LEFT/RIGHT walk-frame pair sheets (`pair_01.png` ...) at
-HLH's follow camera with:
-- seeded `LEFT`/`RIGHT` coin-flip and shuffled presentation order (`--seed`),
-- mandatory **can't-tell control** (identical render on both sides, verified
-  `pixel_rmse == 0.0` below the header bar),
-- mandatory **planted bad case** (`creature-bench plant`: mirrored left/right
-  limb skin weights swapped, verified flagged by `pick_score` and `anatomy` /
-  `tears`),
-- answer key written **beside** the judged folder (`<out>.key.json`), never
-  inside `<out>/`.
+Stages unmarked synchronized walk frames at HLH's follow camera (75° FOV)
+and delegates pair shuffling, LEFT/RIGHT coin-flip, sheet compositing,
+can't-tell control, planted bad case, key anti-leak, and answer validation
+to `gk blind make` and `gk blind score`.
 
 Usage:
     # From a creature-bench folder (compares predicted vs body-read on Walk):
@@ -21,103 +15,75 @@ Usage:
     python3 tools/creature_blind.py make --out DIR/pack [--seed 20261116] \
         NAME=rig_a.glb,rig_b.glb[:clip[:paint_ref.glb]] ...
 
-    # Score a blind judge's answers (`{"1": "left", "2": "cant_tell", ...}`):
+    # Score a blind judge's answers (`{"pair-01": "left", "pair-02": "cant_tell", ...}`):
     python3 tools/creature_blind.py score DIR/pack --answers answers.json \
         [--key DIR/pack.key.json] [--out DIR/pack.verdict.json]
 """
 import argparse
 import json
-import math
 import os
+import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gamecam import resolve_follow_fov_deg  # noqa: E402
 import pick_score  # noqa: E402
-from pngfont import FONT_5X7, draw_text, read_png_rgb, text_width, write_png_rgb  # noqa: E402
+from pngfont import read_png_rgb, write_png_rgb  # noqa: E402
 from rigjudge import judge as judge_rig_metrics  # noqa: E402
 import toolpaths  # noqa: E402
 
-
-# ------------------------------------------------ seeded coin-flip & shuffle
-
-def splitmix64(state):
-    state = (state + 0x9E3779B97F4A7C15) & 0xFFFFFFFFFFFFFFFF
-    z = state
-    z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & 0xFFFFFFFFFFFFFFFF
-    z = ((z ^ (z >> 27)) * 0x94D049BB133111EB) & 0xFFFFFFFFFFFFFFFF
-    return state, (z ^ (z >> 31)) & 0xFFFFFFFFFFFFFFFF
+BLIND_QUESTION = "Same walk frames at game camera - which side moves cleaner? Answer left, right, or cant_tell."
 
 
-def a_on_left(seed, pair_idx):
-    s = (int(seed) ^ ((int(pair_idx) + 1) * 0xD1B54A32D192ED03)) & 0xFFFFFFFFFFFFFFFF
-    _, r = splitmix64(s)
-    return (r & 1) == 0
+def find_gk_bin():
+    """Locate the `gk` binary (`GK_BIN`, `PATH`, sibling `_tools/gk`, `~/.cargo/bin/gk`)."""
+    env_gk = os.environ.get("GK_BIN")
+    if env_gk is not None and env_gk.strip():
+        if os.path.isfile(env_gk) and os.access(env_gk, os.X_OK):
+            return env_gk
+        raise RuntimeError(f"GK_BIN={env_gk!r} does not point to an executable gk binary")
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    games_dir = os.path.dirname(os.path.dirname(repo))
+    tools_root = os.environ.get("GAMES_TOOLS_DIR") or os.path.join(games_dir, "_tools")
+    home = os.path.expanduser("~")
+    cands = [
+        shutil.which("gk") or "",
+        os.path.join(tools_root, "gk", "target", "release", "gk"),
+        os.path.join(tools_root, "gk", "target", "debug", "gk"),
+        os.path.join(home, ".cargo", "bin", "gk"),
+    ]
+    for p in cands:
+        if p and os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    raise RuntimeError("gk binary not found (install gk, build _tools/gk, or set GK_BIN)")
 
 
-def presentation_order(n, seed):
-    idx = list(range(n))
-    s = (int(seed) ^ 0xA0761D6478BD642F) & 0xFFFFFFFFFFFFFFFF
-    for i in range(n - 1, 0, -1):
-        s, r = splitmix64(s)
-        j = r % (i + 1)
-        idx[i], idx[j] = idx[j], idx[i]
-    return idx
-
-
-# ----------------------------------------- pair sheet compositor
-
-HEAD_H = 62
-GAP = 4
-
-
-def compose_pair_sheet(left_pngs, right_pngs, pair_num, out_path):
-    """Composites synchronized LEFT and RIGHT frame lists into `pair_NN.png`
-    and returns `(sheet_w, sheet_h, panel_rmse)` where `panel_rmse` compares
-    all LEFT pixels against all RIGHT pixels directly (0.0 on the control)."""
-    if len(left_pngs) != len(right_pngs) or not left_pngs:
-        raise ValueError("mismatched left/right frame lists")
-    l_imgs = [read_png_rgb(p) for p in left_pngs]
-    r_imgs = [read_png_rgb(p) for p in right_pngs]
-    cw, ch = l_imgs[0][0], l_imgs[0][1]
-    for w, h, _ in l_imgs + r_imgs:
+def _stack_pngs_vertical(pngs, out_path):
+    """Stack one or more synchronized same-size PNG frames vertically into one cell PNG."""
+    if not pngs:
+        raise ValueError("empty frame list")
+    if len(pngs) == 1:
+        shutil.copyfile(pngs[0], out_path)
+        return
+    imgs = [read_png_rgb(p) for p in pngs]
+    cw, ch = imgs[0][0], imgs[0][1]
+    for w, h, _ in imgs:
         if (w, h) != (cw, ch):
             raise ValueError(f"frame size mismatch {(w, h)} vs {(cw, ch)}")
-
-    rows = len(l_imgs)
-    W = cw * 2 + GAP
-    H = HEAD_H + rows * ch + max(0, rows - 1) * GAP
-    buf = bytearray([24, 26, 32] * (W * H))
-
-    draw_text(buf, W, H, 12, 8, f"PAIR {pair_num:02d}", 3, (235, 238, 244))
-    prompt = "SAME WALK FRAMES AT GAME CAMERA - WHICH SIDE MOVES CLEANER? ANSWER LEFT, RIGHT, OR CANT_TELL"
-    draw_text(buf, W, H, 180, 14, prompt, 1, (164, 170, 182))
-    lw = text_width("LEFT", 2)
-    rw = text_width("RIGHT", 2)
-    draw_text(buf, W, H, (cw - lw) // 2, 40, "LEFT", 2, (235, 238, 244))
-    draw_text(buf, W, H, cw + GAP + (cw - rw) // 2, 40, "RIGHT", 2, (235, 238, 244))
-
-    sq_sum = 0.0
-    total_vals = 0
-    for r_idx, ((_, _, lb), (_, _, rb)) in enumerate(zip(l_imgs, r_imgs)):
-        y_off = HEAD_H + r_idx * (ch + GAP)
+    gap = 4
+    total_h = len(imgs) * ch + max(0, len(imgs) - 1) * gap
+    buf = bytearray([24, 26, 32] * (cw * total_h))
+    row_bytes = cw * 3
+    for idx, (_, _, px) in enumerate(imgs):
+        y0 = idx * (ch + gap)
         for y in range(ch):
-            s0 = y * cw * 3
-            s1 = s0 + cw * 3
-            d_left = ((y_off + y) * W) * 3
-            d_right = ((y_off + y) * W + cw + GAP) * 3
-            buf[d_left:d_left + cw * 3] = lb[s0:s1]
-            buf[d_right:d_right + cw * 3] = rb[s0:s1]
-        for a, b in zip(lb, rb):
-            diff = a - b
-            sq_sum += diff * diff
-        total_vals += len(lb)
-
-    write_png_rgb(out_path, W, H, buf)
-    rmse = math.sqrt(sq_sum / max(total_vals, 1))
-    return W, H, round(rmse, 4)
+            src = y * row_bytes
+            dst = (y0 + y) * row_bytes
+            buf[dst:dst + row_bytes] = px[src:src + row_bytes]
+    write_png_rgb(out_path, cw, total_h, buf)
 
 
 # ---------------------------------------------------------- blind scoring
@@ -133,8 +99,15 @@ def norm_answer(ans):
     return s
 
 
+def _parse_pair_num(raw):
+    m = re.search(r"(\d+)$", str(raw).strip())
+    if not m:
+        raise ValueError(f"invalid pair identifier: {raw!r}")
+    return int(m.group(1))
+
+
 def parse_answers(answers):
-    """Accepts `{pair: ans}`, `{"answers": [{"pair": N, "better"|"answer": ans, "why": ...}]}`,
+    """Accepts `{pair: ans}`, `{"answers": [{"pair": N, "better"|"answer"|"choice": ans, "why": ...}]}`,
     or a plain list of entry dicts."""
     norm_map = {}
     why_map = {}
@@ -143,16 +116,16 @@ def parse_answers(answers):
         for row in rows:
             if not isinstance(row, dict) or "pair" not in row:
                 continue
-            pnum = int(row["pair"])
-            raw = row.get("better", row.get("answer", row.get("verdict", "")))
+            pnum = _parse_pair_num(row["pair"])
+            raw = row.get("better", row.get("answer", row.get("choice", row.get("verdict", ""))))
             norm_map[pnum] = norm_answer(raw)
             if row.get("why"):
                 why_map[pnum] = str(row["why"])
     elif isinstance(rows, dict):
         for k, v in rows.items():
-            pnum = int(str(k).replace("pair_", "").replace("pair", "").strip())
+            pnum = _parse_pair_num(k)
             if isinstance(v, dict):
-                norm_map[pnum] = norm_answer(v.get("better", v.get("answer", "")))
+                norm_map[pnum] = norm_answer(v.get("better", v.get("answer", v.get("choice", ""))))
                 if v.get("why"):
                     why_map[pnum] = str(v["why"])
             else:
@@ -160,15 +133,69 @@ def parse_answers(answers):
     return norm_map, why_map
 
 
-def score_blind_run(key, answers):
-    """Scores judge answers against `<out>.key.json`. Enforces mandatory
-    can't-tell control and planted-bad visual + metric gates."""
+def _score_via_gk(key, ans_by_id, out_dir=None, key_path=None):
+    gk = find_gk_bin()
+    tmp = tempfile.mkdtemp(prefix="gk_blind_score_")
+    try:
+        run_dir = out_dir if out_dir else os.path.join(tmp, "pack")
+        run_key = key_path if key_path else os.path.join(tmp, "pack.key.json")
+        if not out_dir or not os.path.exists(run_key):
+            os.makedirs(run_dir, exist_ok=True)
+            pub_pairs = []
+            for p in key.get("pairs", []):
+                pid = p.get("id") or f"pair-{int(p['pair']):02d}"
+                pub_pairs.append({
+                    "id": pid,
+                    "left": f"{pid}-left.png",
+                    "right": f"{pid}-right.png",
+                    "sheet": f"{pid}.png",
+                })
+            with open(os.path.join(run_dir, "judge.json"), "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "version": 1,
+                        "question": BLIND_QUESTION,
+                        "answers": "one of left | right | cant_tell per pair",
+                        "pairs": pub_pairs,
+                    },
+                    f,
+                )
+            with open(run_key, "w", encoding="utf-8") as f:
+                json.dump(key, f)
+        ans_file = os.path.join(tmp, "answers.json")
+        with open(ans_file, "w", encoding="utf-8") as f:
+            json.dump(ans_by_id, f)
+        cmd = [gk, "blind", "score", run_dir, "--answers", ans_file, "--key", run_key, "--json"]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode not in (0, 1):
+            raise RuntimeError(f"gk blind score failed ({res.returncode}): {(res.stderr or res.stdout).strip()}")
+        try:
+            return json.loads(res.stdout)
+        except ValueError as exc:
+            raise RuntimeError(f"gk blind score returned invalid JSON: {exc}\n{res.stdout}") from exc
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def score_blind_run(key, answers, out_dir=None, key_path=None):
+    """Scores judge answers against `<out>.key.json` via `gk blind score`. Enforces
+    mandatory can't-tell control and planted-bad visual + metric gates."""
     norm_map, why_map = parse_answers(answers)
+    ans_by_id = {}
+    for p in key.get("pairs", []):
+        pnum = int(p["pair"])
+        pid = p.get("id") or f"pair-{pnum:02d}"
+        if pnum in norm_map:
+            ans_by_id[pid] = norm_map[pnum]
+
+    gk_verdict = _score_via_gk(key, ans_by_id, out_dir=out_dir, key_path=key_path)
+    gk_rows = {row.get("pair"): row for row in gk_verdict.get("pairs", [])}
+
     pairs_out = []
     saw_control = False
     saw_planted = False
-    control_ok = False
-    planted_judge_ok = False
+    control_ok = bool(gk_verdict.get("control_ok", False))
+    planted_judge_ok = bool(gk_verdict.get("planted_ok", False))
     planted_metric_ok = False
     claims_judged = 0
     judge_agrees_truth = 0
@@ -180,25 +207,29 @@ def score_blind_run(key, answers):
 
     for p in key.get("pairs", []):
         pnum = int(p["pair"])
+        pid = p.get("id") or f"pair-{pnum:02d}"
         ans = norm_map.get(pnum)
         cat = p["category"]
+        gk_row = gk_rows.get(pid, {})
         judge_rig = p["left_rig"] if ans == "left" else (p["right_rig"] if ans == "right" else None)
         retired_old = False
         retired_new = False
 
         if cat == "control":
             saw_control = True
-            rmse_ok = float(p.get("panel_rmse", 0.0)) == 0.0
-            control_ok = (ans == "cant_tell") and rmse_ok
+            rmse_ok = float(p.get("panel_rmse", p.get("rmse", 0.0))) == 0.0
+            row_ctrl_ok = control_ok and (ans == "cant_tell") and rmse_ok
+            control_ok = row_ctrl_ok
             note = (
                 "control passed: identical renders answered cant_tell"
-                if control_ok
-                else f"control FAILED: answered {ans!r} (rmse={p.get('panel_rmse')}) — discard judge run"
+                if row_ctrl_ok
+                else f"control FAILED: answered {ans!r} (rmse={p.get('panel_rmse', p.get('rmse'))}) — discard judge run"
             )
         elif cat == "planted":
             saw_planted = True
-            planted_judge_ok = judge_rig == p.get("expected")
             planted_metric_ok = bool(p.get("planted_metric_ok", False))
+            if p.get("expected") is not None:
+                planted_judge_ok = planted_judge_ok and (judge_rig == p.get("expected"))
             if planted_judge_ok and planted_metric_ok:
                 note = "planted bad case passed: picked out by blind judge and flagged by numeric score"
             elif not planted_judge_ok:
@@ -241,9 +272,11 @@ def score_blind_run(key, answers):
 
         row_out = {
             "pair": pnum,
+            "id": pid,
             "category": cat,
             "subject": p.get("subject", ""),
             "answer": ans,
+            "winner": gk_row.get("winner"),
             "judge_rig": judge_rig,
             "truth_winner": p.get("truth_winner"),
             "pick_winner": p.get("pick_winner"),
@@ -262,13 +295,17 @@ def score_blind_run(key, answers):
         and control_ok
         and planted_judge_ok
         and planted_metric_ok
+        and bool(gk_verdict.get("pass", True))
     )
     return {
         "format": "creature-blind-verdict/1",
+        "version": gk_verdict.get("version", 1),
         "pass": passed,
         "control_ok": control_ok,
+        "planted_ok": planted_judge_ok,
         "planted_judge_ok": planted_judge_ok,
         "planted_metric_ok": planted_metric_ok,
+        "claims": gk_verdict.get("claims", {}),
         "claims_judged": claims_judged,
         "truth_claims_judged": truth_claims,
         "judge_agrees_truth": judge_agrees_truth,
@@ -339,125 +376,174 @@ def render_pair_spec(blender, script, rig_a, rig_b, clip, at, paint_ref, work, t
     return rendered[0], rendered[1], {"clip": specs[0]["clip"], "times": times, "cam_spec": cam_arg, "fov_deg": resolved_fov}
 
 def _is_owned_blind_pack(out_dir, key_path):
+    judge_file = os.path.join(out_dir, "judge.json")
     pairs_file = os.path.join(out_dir, "pairs.json")
-    if (
-        not os.path.isfile(pairs_file)
-        or os.path.islink(pairs_file)
-        or not os.path.isfile(key_path)
-        or os.path.islink(key_path)
-    ):
+    if os.path.islink(key_path) or not os.path.isfile(key_path):
         return False
     try:
-        with open(pairs_file, encoding="utf-8") as f:
-            pdoc = json.load(f)
         with open(key_path, encoding="utf-8") as f:
             kdoc = json.load(f)
     except (OSError, ValueError):
         return False
-    return (
-        isinstance(pdoc, dict)
-        and pdoc.get("format") == "creature-blind-pairs/1"
-        and isinstance(kdoc, dict)
-        and kdoc.get("format") == "creature-blind-key/1"
+    key_ok = isinstance(kdoc, dict) and (
+        (kdoc.get("version") == 1 and isinstance(kdoc.get("pairs"), list))
+        or kdoc.get("format") == "creature-blind-key/1"
     )
+    if not key_ok:
+        return False
+    if os.path.isfile(judge_file) and not os.path.islink(judge_file):
+        try:
+            with open(judge_file, encoding="utf-8") as f:
+                jdoc = json.load(f)
+            return isinstance(jdoc, dict) and jdoc.get("version") == 1 and isinstance(jdoc.get("pairs"), list)
+        except (OSError, ValueError):
+            return False
+    if os.path.isfile(pairs_file) and not os.path.islink(pairs_file):
+        try:
+            with open(pairs_file, encoding="utf-8") as f:
+                pdoc = json.load(f)
+            return isinstance(pdoc, dict) and pdoc.get("format") == "creature-blind-pairs/1"
+        except (OSError, ValueError):
+            return False
+    return False
 
 
 def write_blind_pack(raw_items, out_dir, seed):
-    """Shuffles `raw_items` with `seed`, coins LEFT/RIGHT per pair, writes
-    `pair_NN.png` and `pairs.json` into `out_dir`, and writes
-    `<out_dir>.key.json` beside `out_dir`."""
+    """Stages synchronized pairs and delegates shuffling, side coin-flips,
+    sheet compositing, control, planted bad case, and external key generation
+    to `gk blind make`."""
     if not out_dir or not str(out_dir).strip():
         raise ValueError("refusing empty output directory")
     out_dir = os.path.abspath(str(out_dir).rstrip(os.sep) or os.sep)
+    if out_dir == os.sep:
+        raise ValueError(f"refusing filesystem root output directory {out_dir}")
     key_path = out_dir + ".key.json"
     if os.path.lexists(out_dir):
         if os.path.islink(out_dir) or not os.path.isdir(out_dir):
             raise ValueError(f"refusing to overwrite {out_dir}: not a directory")
-        if os.listdir(out_dir):
-            if not _is_owned_blind_pack(out_dir, key_path):
-                raise ValueError(
-                    f"refusing to delete {out_dir}: not a blind pack (need pairs.json and {key_path}, or an empty folder)"
-                )
+        if os.listdir(out_dir) and not _is_owned_blind_pack(out_dir, key_path):
+            raise ValueError(
+                f"refusing to delete {out_dir}: not a blind pack (need judge.json and {key_path}, or an empty folder)"
+            )
+
+    gk = find_gk_bin()
+    claims = [it for it in raw_items if it.get("category") == "claim"]
+    controls = [it for it in raw_items if it.get("category") == "control"]
+    planteds = [it for it in raw_items if it.get("category") == "planted"]
+
+    stage = tempfile.mkdtemp(prefix="gk_blind_pack_")
+    try:
+        a_dir = os.path.join(stage, "a")
+        b_dir = os.path.join(stage, "b")
+        os.makedirs(a_dir)
+        os.makedirs(b_dir)
+
+        staged_claims = {}
+        feed = claims if claims else (controls[:1] or planteds[:1])
+        if not feed:
+            raise ValueError("write_blind_pack needs at least one item")
+        for idx, item in enumerate(feed, 1):
+            subj = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(item.get("subject", f"item_{idx}")))
+            stem = f"{idx:03d}_{subj}"
+            _stack_pngs_vertical(item["a_pngs"], os.path.join(a_dir, f"{stem}.png"))
+            _stack_pngs_vertical(item["b_pngs"], os.path.join(b_dir, f"{stem}.png"))
+            staged_claims[stem] = item
+
+        stage_out = os.path.join(stage, "pack_out")
+        cmd = [
+            gk,
+            "blind",
+            "make",
+            "--a",
+            a_dir,
+            "--b",
+            b_dir,
+            "--out",
+            stage_out,
+            "--seed",
+            str(int(seed)),
+            "--question",
+            BLIND_QUESTION,
+        ]
+        if planteds:
+            p_img = os.path.join(stage, "planted.png")
+            _stack_pngs_vertical(planteds[0]["b_pngs"], p_img)
+            cmd += ["--planted", p_img]
+
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode != 0:
+            raise RuntimeError(f"gk blind make failed ({res.returncode}): {(res.stderr or res.stdout).strip()}")
+
+        gk_key_file = stage_out + ".key.json"
+        with open(gk_key_file, encoding="utf-8") as f:
+            kdoc = json.load(f)
+
+        ctrl_meta = controls[0] if controls else {}
+        plant_meta = planteds[0] if planteds else {}
+        enriched_pairs = []
+        for idx, gp in enumerate(kdoc.get("pairs", []), 1):
+            kind = gp.get("kind", "claim")
+            left_tag = gp.get("left", "a")
+            claim_stem = gp.get("claim", "")
+            meta = staged_claims.get(claim_stem) if kind == "claim" else (ctrl_meta if kind == "control" else plant_meta)
+            meta = meta or {}
+            a_name = meta.get("a_name", "A")
+            b_name = meta.get("b_name", "B")
+            if kind == "planted":
+                # In gk blind make, unplanted A is left_tag == "a"; planted side is "b"/"planted".
+                left_rig = a_name if left_tag == "a" else b_name
+                right_rig = b_name if left_tag == "a" else a_name
+            elif kind == "control":
+                left_rig = a_name
+                right_rig = b_name
+            else:
+                left_rig = a_name if left_tag == "a" else b_name
+                right_rig = b_name if left_tag == "a" else a_name
+
+            entry = dict(gp)
+            entry.update({
+                "pair": idx,
+                "category": kind,
+                "subject": meta.get("subject", claim_stem),
+                "clip": meta.get("clip", ""),
+                "times": meta.get("times", []),
+                "left_rig": left_rig,
+                "right_rig": right_rig,
+                "left_side": "A" if left_tag == "a" else "B",
+                "right_side": "B" if left_tag == "a" else "A",
+                "expected": meta.get("expected"),
+                "panel_rmse": round(float(gp.get("rmse", 0.0)), 4),
+            })
+            if kind == "control" and entry["panel_rmse"] != 0.0:
+                raise RuntimeError(f"control pair {idx} has non-zero pixel RMSE {entry['panel_rmse']}")
+            for extra in (
+                "truth_winner",
+                "pick_winner",
+                "old_winner",
+                "skin_mean_pct",
+                "rig_scores",
+                "old_scores",
+                "planted_metric_ok",
+            ):
+                if extra in meta:
+                    entry[extra] = meta[extra]
+            enriched_pairs.append(entry)
+
+        kdoc["format"] = "creature-blind-key/1"
+        kdoc["judged_dir"] = out_dir
+        kdoc["pairs"] = enriched_pairs
+
+        if os.path.isdir(out_dir):
             shutil.rmtree(out_dir)
-    os.makedirs(out_dir, exist_ok=True)
-
-    order = presentation_order(len(raw_items), seed)
-    pairs_public = []
-    pairs_key = []
-    for pos_idx, src_idx in enumerate(order):
-        pair_num = pos_idx + 1
-        item = raw_items[src_idx]
-        left_is_a = a_on_left(seed, pair_num)
-        if left_is_a:
-            l_pngs, r_pngs = item["a_pngs"], item["b_pngs"]
-            l_rig, r_rig = item["a_name"], item["b_name"]
-        else:
-            l_pngs, r_pngs = item["b_pngs"], item["a_pngs"]
-            l_rig, r_rig = item["b_name"], item["a_name"]
-
-        img_name = f"pair_{pair_num:02d}.png"
-        img_path = os.path.join(out_dir, img_name)
-        w, h, rmse = compose_pair_sheet(l_pngs, r_pngs, pair_num, img_path)
-        if item["category"] == "control" and rmse != 0.0:
-            raise RuntimeError(f"control pair {pair_num} has non-zero pixel RMSE {rmse}")
-
-        pairs_public.append({
-            "pair": pair_num,
-            "image": img_name,
-            "frames": len(l_pngs),
-            "size": [w, h],
-        })
-        entry = {
-            "pair": pair_num,
-            "category": item["category"],
-            "subject": item["subject"],
-            "clip": item.get("clip", ""),
-            "times": item.get("times", []),
-            "left_rig": l_rig,
-            "right_rig": r_rig,
-            "expected": item.get("expected"),
-            "panel_rmse": rmse,
-        }
-        for extra in (
-            "truth_winner",
-            "pick_winner",
-            "old_winner",
-            "skin_mean_pct",
-            "rig_scores",
-            "old_scores",
-            "planted_metric_ok",
-        ):
-            if extra in item:
-                entry[extra] = item[extra]
-        pairs_key.append(entry)
-
-    with open(os.path.join(out_dir, "pairs.json"), "w") as f:
-        json.dump(
-            {
-                "format": "creature-blind-pairs/1",
-                "seed": int(seed),
-                "question": "Which side's creature rig walks and bends cleaner across the same frames? Answer left, right, or cant_tell per pair.",
-                "pairs": pairs_public,
-            },
-            f,
-            indent=1,
-        )
-    # Guardrail: key sits BESIDE out_dir, never inside it.
-    with open(key_path, "w") as f:
-        json.dump(
-            {
-                "format": "creature-blind-key/1",
-                "seed": int(seed),
-                "judged_dir": out_dir,
-                "pairs": pairs_key,
-            },
-            f,
-            indent=1,
-        )
-    inside = os.listdir(out_dir)
-    if any("key" in fn.lower() for fn in inside):
-        raise RuntimeError(f"answer key leaked into judged directory {out_dir}")
-    return key_path
+        shutil.copytree(stage_out, out_dir)
+        with open(key_path, "w", encoding="utf-8") as f:
+            json.dump(kdoc, f, indent=1)
+        inside = os.listdir(out_dir)
+        if any("key" in fn.lower() for fn in inside):
+            raise RuntimeError(f"answer key leaked into judged directory {out_dir}")
+        return key_path
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
 
 
 def cmd_bench(a):
@@ -702,11 +788,13 @@ def cmd_make(a):
 def cmd_score(a):
     out_dir = os.path.abspath(a.dir.rstrip("/"))
     key_path = a.key or (out_dir + ".key.json")
-    key = json.load(open(key_path))
-    ans = json.load(open(a.answers))
-    verdict = score_blind_run(key, ans)
+    with open(key_path, encoding="utf-8") as f:
+        key = json.load(f)
+    with open(a.answers, encoding="utf-8") as f:
+        ans = json.load(f)
+    verdict = score_blind_run(key, ans, out_dir=out_dir, key_path=key_path)
     vpath = a.out or os.path.join(out_dir, "verdict.json")
-    with open(vpath, "w") as f:
+    with open(vpath, "w", encoding="utf-8") as f:
         json.dump(verdict, f, indent=1)
     for p in verdict["pairs"]:
         print(f"  pair {p['pair']:02d} [{p['category']:7s}] ans={str(p['answer']):9s} -> {p['note']}")
