@@ -4,6 +4,7 @@ mod check;
 mod draw;
 mod parts;
 mod poses;
+mod prune;
 mod roles;
 mod skeleton;
 mod solid;
@@ -24,6 +25,7 @@ const HELP: &str = "creature-rig: creature rigs from the body's own shape.
 
     creature-rig parts MESH.glb [--json OUT.json] [--sheet OUT.png] [--res 128]
     creature-rig check RIG.glb [--json OUT.json] [--rom OUT.ron] [--sheet OUT.png] [--res 128]
+    creature-rig prune IN.glb OUT.glb [--class hero|npc|monster] [--keep-digits] [--json OUT.json] [--res 128]
     creature-rig rig   MESH.glb OUT.glb [--rom OUT.ron] [--json OUT.json] [--sheet OUT.png]
                        [--res 128] [--blend 0.6] [--turn no] [--hint PREDICTED.glb]
 
@@ -85,11 +87,16 @@ fn parse(args: &[String]) -> Result<Args> {
     let mut k = 0;
     while k < args.len() {
         if let Some(name) = args[k].strip_prefix("--") {
-            let v = args
-                .get(k + 1)
-                .ok_or_else(|| anyhow!("--{name} needs a value"))?;
-            flags.insert(name.to_string(), v.clone());
-            k += 2;
+            if name == "keep-digits" {
+                flags.insert(name.to_string(), "1".to_string());
+                k += 1;
+            } else {
+                let v = args
+                    .get(k + 1)
+                    .ok_or_else(|| anyhow!("--{name} needs a value"))?;
+                flags.insert(name.to_string(), v.clone());
+                k += 2;
+            }
         } else {
             pos.push(args[k].clone());
             k += 1;
@@ -744,6 +751,7 @@ fn main() -> ExitCode {
         match cmd.as_str() {
             "parts" => cmd_parts(&a),
             "rig" => cmd_rig(&a),
+            "prune" => prune::cmd_prune(&a),
             "check" => {
                 if !cmd_check(&a)? {
                     FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
