@@ -340,12 +340,10 @@ fn bone_lines(rig: &Rig, pos: &[V3], verts: &[V3], len: f64) -> Vec<Vec<(V3, V3)
                 .map(|&c| (pos[j], pos[c]))
                 .filter(|(a, b)| geom::norm(geom::sub(*b, *a)) > 1e-4 * len)
                 .collect();
-            if out.is_empty() {
-                if held[j].1 > 0.0 {
-                    let c = geom::scale(held[j].0, 1.0 / held[j].1);
-                    if geom::norm(geom::sub(c, pos[j])) > 1e-4 * len {
-                        out.push((pos[j], c));
-                    }
+            if out.is_empty() && held[j].1 > 0.0 {
+                let c = geom::scale(held[j].0, 1.0 / held[j].1);
+                if geom::norm(geom::sub(c, pos[j])) > 1e-4 * len {
+                    out.push((pos[j], c));
                 }
             }
             if out.is_empty() {
@@ -520,9 +518,9 @@ pub fn map_bones(truth: &Truth, route: &Rig, r2t: &[usize]) -> Mapping {
     let mut by_skin = by_line.clone();
     for &j in &route.joint_order {
         let (mut best, mut arg) = (0.0, usize::MAX);
-        for a in 0..na {
-            if share[j][a] > best {
-                best = share[j][a];
+        for (a, &s) in share[j].iter().enumerate().take(na) {
+            if s > best {
+                best = s;
                 arg = a;
             }
         }
@@ -812,9 +810,9 @@ fn best_rotation(pairs: &[(V3, V3, f64)]) -> M3 {
     }
     for _ in 0..60 {
         let mut off = 0.0;
-        for i in 0..4 {
-            for j in (i + 1)..4 {
-                off += n[i][j] * n[i][j];
+        for (i, row) in n.iter().enumerate() {
+            for &val in row.iter().skip(i + 1) {
+                off += val * val;
             }
         }
         if off < 1e-24 {
@@ -827,15 +825,16 @@ fn best_rotation(pairs: &[(V3, V3, f64)]) -> M3 {
                 }
                 let th = 0.5 * (2.0 * n[p][q]).atan2(n[q][q] - n[p][p]);
                 let (sn, cs) = th.sin_cos();
-                for k in 0..4 {
-                    let (a, b) = (n[k][p], n[k][q]);
-                    n[k][p] = cs * a - sn * b;
-                    n[k][q] = sn * a + cs * b;
+                for row in &mut n {
+                    let (a, b) = (row[p], row[q]);
+                    row[p] = cs * a - sn * b;
+                    row[q] = sn * a + cs * b;
                 }
-                for k in 0..4 {
-                    let (a, b) = (n[p][k], n[q][k]);
-                    n[p][k] = cs * a - sn * b;
-                    n[q][k] = sn * a + cs * b;
+                let (left, right) = n.split_at_mut(q);
+                for (ap, aq) in left[p].iter_mut().zip(&mut right[0]) {
+                    let (a, b) = (*ap, *aq);
+                    *ap = cs * a - sn * b;
+                    *aq = sn * a + cs * b;
                 }
                 for row in v.iter_mut() {
                     let (a, b) = (row[p], row[q]);
@@ -1110,19 +1109,19 @@ pub fn skin_error(
     let mut region_n = vec![0.0; nb];
     let mut worst = (0usize, -1.0);
     let mut worst_regions: Vec<(f64, f64)> = vec![];
-    for f in 0..nf {
+    for (f, truth_frame) in fr.truth_skin.iter().enumerate().take(nf) {
         let jw = pose(f);
         let skin = route.skin(&jw);
         let mut e: Vec<f64> = (0..nv)
-            .map(|v| geom::norm(geom::sub(skin[t2r[v]], fr.truth_skin[f][v])) / truth.len)
+            .map(|v| geom::norm(geom::sub(skin[t2r[v]], truth_frame[v])) / truth.len)
             .collect();
         let mut rs = vec![(0.0, 0.0); nb];
-        for v in 0..nv {
+        for (v, &ev) in e.iter().enumerate().take(nv) {
             let d = truth.rig.dominant[v];
             if d != usize::MAX {
-                region_sum[d] += e[v];
+                region_sum[d] += ev;
                 region_n[d] += 1.0;
-                rs[d].0 += e[v];
+                rs[d].0 += ev;
                 rs[d].1 += 1.0;
             }
         }

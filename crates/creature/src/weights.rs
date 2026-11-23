@@ -56,9 +56,9 @@ impl Fields {
         let s = &body.solid;
         let mut slot = vec![u32::MAX; s.len()];
         let mut inside = vec![];
-        for i in 0..s.len() {
-            if s.inside[i] {
-                slot[i] = inside.len() as u32;
+        for (i, (slot_i, &is_in)) in slot.iter_mut().zip(&s.inside).enumerate() {
+            if is_in {
+                *slot_i = inside.len() as u32;
                 inside.push(i);
             }
         }
@@ -146,8 +146,8 @@ pub fn skin(body: &Body, sk: &Skeleton, verts: &[V3], tris: &[[u32; 3]], blend: 
         if let Some(p) = sk.bones[b].parent {
             near[b].push(p);
             near[p].push(b);
-            for c in 0..nb {
-                if c != b && sk.bones[c].parent == Some(p) {
+            for (c, bone) in sk.bones.iter().enumerate().take(nb) {
+                if c != b && bone.parent == Some(p) {
                     near[b].push(c);
                 }
             }

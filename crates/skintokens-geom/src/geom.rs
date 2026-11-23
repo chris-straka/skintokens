@@ -277,7 +277,7 @@ impl KdTree {
     pub fn new(pts: Vec<V3>) -> Self {
         let mut idx: Vec<usize> = (0..pts.len()).collect();
         let mut nodes = vec![(0usize, 0u8); pts.len()];
-        fn build(pts: &[V3], idx: &mut [usize], out: &mut [(usize, u8)], depth: usize) {
+        fn build(pts: &[V3], idx: &mut [usize], out: &mut [(usize, u8)]) {
             if idx.is_empty() {
                 return;
             }
@@ -298,16 +298,19 @@ impl KdTree {
             out[mid] = (idx[mid], axis as u8);
             let (l, r) = idx.split_at_mut(mid);
             let (ol, or) = out.split_at_mut(mid);
-            build(pts, l, ol, depth + 1);
-            build(pts, &mut r[1..], &mut or[1..], depth + 1);
+            build(pts, l, ol);
+            build(pts, &mut r[1..], &mut or[1..]);
         }
-        build(&pts, &mut idx, &mut nodes, 0);
+        build(&pts, &mut idx, &mut nodes);
         KdTree { pts, nodes }
     }
 
     /// k nearest (distance, index), nearest first.
     pub fn knn(&self, q: V3, k: usize) -> Vec<(f64, usize)> {
-        let mut best: Vec<(f64, usize)> = Vec::with_capacity(k + 1);
+        if k == 0 || self.nodes.is_empty() {
+            return Vec::new();
+        }
+        let mut best: Vec<(f64, usize)> = Vec::with_capacity(k.min(self.nodes.len()) + 1);
         self.search(0, self.nodes.len(), q, k, &mut best);
         best.iter().map(|&(d2, i)| (d2.sqrt(), i)).collect()
     }

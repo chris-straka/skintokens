@@ -78,6 +78,7 @@ impl Mask {
         let far = (w + h) as f32;
         let mut d: Vec<f32> = self.on.iter().map(|&b| if b { 0.0 } else { far }).collect();
         const A: f32 = 1.0;
+        #[allow(clippy::approx_constant)]
         const B: f32 = 1.4142;
         for y in 0..h {
             for x in 0..w {
@@ -248,8 +249,8 @@ pub fn frame_mask(path: &Path, down: usize, cam: &Camera) -> Result<Mask> {
             best = (size, next);
         }
     }
-    for i in 0..mw * mh {
-        m.on[i] = m.on[i] && label[i] == best.1;
+    for (on, &lbl) in m.on.iter_mut().zip(&label).take(mw * mh) {
+        *on = *on && lbl == best.1;
     }
     Ok(m)
 }
@@ -406,15 +407,15 @@ impl<'a> Follower<'a> {
         }
         let rig_dist = m.distance();
         let mut a = 0.0f64;
-        for i in 0..m.on.len() {
-            if m.on[i] {
-                a += video_dist[i] as f64;
+        for (&on, &vd) in m.on.iter().zip(video_dist) {
+            if on {
+                a += vd as f64;
             }
         }
         let (mut b, mut nv) = (0.0f64, 0usize);
-        for i in 0..video.on.len() {
-            if video.on[i] {
-                b += rig_dist[i] as f64;
+        for (&on, &rd) in video.on.iter().zip(&rig_dist) {
+            if on {
+                b += rd as f64;
                 nv += 1;
             }
         }
@@ -556,6 +557,7 @@ pub struct Followed {
 
 /// The whole clip. `frames`: the video's pictures in order, `fps` their
 /// rate, `step` every how many of them is used.
+#[allow(clippy::too_many_arguments)]
 pub fn follow(
     rig: &Rig,
     cam: &Camera,

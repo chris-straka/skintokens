@@ -712,15 +712,16 @@ pub fn top4(skin: &[Vec<f32>]) -> (Vec<[u16; 4]>, Vec<[f32; 4]>) {
     let mut ws = Vec::with_capacity(skin.len());
     for row in skin {
         let mut idx: Vec<usize> = (0..row.len()).collect();
-        idx.sort_by(|&a, &b| row[b].total_cmp(&row[a]).then(a.cmp(&b)));
+        let val = |x: f32| if x.is_finite() { x } else { 0.0 };
+        idx.sort_by(|&a, &b| val(row[b]).total_cmp(&val(row[a])).then(a.cmp(&b)));
         let k = idx.len().min(4);
-        let s: f32 = idx[..k].iter().map(|&i| row[i].max(0.0)).sum();
+        let s: f32 = idx[..k].iter().map(|&i| val(row[i]).max(0.0)).sum();
         let mut j4 = [0u16; 4];
         let mut w4 = [0f32; 4];
         for t in 0..k {
             j4[t] = idx[t] as u16;
             w4[t] = if s > 0.0 {
-                row[idx[t]].max(0.0) / s
+                val(row[idx[t]]).max(0.0) / s
             } else if t == 0 {
                 1.0
             } else {
@@ -728,9 +729,9 @@ pub fn top4(skin: &[Vec<f32>]) -> (Vec<[u16; 4]>, Vec<[f32; 4]>) {
             };
         }
         // Blender export: drop <= 1e-4 (the top one always survives here), renormalize
-        for t in 1..4 {
-            if w4[t] <= 1e-4 {
-                w4[t] = 0.0;
+        for w in &mut w4[1..] {
+            if *w <= 1e-4 {
+                *w = 0.0;
             }
         }
         let s2: f32 = w4.iter().sum();
@@ -990,5 +991,19 @@ mod tests {
         let (j, w) = top4(&[vec![0.1, 0.5, 0.0, 0.2, 0.05, 0.3]]);
         assert_eq!(j[0], [1, 5, 3, 0]);
         assert!((w[0].iter().sum::<f32>() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn top4_ignores_non_finite_weights() {
+        let (j, w) = top4(&[vec![0.5, 0.25, f32::NAN, 0.25, 0.1]]);
+        assert!(
+            j[0].contains(&4),
+            "NaN slot must not evict joint 4: {:?}",
+            j[0]
+        );
+        assert!((w[0].iter().sum::<f32>() - 1.0).abs() < 1e-6);
+        let (j2, w2) = top4(&[vec![f32::NAN, 0.0]]);
+        assert_eq!(j2[0], [0, 0, 0, 0]);
+        assert_eq!(w2[0], [1.0, 0.0, 0.0, 0.0]);
     }
 }

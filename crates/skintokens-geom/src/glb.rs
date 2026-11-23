@@ -42,15 +42,19 @@ impl Glb {
         while off + 8 <= total {
             let len = u32at(off)? as usize;
             let typ = u32at(off + 4)?;
+            let start = off + 8;
+            let end = start
+                .checked_add(len)
+                .ok_or_else(|| anyhow!("chunk length overflow"))?;
             let data = b
-                .get(off + 8..off + 8 + len)
+                .get(start..end)
                 .ok_or_else(|| anyhow!("truncated chunk"))?;
             match typ {
                 CHUNK_JSON => js = Some(serde_json::from_slice::<Value>(data)?),
                 CHUNK_BIN => bin = data.to_vec(),
                 _ => {}
             }
-            off += 8 + len;
+            off = end;
         }
         let json = js.ok_or_else(|| anyhow!("no JSON chunk"))?;
         let g = Glb { json, bin };
@@ -60,11 +64,11 @@ impl Glb {
 
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         let mut j = serde_json::to_vec(&self.json)?;
-        while j.len() % 4 != 0 {
+        while !j.len().is_multiple_of(4) {
             j.push(b' ');
         }
         let mut bin = self.bin.clone();
-        while bin.len() % 4 != 0 {
+        while !bin.len().is_multiple_of(4) {
             bin.push(0);
         }
         let mut out = Vec::with_capacity(28 + j.len() + bin.len());
@@ -282,7 +286,7 @@ impl Glb {
         normalized: bool,
     ) -> Result<usize> {
         self.check_mut_schema()?;
-        while self.bin.len() % 4 != 0 {
+        while !self.bin.len().is_multiple_of(4) {
             self.bin.push(0);
         }
         let offset = self.bin.len();
@@ -393,7 +397,7 @@ impl Glb {
 
 fn glb_bytes(j: &[u8], bin: &[u8]) -> Vec<u8> {
     let mut b = bin.to_vec();
-    while b.len() % 4 != 0 {
+    while !b.len().is_multiple_of(4) {
         b.push(0);
     }
     let total = 12 + 8 + j.len() + if b.is_empty() { 0 } else { 8 + b.len() };
@@ -543,7 +547,8 @@ impl Glb {
                     Some(i) => i.into_u32().collect(),
                     None => (0..positions.len() as u32).collect(),
                 };
-                let triangles = idx.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+                let (tri_chunks, _) = idx.as_chunks::<3>();
+                let triangles = tri_chunks.to_vec();
                 let joints = r.read_joints(0).map(|j| j.into_u16().collect());
                 let weights = r.read_weights(0).map(|w| w.into_f32().collect());
                 out.push(Part {

@@ -356,7 +356,7 @@ fn rigid(a: &Args) -> Result<()> {
             if !slots.is_empty() {
                 let mut js = vec![[0u16; 4]; n];
                 let ws = vec![[1.0f32, 0.0, 0.0, 0.0]; n];
-                for v in 0..n {
+                for (v, js_row) in js.iter_mut().enumerate().take(n) {
                     let p = truth.rest_pos[v0 + v];
                     let mut best = (f64::INFINITY, 0usize);
                     for (slot, &j) in slots.iter().enumerate() {
@@ -373,7 +373,7 @@ fn rigid(a: &Args) -> Result<()> {
                             }
                         }
                     }
-                    js[v][0] = best.1 as u16;
+                    js_row[0] = best.1 as u16;
                 }
                 let (ja, wa) = g.push_skin_attrs(&js, &ws)?;
                 let attrs = g
@@ -529,7 +529,7 @@ fn plant(a: &Args) -> Result<()> {
                     let reassign_root = if touches_keep_root {
                         let idx = root_seen;
                         root_seen += 1;
-                        idx % 4 != 0
+                        !idx.is_multiple_of(4)
                     } else {
                         false
                     };

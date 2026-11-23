@@ -10,6 +10,8 @@ use skintokens_geom::geom::{self, M4, V3};
 use skintokens_geom::glb::Glb;
 
 pub type M3 = [V3; 3];
+type SkinSet = (Vec<[u16; 4]>, Vec<[f32; 4]>);
+type ClipData = (String, Vec<f64>, Vec<Vec<M4>>);
 
 #[derive(Clone, Copy, Debug)]
 pub struct Trs {
@@ -238,10 +240,12 @@ impl Rig {
                     None => (0..pos.len() as u32).collect(),
                 };
                 tris.extend(
-                    idx.chunks_exact(3)
+                    idx.as_chunks::<3>()
+                        .0
+                        .iter()
                         .map(|c| [c[0] + base, c[1] + base, c[2] + base]),
                 );
-                let mut sets: Vec<(Vec<[u16; 4]>, Vec<[f32; 4]>)> = vec![];
+                let mut sets: Vec<SkinSet> = vec![];
                 if !slot_joint.is_empty() {
                     for set in 0..4 {
                         match (r.read_joints(set), r.read_weights(set)) {
@@ -363,7 +367,7 @@ impl Rig {
                 let interp = ch.sampler().interpolation();
                 if interp == gltf::animation::Interpolation::CubicSpline {
                     // (in-tangent, value, out-tangent) per key: the values alone, joined by straight lines
-                    values = values.chunks_exact(3).map(|c| c[1]).collect();
+                    values = values.as_chunks::<3>().0.iter().map(|c| c[1]).collect();
                 }
                 if times.is_empty() || values.len() != times.len() {
                     continue;
@@ -488,7 +492,7 @@ impl Rig {
     /// frame. Each joint gets a rotation track; a joint whose place under
     /// its parent changes gets a translation track too. Nodes above the
     /// joints stay as they are.
-    pub fn with_clips(&self, clips: &[(String, Vec<f64>, Vec<Vec<M4>>)]) -> Result<Glb> {
+    pub fn with_clips(&self, clips: &[ClipData]) -> Result<Glb> {
         let mut g = Glb {
             json: self.glb.json.clone(),
             bin: self.glb.bin.clone(),

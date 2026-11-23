@@ -514,9 +514,9 @@ pub fn check(rig: &Rig) -> Value {
             fail(
                 "B_NO_LEG",
                 format!(
-                    "the body stands on a foot on its {} side ({} of its length from the back) and has no limb joint near it (held by {})",
+                    "the body stands on a foot on its {} side ({:.0}% of its length from the back) and has no limb joint near it (held by {})",
                     if mid > 0.0 { "+x" } else { "-x" },
-                    format!("{:.0}%", 100.0 * (z - lo[2]) / size[2].max(1e-9)),
+                    100.0 * (z - lo[2]) / size[2].max(1e-9),
                     holder
                 ),
             );

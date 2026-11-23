@@ -303,7 +303,7 @@ impl Body {
 
     /// Walks the tree from the seed and cuts it into parts at its forks.
     fn branches(&mut self) {
-        let node_of = std::mem::replace(&mut self.part_of, vec![]);
+        let node_of = std::mem::take(&mut self.part_of);
         let mut part_of_node = vec![u32::MAX; self.nodes.len()];
         let roots: Vec<usize> = (0..self.nodes.len())
             .filter(|&i| self.nodes[i].parent.is_none())

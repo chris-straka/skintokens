@@ -217,12 +217,11 @@ fn a_hint_moves_the_knees() {
         .filter(|b| b.limb == Some(leg))
         .map(|b| b.head[1])
         .collect();
-    for want in [at(0.3)[1]] {
-        assert!(
-            heads.iter().any(|h| (h - want).abs() < 0.03),
-            "no joint at height {want}: {heads:?}"
-        );
-    }
+    let want = at(0.3)[1];
+    assert!(
+        heads.iter().any(|h| (h - want).abs() < 0.03),
+        "no joint at height {want}: {heads:?}"
+    );
     // the right leg gets the same joints as the left
     let right = an
         .limbs

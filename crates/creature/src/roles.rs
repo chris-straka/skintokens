@@ -553,9 +553,9 @@ impl Anatomy {
             let best = (0..limbs.len())
                 .filter(|&i| limbs[i].role == Role::Arm && limbs[i].side == side)
                 .max_by_key(|&i| vol(&limbs[i]));
-            for i in 0..limbs.len() {
-                if limbs[i].role == Role::Arm && limbs[i].side == side && Some(i) != best {
-                    limbs[i].role = Role::Extra;
+            for (i, limb) in limbs.iter_mut().enumerate() {
+                if limb.role == Role::Arm && limb.side == side && Some(i) != best {
+                    limb.role = Role::Extra;
                 }
             }
         }
@@ -785,8 +785,7 @@ fn spine_line(
         attach(h)
     } else if let Some(a) = limbs
         .iter()
-        .filter(|l| l.role == Role::Arm || (l.role == Role::Leg && l.front))
-        .next()
+        .find(|l| l.role == Role::Arm || (l.role == Role::Leg && l.front))
     {
         attach(a)
     } else {
