@@ -4,5 +4,6 @@ pub mod geom;
 pub mod glb;
 pub mod mesh;
 pub mod naming;
+pub mod prune;
 pub mod rig_edit;
 pub mod rng;
