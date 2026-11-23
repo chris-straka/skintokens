@@ -108,11 +108,17 @@ pub fn cmd_prune(a: &Args) -> Result<()> {
         .map(|s| s.parse())
         .transpose()?
         .unwrap_or(128);
+    if res == 0 || res > 1024 {
+        anyhow::bail!("--res must be in 1..=1024 (got {res})");
+    }
     let klass = a
         .flags
         .get("class")
         .map(|s| s.trim().to_ascii_lowercase())
         .unwrap_or_else(|| "monster".to_string());
+    if !["hero", "npc", "monster"].contains(&klass.as_str()) {
+        anyhow::bail!("--class must be hero, npc, or monster (got {klass})");
+    }
     let keep_digits = a.flags.contains_key("keep-digits") || klass == "hero";
 
     let mut g = Glb::read(&input)?;
@@ -132,6 +138,9 @@ pub fn cmd_prune(a: &Args) -> Result<()> {
     }
     if tris.is_empty() {
         anyhow::bail!("{} has no triangles", input.display());
+    }
+    if !verts.iter().all(|p| p.iter().all(|x| x.is_finite())) {
+        anyhow::bail!("{} has non-finite vertex coordinates", input.display());
     }
 
     let body = parts::Body::build(&verts, &tris, res);

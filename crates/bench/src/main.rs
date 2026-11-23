@@ -118,19 +118,35 @@ struct Args {
     flags: HashMap<String, String>,
 }
 
-fn parse(args: &[String]) -> Result<Args> {
+fn parse_for(args: &[String], with_value: &[&str]) -> Result<Args> {
     let mut pos = vec![];
     let mut flags = HashMap::new();
     let mut k = 0;
     while k < args.len() {
-        if let Some(name) = args[k].strip_prefix("--") {
-            let v = args
-                .get(k + 1)
-                .ok_or_else(|| anyhow!("--{name} needs a value"))?;
-            flags.insert(name.to_string(), v.clone());
-            k += 2;
+        let arg = &args[k];
+        if let Some(name) = arg.strip_prefix("--") {
+            let (key, inline) = match name.split_once('=') {
+                Some((k0, v0)) => (k0, Some(v0.to_string())),
+                None => (name, None),
+            };
+            if !with_value.contains(&key) {
+                bail!("unknown option --{key}");
+            }
+            let v = match inline {
+                Some(v0) => v0,
+                None => {
+                    k += 1;
+                    args.get(k)
+                        .cloned()
+                        .ok_or_else(|| anyhow!("--{key} needs a value"))?
+                }
+            };
+            flags.insert(key.to_string(), v);
+            k += 1;
+        } else if arg.starts_with('-') && arg.len() > 1 {
+            bail!("unknown option {arg}");
         } else {
-            pos.push(args[k].clone());
+            pos.push(arg.clone());
             k += 1;
         }
     }
@@ -613,9 +629,9 @@ fn plant(a: &Args) -> Result<()> {
         }
     }
     if mode == "mirror" {
-        cand.sort_by(|x, y| x.0.total_cmp(&y.0));
+        cand.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)).then(x.2.cmp(&y.2)));
     } else {
-        cand.sort_by(|x, y| y.0.total_cmp(&x.0));
+        cand.sort_by(|x, y| y.0.total_cmp(&x.0).then(x.1.cmp(&y.1)).then(x.2.cmp(&y.2)));
     }
     let mut swap: Vec<usize> = (0..rig.joints.len()).collect();
     let mut paired = vec![false; rig.joints.len()];
@@ -928,6 +944,9 @@ fn anatomy_cmd(a: &Args) -> Result<()> {
         bail!("anatomy RIG.glb");
     }
     let rig = Rig::read(Path::new(&a.pos[0]))?;
+    if rig.joints.is_empty() {
+        bail!("{} has no skin", a.pos[0]);
+    }
     let mut report = anatomy::check(&rig);
     report["rig"] = json!(a.pos[0]);
     if let Some(p) = a.flags.get("json") {
@@ -972,15 +991,35 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     let run = || -> Result<()> {
-        let a = parse(&args[1..])?;
         match args[0].as_str() {
-            "score" => score(&a),
-            "rigid" => rigid(&a),
-            "plant" => plant(&a),
-            "info" => info(&a),
-            "follow" => follow_cmd(&a),
-            "anatomy" => anatomy_cmd(&a),
-            "joints" => joints_cmd(&a),
+            "score" => score(&parse_for(
+                &args[1..],
+                &["json", "clips", "max-frames", "sweeps", "roles", "label"],
+            )?),
+            "rigid" => rigid(&parse_for(&args[1..], &[])?),
+            "plant" => plant(&parse_for(&args[1..], &["mode", "json"])?),
+            "info" => info(&parse_for(&args[1..], &["roles"])?),
+            "follow" => follow_cmd(&parse_for(
+                &args[1..],
+                &[
+                    "camera",
+                    "frames",
+                    "out",
+                    "json",
+                    "name",
+                    "fps",
+                    "step",
+                    "down",
+                    "steady",
+                    "overlays",
+                    "camera-out",
+                ],
+            )?),
+            "anatomy" => anatomy_cmd(&parse_for(&args[1..], &["json"])?),
+            "joints" => joints_cmd(&parse_for(
+                &args[1..],
+                &["clip", "other-clip", "rest", "json"],
+            )?),
             other => bail!("unknown command {other}\n\n{HELP}"),
         }
     };

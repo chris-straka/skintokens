@@ -126,19 +126,41 @@ impl Solid {
 
     /// `res` cells along the longest side, two cells of margin around.
     pub fn build(verts: &[V3], tris: &[[u32; 3]], res: usize) -> Solid {
+        let res = res.max(1);
         let mut lo = [f64::INFINITY; 3];
         let mut hi = [f64::NEG_INFINITY; 3];
+        let mut any = false;
         for v in verts {
+            if !v.iter().all(|x| x.is_finite()) {
+                continue;
+            }
+            any = true;
             for a in 0..3 {
                 lo[a] = lo[a].min(v[a]);
                 hi[a] = hi[a].max(v[a]);
             }
         }
+        if !any {
+            lo = [0.0; 3];
+            hi = [0.0; 3];
+        }
         let ext = geom::sub(hi, lo);
-        let cell = (ext[0].max(ext[1]).max(ext[2]) / res as f64).max(1e-9);
+        let max_ext = ext[0].max(ext[1]).max(ext[2]);
+        let cell = if max_ext.is_finite() {
+            (max_ext / res as f64).max(1e-9)
+        } else {
+            1.0
+        };
         let pad = 2.0;
         let origin = [0, 1, 2].map(|a| lo[a] - pad * cell);
-        let dims = [0, 1, 2].map(|a| (ext[a] / cell).ceil() as usize + 2 * pad as usize + 1);
+        let dims = [0, 1, 2].map(|a| {
+            let span = (ext[a] / cell).ceil();
+            if span.is_finite() && span >= 0.0 {
+                span as usize + 2 * pad as usize + 1
+            } else {
+                2 * pad as usize + 1
+            }
+        });
         let mut s = Solid {
             dims,
             origin,
@@ -149,11 +171,21 @@ impl Solid {
         let n = s.len();
         let mut surface = vec![false; n];
         for t in tris {
+            if t.iter().any(|&i| i as usize >= verts.len()) {
+                continue;
+            }
             let [a, b, c] = t.map(|i| verts[i as usize]);
+            if !a.iter().chain(&b).chain(&c).all(|x| x.is_finite()) {
+                continue;
+            }
             let longest = geom::norm(geom::sub(b, a))
                 .max(geom::norm(geom::sub(c, a)))
                 .max(geom::norm(geom::sub(c, b)));
-            let k = ((longest / (0.5 * cell)).ceil() as usize).max(1);
+            let k = if longest.is_finite() {
+                ((longest / (0.5 * cell)).ceil() as usize).clamp(1, res.saturating_mul(8).max(8))
+            } else {
+                1
+            };
             for i in 0..=k {
                 for j in 0..=(k - i) {
                     let (u, v) = (i as f64 / k as f64, j as f64 / k as f64);
@@ -175,6 +207,10 @@ impl Solid {
         }
         s.inside = (0..n).map(|i| votes[i] >= 2 || surface[i]).collect();
         s.keep_body();
+        if !s.inside.iter().any(|&x| x) && n > 0 {
+            let mid = s.idx([dims[0] / 2, dims[1] / 2, dims[2] / 2]);
+            s.inside[mid] = true;
+        }
         s.depth = s.chamfer();
         s
     }
@@ -190,7 +226,13 @@ impl Solid {
         // exactly along mesh edges
         let (ju, jv) = (0.5 + 1.3e-4, 0.5 - 0.7e-4);
         for t in tris {
+            if t.iter().any(|&i| i as usize >= verts.len()) {
+                continue;
+            }
             let p = t.map(|i| verts[i as usize]);
+            if !p.iter().flatten().all(|x| x.is_finite()) {
+                continue;
+            }
             let n = geom::cross(geom::sub(p[1], p[0]), geom::sub(p[2], p[0]));
             if n[axis].abs() < 1e-14 {
                 continue;

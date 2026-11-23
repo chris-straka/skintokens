@@ -79,7 +79,7 @@ pub struct Align {
 
 pub fn align(truth_rest: &[V3], route_rest: &[V3]) -> Align {
     let tree = KdTree::new(route_rest.to_vec());
-    let len_r = longest(route_rest);
+    let len_r = longest(route_rest).max(1e-9);
     let (rlo, rhi) = bbox(route_rest);
     let rc = geom::scale(geom::add(rlo, rhi), 0.5);
     let mut best: Option<Align> = None;
@@ -375,7 +375,7 @@ impl<'a> Truth<'a> {
             .map(|&n| geom::mul(&al.m, &rig.rest_world[n]))
             .collect();
         let joint_pos: Vec<V3> = rest_world.iter().map(geom::translation).collect();
-        let len = longest(&rest_pos);
+        let len = longest(&rest_pos).max(1e-9);
         let mut roles: Vec<Role> = rig.names.iter().map(|n| role_of(n)).collect();
         // a shoulder that carries a wing is the wing's first bone
         for j in 0..roles.len() {

@@ -60,10 +60,10 @@ pub fn check(rig: &Rig) -> Value {
         }
     }
     let size = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
-    let len = size.iter().cloned().fold(0.0, f64::max);
+    let len = size.iter().cloned().fold(0.0, f64::max).max(1e-9);
     let mut xs: Vec<f64> = rig.rest_pos.iter().map(|p| p[0]).collect();
     xs.sort_by(|a, b| a.total_cmp(b));
-    let x0 = xs[xs.len() / 2];
+    let x0 = xs.get(xs.len() / 2).copied().unwrap_or(0.0);
     let (mut lxlo, mut lxhi) = (f64::INFINITY, f64::NEG_INFINITY);
     for p in rig
         .rest_pos
@@ -237,7 +237,7 @@ pub fn check(rig: &Rig) -> Value {
             }
         }
     }
-    cand.sort_by(|x, y| x.0.total_cmp(&y.0));
+    cand.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)).then(x.2.cmp(&y.2)));
     for (d, a, b) in cand {
         // a body in a lopsided pose holds its shoulders unevenly
         if d > (if lopsided_body { 0.25 } else { 0.15 }) * len

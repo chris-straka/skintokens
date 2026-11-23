@@ -71,38 +71,81 @@ fn load_mesh(path: &Path) -> Result<(Vec<V3>, Vec<[u32; 3]>)> {
     if tris.is_empty() {
         bail!("{} has no triangles", path.display());
     }
+    if !verts.iter().all(|p| p.iter().all(|x| x.is_finite())) {
+        bail!("{} has non-finite vertex coordinates", path.display());
+    }
     Ok((verts, tris))
 }
 
 static FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-struct Args {
-    pos: Vec<String>,
-    flags: std::collections::HashMap<String, String>,
+pub(crate) struct Args {
+    pub(crate) pos: Vec<String>,
+    pub(crate) flags: std::collections::HashMap<String, String>,
 }
 
-fn parse(args: &[String]) -> Result<Args> {
+fn parse_for(args: &[String], with_value: &[&str], switches: &[&str]) -> Result<Args> {
     let mut pos = vec![];
     let mut flags = std::collections::HashMap::new();
     let mut k = 0;
     while k < args.len() {
-        if let Some(name) = args[k].strip_prefix("--") {
-            if name == "keep-digits" {
-                flags.insert(name.to_string(), "1".to_string());
+        let arg = &args[k];
+        if let Some(name) = arg.strip_prefix("--") {
+            let (key, inline) = match name.split_once('=') {
+                Some((k0, v0)) => (k0, Some(v0.to_string())),
+                None => (name, None),
+            };
+            if switches.contains(&key) {
+                if inline.is_some() {
+                    bail!("--{key} does not take a value");
+                }
+                flags.insert(key.to_string(), "1".to_string());
+                k += 1;
+            } else if with_value.contains(&key) {
+                let v = match inline {
+                    Some(v0) => v0,
+                    None => {
+                        k += 1;
+                        args.get(k)
+                            .cloned()
+                            .ok_or_else(|| anyhow!("--{key} needs a value"))?
+                    }
+                };
+                flags.insert(key.to_string(), v);
                 k += 1;
             } else {
-                let v = args
-                    .get(k + 1)
-                    .ok_or_else(|| anyhow!("--{name} needs a value"))?;
-                flags.insert(name.to_string(), v.clone());
-                k += 2;
+                bail!("unknown option --{key}");
             }
+        } else if arg.starts_with('-') && arg.len() > 1 {
+            bail!("unknown option {arg}");
         } else {
-            pos.push(args[k].clone());
+            pos.push(arg.clone());
             k += 1;
         }
     }
     Ok(Args { pos, flags })
+}
+
+fn parse_res(a: &Args) -> Result<usize> {
+    let res: usize = a
+        .flags
+        .get("res")
+        .map(|s| s.parse())
+        .transpose()?
+        .unwrap_or(128);
+    if res == 0 || res > 1024 {
+        bail!("--res must be in 1..=1024 (got {res})");
+    }
+    Ok(res)
+}
+
+fn parse_yes_no(a: &Args, name: &str, default: bool) -> Result<bool> {
+    match a.flags.get(name).map(|s| s.as_str()) {
+        None => Ok(default),
+        Some("yes") => Ok(true),
+        Some("no") => Ok(false),
+        Some(other) => bail!("--{name} must be yes or no (got {other})"),
+    }
 }
 
 fn r3(p: V3) -> [f64; 3] {
@@ -115,15 +158,12 @@ fn cmd_parts(a: &Args) -> Result<()> {
             .first()
             .ok_or_else(|| anyhow!("parts needs MESH.glb"))?,
     );
-    let res: usize = a
-        .flags
-        .get("res")
-        .map(|s| s.parse())
-        .transpose()?
-        .unwrap_or(128);
+    let res = parse_res(a)?;
+    let may_turn = parse_yes_no(a, "turn", true)?;
+    let finer = parse_yes_no(a, "finer", true)?;
     let (mut verts, tris) = load_mesh(&input)?;
     // read about the body's own mirror plane, as `rig` does
-    if a.flags.get("turn").map(|s| s.as_str()) != Some("no") {
+    if may_turn {
         if let Some((yaw, shift, _)) = mirror_turn(&verts) {
             for v in verts.iter_mut() {
                 *v = symmetry::turn(*v, yaw, shift);
@@ -131,12 +171,7 @@ fn cmd_parts(a: &Args) -> Result<()> {
             println!("turned {yaw:.0} degrees onto its own mirror plane");
         }
     }
-    let (body, _, res) = read_body(
-        &verts,
-        &tris,
-        res,
-        a.flags.get("finer").map(|s| s.as_str()) != Some("no"),
-    );
+    let (body, _, res) = read_body(&verts, &tris, res, finer);
     let doc = json!({
         "format": "creature-parts/1",
         "grid": res,
@@ -241,19 +276,10 @@ fn cmd_check(a: &Args) -> Result<bool> {
             .first()
             .ok_or_else(|| anyhow!("check needs RIG.glb"))?,
     );
-    let res: usize = a
-        .flags
-        .get("res")
-        .map(|s| s.parse())
-        .transpose()?
-        .unwrap_or(128);
+    let res = parse_res(a)?;
+    let finer = parse_yes_no(a, "finer", true)?;
     let (verts, tris) = load_mesh(&input)?;
-    let (body, an, _) = read_body(
-        &verts,
-        &tris,
-        res,
-        a.flags.get("finer").map(|s| s.as_str()) != Some("no"),
-    );
+    let (body, an, _) = read_body(&verts, &tris, res, finer);
     let glb = Glb::read(&input)?;
     let bones = check::read_rig(&glb)?;
     let mut v = check::check(&body, &an, bones);
@@ -406,6 +432,9 @@ fn feet_on_the_ground(verts: &[V3]) -> usize {
         }
     }
     let size = (0..3).map(|a| hi[a] - lo[a]).fold(0.0, f64::max);
+    if !size.is_finite() || size <= 1e-9 {
+        return 0;
+    }
     let height = hi[1] - lo[1];
     let (mut lxlo, mut lxhi) = (f64::INFINITY, f64::NEG_INFINITY);
     for p in verts.iter().filter(|p| p[1] - lo[1] <= 0.40 * height) {
@@ -532,18 +561,18 @@ fn cmd_rig(a: &Args) -> Result<()> {
             .get(1)
             .ok_or_else(|| anyhow!("rig needs MESH.glb OUT.glb"))?,
     );
-    let res: usize = a
-        .flags
-        .get("res")
-        .map(|s| s.parse())
-        .transpose()?
-        .unwrap_or(128);
+    let res = parse_res(a)?;
     let blend: f64 = a
         .flags
         .get("blend")
         .map(|s| s.parse())
         .transpose()?
         .unwrap_or(weights::BLEND);
+    if !blend.is_finite() || blend <= 0.0 {
+        bail!("--blend must be a finite positive number (got {blend})");
+    }
+    let may_turn = parse_yes_no(a, "turn", true)?;
+    let finer = parse_yes_no(a, "finer", true)?;
     let src = Glb::read(&input)?;
     let mut g = Glb {
         json: src.json.clone(),
@@ -562,10 +591,15 @@ fn cmd_rig(a: &Args) -> Result<()> {
                     .map(|t| [t[0] + base, t[1] + base, t[2] + base]),
             );
         }
+        if tris.is_empty() {
+            bail!("{} has no triangles", input.display());
+        }
+        if !verts.iter().all(|p| p.iter().all(|x| x.is_finite())) {
+            bail!("{} has non-finite vertex coordinates", input.display());
+        }
         Ok((verts, tris))
     };
     let (mut verts, mut tris) = read(&g)?;
-    let may_turn = a.flags.get("turn").map(|s| s.as_str()) != Some("no");
     // Left and right are read about x = 0. A body whose own mirror plane
     // is somewhere else (the clean step could not tell which way it
     // faces) is first turned onto it.
@@ -580,7 +614,6 @@ fn cmd_rig(a: &Args) -> Result<()> {
                 "off_its_mirror_image": (m.score * 1e4).round() / 1e4, "as_given": (m.score_as_is * 1e4).round() / 1e4});
         }
     }
-    let finer = a.flags.get("finer").map(|s| s.as_str()) != Some("no");
     let (mut body, mut an, mut res) = read_body(&verts, &tris, res, finer);
     // a rig faces +Z: a body left facing -Z is turned round
     let turned = an.forward < 0.0 && may_turn;
@@ -747,12 +780,26 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     };
     let run = || -> Result<()> {
-        let a = parse(&args[1..])?;
         match cmd.as_str() {
-            "parts" => cmd_parts(&a),
-            "rig" => cmd_rig(&a),
-            "prune" => prune::cmd_prune(&a),
+            "parts" => cmd_parts(&parse_for(
+                &args[1..],
+                &["json", "sheet", "res", "turn", "finer"],
+                &[],
+            )?),
+            "rig" => cmd_rig(&parse_for(
+                &args[1..],
+                &[
+                    "rom", "json", "sheet", "res", "blend", "turn", "finer", "hint",
+                ],
+                &[],
+            )?),
+            "prune" => prune::cmd_prune(&parse_for(
+                &args[1..],
+                &["class", "json", "res"],
+                &["keep-digits"],
+            )?),
             "check" => {
+                let a = parse_for(&args[1..], &["json", "rom", "sheet", "res", "finer"], &[])?;
                 if !cmd_check(&a)? {
                     FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
                 }

@@ -27,17 +27,30 @@ pub fn turn(p: V3, yaw_deg: f64, offset: f64) -> V3 {
 }
 
 pub fn mirror_plane(verts: &[V3]) -> Mirror {
+    let finite: Vec<V3> = verts
+        .iter()
+        .copied()
+        .filter(|p| p.iter().all(|x| x.is_finite()))
+        .collect();
+    if finite.is_empty() {
+        return Mirror {
+            yaw_deg: 0.0,
+            offset: 0.0,
+            score: 0.0,
+            score_as_is: 0.0,
+        };
+    }
     let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
-    for p in verts {
+    for p in &finite {
         for a in 0..3 {
             lo[a] = lo[a].min(p[a]);
             hi[a] = hi[a].max(p[a]);
         }
     }
     let size = (0..3).map(|a| hi[a] - lo[a]).fold(0.0, f64::max).max(1e-9);
-    let tree = KdTree::new(verts.to_vec());
-    let step = (verts.len() / 1200).max(1);
-    let sample: Vec<V3> = verts.iter().step_by(step).copied().collect();
+    let tree = KdTree::new(finite.clone());
+    let step = (finite.len() / 1200).max(1);
+    let sample: Vec<V3> = finite.iter().step_by(step).copied().collect();
     let score = |yaw: f64, off: f64| -> f64 {
         let (s, c) = yaw.to_radians().sin_cos();
         let n = [c, 0.0, s];
@@ -45,7 +58,9 @@ pub fn mirror_plane(verts: &[V3]) -> Mirror {
         for p in &sample {
             let d = geom::dot(*p, n) - off;
             let q = geom::sub(*p, geom::scale(n, 2.0 * d));
-            sum += tree.knn(q, 1)[0].0;
+            if let Some(&(kd, _)) = tree.knn(q, 1).first() {
+                sum += kd;
+            }
         }
         sum / sample.len() as f64 / size
     };

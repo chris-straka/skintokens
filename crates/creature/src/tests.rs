@@ -350,3 +350,26 @@ fn spread_wings_do_not_swallow_narrow_legs() {
         an.limbs.iter().map(|l| &l.name).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn fields_at_handles_nan_query_without_nan_weights() {
+    let (v, f) = box_dog();
+    let body = Body::build(&v, &f, 48);
+    let an = Anatomy::read(&body);
+    let sk = Skeleton::fit(&body, &an);
+    let fields = weights::Fields::build(&body, &sk);
+    let mut out = vec![0.0f32; sk.bones.len()];
+    fields.at(&body, [f64::NAN, 0.5, 0.0], &mut out);
+    assert!(
+        out.iter().all(|x| !x.is_nan()),
+        "Fields::at must not emit NaN for non-finite coordinates: {out:?}"
+    );
+}
+
+#[test]
+fn solid_build_with_zero_res_does_not_divide_by_zero() {
+    let (v, f) = box_dog();
+    let s = crate::solid::Solid::build(&v, &f, 0);
+    assert!(s.cell.is_finite() && s.cell > 0.0);
+    assert!(!s.inside.is_empty());
+}

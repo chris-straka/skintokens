@@ -292,7 +292,7 @@ impl Skeleton {
         };
         // --- hips and spine
         let ls = roles::length(&an.spine);
-        let n_spine = ((ls / (SPINE_BONE * body.size)).round() as usize).clamp(1, 4);
+        let n_spine = ((ls / (SPINE_BONE * body.size.max(1e-9))).round() as usize).clamp(1, 4);
         let step = ls / (n_spine + 1) as f64;
         for k in 0..=n_spine {
             let head = roles::at(&an.spine, &an.spine_radius, k as f64 * step).0;

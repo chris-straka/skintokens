@@ -87,6 +87,10 @@ impl Fields {
     /// Each bone's distance (cells) at point `p`: blended between the
     /// inside cells around it, so it changes smoothly across cell borders.
     pub fn at(&self, body: &Body, p: V3, out: &mut [f32]) {
+        if !p.iter().all(|x| x.is_finite()) {
+            out.iter_mut().for_each(|o| *o = f32::INFINITY);
+            return;
+        }
         let s = &body.solid;
         let g = [0, 1, 2].map(|a| (p[a] - s.origin[a]) / s.cell - 0.5);
         let base = g.map(|x| x.floor());
@@ -107,7 +111,7 @@ impl Fields {
                 let f = g[a] - base[a];
                 w *= if hi == 1 { f } else { 1.0 - f };
             }
-            if !ok || w <= 1e-6 {
+            if !ok || !w.is_finite() || w <= 1e-6 {
                 continue;
             }
             let sl = self.slot[s.idx(c)];
@@ -153,7 +157,7 @@ pub fn skin(body: &Body, sk: &Skeleton, verts: &[V3], tris: &[[u32; 3]], blend: 
             }
         }
     }
-    let cell = body.solid.cell;
+    let cell = body.solid.cell.max(1e-9);
     let mut w: Vec<Vec<(u16, f32)>> = Vec::with_capacity(reps.len());
     let mut d = vec![0f32; nb];
     for &p in &reps {
@@ -167,11 +171,15 @@ pub fn skin(body: &Body, sk: &Skeleton, verts: &[V3], tris: &[[u32; 3]], blend: 
                 *o = (crate::skeleton::seg_dist(p, sk.bones[b].head, sk.bones[b].tail) / cell)
                     as f32;
             }
-            let a = (0..nb).min_by(|&x, &y| d[x].total_cmp(&d[y])).unwrap_or(0);
+            let a = (0..nb)
+                .min_by(|&x, &y| d[x].total_cmp(&d[y]).then(x.cmp(&y)))
+                .unwrap_or(0);
             w.push(vec![(a as u16, 1.0)]);
             continue;
         }
-        let a = (0..nb).min_by(|&x, &y| d[x].total_cmp(&d[y])).unwrap_or(0);
+        let a = (0..nb)
+            .min_by(|&x, &y| d[x].total_cmp(&d[y]).then(x.cmp(&y)))
+            .unwrap_or(0);
         let mut row: Vec<(u16, f32)> = vec![(a as u16, 1.0)];
         if d[a].is_finite() {
             for &b in &near[a] {
