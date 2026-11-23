@@ -181,11 +181,18 @@ pub fn from_trs(t: V3, q: [f64; 4], s: V3) -> M4 {
 
 /// Rotation part (orthonormal columns) -> quaternion (x, y, z, w).
 pub fn quat_from_cols(c: [V3; 3]) -> [f64; 4] {
+    if !c.iter().flatten().all(|x| x.is_finite()) {
+        return [0.0, 0.0, 0.0, 1.0];
+    }
+    let col_energy: f64 = c.iter().map(|v| dot(*v, *v)).sum();
+    if col_energy < 1e-24 {
+        return [0.0, 0.0, 0.0, 1.0];
+    }
     // m[row][col]
     let m = |r: usize, k: usize| c[k][r];
     let tr = m(0, 0) + m(1, 1) + m(2, 2);
     let q = if tr > 0.0 {
-        let s = (tr + 1.0).sqrt() * 2.0;
+        let s = (tr + 1.0).max(1e-30).sqrt() * 2.0;
         [
             (m(2, 1) - m(1, 2)) / s,
             (m(0, 2) - m(2, 0)) / s,
@@ -193,7 +200,7 @@ pub fn quat_from_cols(c: [V3; 3]) -> [f64; 4] {
             0.25 * s,
         ]
     } else if m(0, 0) > m(1, 1) && m(0, 0) > m(2, 2) {
-        let s = (1.0 + m(0, 0) - m(1, 1) - m(2, 2)).sqrt() * 2.0;
+        let s = (1.0 + m(0, 0) - m(1, 1) - m(2, 2)).max(1e-30).sqrt() * 2.0;
         [
             0.25 * s,
             (m(0, 1) + m(1, 0)) / s,
@@ -201,7 +208,7 @@ pub fn quat_from_cols(c: [V3; 3]) -> [f64; 4] {
             (m(2, 1) - m(1, 2)) / s,
         ]
     } else if m(1, 1) > m(2, 2) {
-        let s = (1.0 + m(1, 1) - m(0, 0) - m(2, 2)).sqrt() * 2.0;
+        let s = (1.0 + m(1, 1) - m(0, 0) - m(2, 2)).max(1e-30).sqrt() * 2.0;
         [
             (m(0, 1) + m(1, 0)) / s,
             0.25 * s,
@@ -209,7 +216,7 @@ pub fn quat_from_cols(c: [V3; 3]) -> [f64; 4] {
             (m(0, 2) - m(2, 0)) / s,
         ]
     } else {
-        let s = (1.0 + m(2, 2) - m(0, 0) - m(1, 1)).sqrt() * 2.0;
+        let s = (1.0 + m(2, 2) - m(0, 0) - m(1, 1)).max(1e-30).sqrt() * 2.0;
         [
             (m(0, 2) + m(2, 0)) / s,
             (m(1, 2) + m(2, 1)) / s,
@@ -218,6 +225,9 @@ pub fn quat_from_cols(c: [V3; 3]) -> [f64; 4] {
         ]
     };
     let n = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt();
+    if !n.is_finite() || n < 1e-12 {
+        return [0.0, 0.0, 0.0, 1.0];
+    }
     let q = [q[0] / n, q[1] / n, q[2] / n, q[3] / n];
     if q[3] < 0.0 {
         [-q[0], -q[1], -q[2], -q[3]]
@@ -275,8 +285,10 @@ pub struct KdTree {
 
 impl KdTree {
     pub fn new(pts: Vec<V3>) -> Self {
-        let mut idx: Vec<usize> = (0..pts.len()).collect();
-        let mut nodes = vec![(0usize, 0u8); pts.len()];
+        let mut idx: Vec<usize> = (0..pts.len())
+            .filter(|&i| pts[i].iter().all(|x| x.is_finite()))
+            .collect();
+        let mut nodes = vec![(0usize, 0u8); idx.len()];
         fn build(pts: &[V3], idx: &mut [usize], out: &mut [(usize, u8)]) {
             if idx.is_empty() {
                 return;
@@ -291,10 +303,12 @@ impl KdTree {
                 }
             }
             let axis = (0..3)
-                .max_by(|&a, &b| (hi[a] - lo[a]).total_cmp(&(hi[b] - lo[b])))
+                .max_by(|&a, &b| (hi[a] - lo[a]).total_cmp(&(hi[b] - lo[b])).then(b.cmp(&a)))
                 .unwrap();
             let mid = idx.len() / 2;
-            idx.select_nth_unstable_by(mid, |&a, &b| pts[a][axis].total_cmp(&pts[b][axis]));
+            idx.select_nth_unstable_by(mid, |&a, &b| {
+                pts[a][axis].total_cmp(&pts[b][axis]).then(a.cmp(&b))
+            });
             out[mid] = (idx[mid], axis as u8);
             let (l, r) = idx.split_at_mut(mid);
             let (ol, or) = out.split_at_mut(mid);
@@ -305,9 +319,9 @@ impl KdTree {
         KdTree { pts, nodes }
     }
 
-    /// k nearest (distance, index), nearest first.
+    /// k nearest (distance, index), nearest first (deterministic index tie-break).
     pub fn knn(&self, q: V3, k: usize) -> Vec<(f64, usize)> {
-        if k == 0 || self.nodes.is_empty() {
+        if k == 0 || self.nodes.is_empty() || !q.iter().all(|x| x.is_finite()) {
             return Vec::new();
         }
         let mut best: Vec<(f64, usize)> = Vec::with_capacity(k.min(self.nodes.len()) + 1);
@@ -323,10 +337,16 @@ impl KdTree {
         let (pi, axis) = self.nodes[mid];
         let p = self.pts[pi];
         let d2 = dist2(p, q);
-        if best.len() < k || d2 < best[best.len() - 1].0 {
-            let pos = best.partition_point(|x| x.0 <= d2);
-            best.insert(pos, (d2, pi));
-            best.truncate(k);
+        if d2.is_finite() {
+            let better_than_last = best
+                .last()
+                .is_none_or(|&(ld2, li)| d2 < ld2 || (d2 == ld2 && pi < li));
+            if best.len() < k || better_than_last {
+                let pos =
+                    best.partition_point(|&(xd2, xi)| xd2.total_cmp(&d2).then(xi.cmp(&pi)).is_lt());
+                best.insert(pos, (d2, pi));
+                best.truncate(k);
+            }
         }
         let diff = q[axis as usize] - p[axis as usize];
         let (near, far) = if diff < 0.0 {
@@ -335,7 +355,7 @@ impl KdTree {
             ((mid + 1, hi), (lo, mid))
         };
         self.search(near.0, near.1, q, k, best);
-        if best.len() < k || diff * diff < best[best.len() - 1].0 {
+        if best.len() < k || diff * diff <= best[best.len() - 1].0 {
             self.search(far.0, far.1, q, k, best);
         }
     }

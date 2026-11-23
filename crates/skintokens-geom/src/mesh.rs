@@ -82,10 +82,14 @@ impl Mesh {
     pub fn vertex_normals(&self, fnorm: &[V3]) -> Vec<V3> {
         let mut acc = vec![[0.0f64; 3]; self.vertices.len()];
         for (f, n) in self.faces.iter().zip(fnorm) {
-            if geom::dot(*n, *n) <= 0.5 {
+            let nn = geom::dot(*n, *n);
+            if !nn.is_finite() || nn <= 0.5 {
                 continue;
             }
             let p = f.map(|i| self.vertices[i as usize]);
+            if !p.iter().flatten().all(|x| x.is_finite()) {
+                continue;
+            }
             for k in 0..3 {
                 let a = geom::sub(p[(k + 1) % 3], p[k]);
                 let b = geom::sub(p[(k + 2) % 3], p[k]);
@@ -104,7 +108,7 @@ impl Mesh {
         acc.into_iter()
             .map(|v| {
                 let l = geom::norm(v);
-                if l > 0.0 {
+                if l.is_finite() && l > 0.0 {
                     geom::scale(v, 1.0 / l)
                 } else {
                     [0.0; 3]
@@ -133,17 +137,46 @@ impl Normalize {
     pub fn fit<'a>(points: impl Iterator<Item = &'a V3>) -> Normalize {
         let mut lo = [f64::INFINITY; 3];
         let mut hi = [f64::NEG_INFINITY; 3];
+        let mut any = false;
         for p in points {
+            if !p.iter().all(|x| x.is_finite()) {
+                continue;
+            }
+            any = true;
             for a in 0..3 {
                 lo[a] = lo[a].min(p[a]);
                 hi[a] = hi[a].max(p[a]);
             }
         }
-        let center = geom::scale(geom::add(lo, hi), 0.5);
+        if !any {
+            lo = [0.0; 3];
+            hi = [0.0; 3];
+        }
+        let mut center = geom::scale(geom::add(lo, hi), 0.5);
+        for c in &mut center {
+            if !c.is_finite() {
+                *c = 0.0;
+            }
+        }
         let ext = geom::sub(hi, lo);
-        let scale = (ext[0].max(ext[1]).max(ext[2]) / 2.0).max(1e-12);
-        let k = (1.0 / scale) as f32;
-        let t = center.map(|c| (k * (-c as f32)) as f64);
+        let max_ext = ext[0].max(ext[1]).max(ext[2]);
+        let scale = if max_ext.is_finite() {
+            (max_ext / 2.0).max(1e-12)
+        } else {
+            1.0
+        };
+        let mut k = (1.0 / scale) as f32;
+        if !k.is_finite() || k == 0.0 {
+            k = 1e-30;
+        }
+        let t = center.map(|c| {
+            let v = (k * (-c as f32)) as f64;
+            if v.is_finite() {
+                v
+            } else {
+                0.0
+            }
+        });
         Normalize {
             center,
             scale,
@@ -159,10 +192,15 @@ impl Normalize {
         ]
     }
     pub fn invert(&self, p: V3) -> V3 {
+        let k = if self.k.is_finite() && self.k != 0.0 {
+            self.k
+        } else {
+            1.0
+        };
         [
-            (p[0] - self.t[0]) / self.k,
-            (p[1] - self.t[1]) / self.k,
-            (p[2] - self.t[2]) / self.k,
+            (p[0] - self.t[0]) / k,
+            (p[1] - self.t[1]) / k,
+            (p[2] - self.t[2]) / k,
         ]
     }
 }
@@ -200,17 +238,33 @@ pub fn sample_with_faces(
     let mut total = 0.0;
     for f in faces {
         let [a, b, c] = f.map(|i| vertices[i as usize]);
-        total += geom::norm(geom::cross(geom::sub(b, a), geom::sub(c, a)));
+        let ok_pts = a.iter().chain(&b).chain(&c).all(|x| x.is_finite());
+        let area = if ok_pts {
+            geom::norm(geom::cross(geom::sub(b, a), geom::sub(c, a)))
+        } else {
+            0.0
+        };
+        if area.is_finite() && area > 0.0 {
+            total += area;
+        }
         cum.push(total);
     }
-    if total <= 0.0 || faces.is_empty() {
-        if vertices.is_empty() {
+    if !total.is_finite() || total <= 0.0 || faces.is_empty() {
+        let finite: Vec<usize> = (0..vertices.len())
+            .filter(|&i| vertices[i].iter().all(|x| x.is_finite()))
+            .collect();
+        if finite.is_empty() {
             return (out, on);
         }
-        // no area: repeat vertices
+        // no area: repeat finite vertices
         while out.len() < NUM_SAMPLES {
-            let i = rng.below(vertices.len());
-            let (v, n) = (vertices[i], vnorm[i]);
+            let i = finite[rng.below(finite.len())];
+            let v = vertices[i];
+            let n = vnorm
+                .get(i)
+                .copied()
+                .filter(|vn| vn.iter().all(|x| x.is_finite()))
+                .unwrap_or([0.0; 3]);
             out.push([
                 v[0] as f32,
                 v[1] as f32,
@@ -632,12 +686,20 @@ impl Welded {
 /// Welded id per vertex and the welded positions: vertices within `eps` of
 /// a kept position share it (a generated mesh is split at every UV seam).
 pub fn weld(vertices: &[V3], eps: f64) -> (Vec<u32>, Vec<V3>) {
+    if !eps.is_finite() || eps <= 0.0 {
+        return ((0..vertices.len() as u32).collect(), vertices.to_vec());
+    }
     let mut grid: std::collections::HashMap<[i64; 3], Vec<u32>> = std::collections::HashMap::new();
     let mut reps: Vec<V3> = vec![];
     let cell = |p: V3| p.map(|x| (x / eps).floor() as i64);
     let ids = vertices
         .iter()
         .map(|&v| {
+            if !v.iter().all(|x| x.is_finite()) {
+                let w = reps.len() as u32;
+                reps.push(v);
+                return w;
+            }
             let c = cell(v);
             for dx in -1..=1 {
                 for dy in -1..=1 {
@@ -799,12 +861,17 @@ pub fn dfs_order(parents: &[i64]) -> Vec<usize> {
     for (i, &p) in parents.iter().enumerate() {
         if p == -1 {
             stack.push(i);
-        } else {
+        } else if p >= 0 && (p as usize) < n && (p as usize) != i {
             sons[p as usize].push(i);
         }
     }
+    let mut seen = vec![false; n];
     let mut order = vec![];
     while let Some(u) = stack.pop() {
+        if seen[u] {
+            continue;
+        }
+        seen[u] = true;
         order.push(u);
         for &s in sons[u].iter().rev() {
             stack.push(s);
@@ -815,16 +882,19 @@ pub fn dfs_order(parents: &[i64]) -> Vec<usize> {
 
 /// Parents after keeping only `kept` joints: nearest kept ancestor.
 pub fn reparent(parents: &[i64], kept: &[usize]) -> Vec<i64> {
+    let n = parents.len();
     let pos: std::collections::HashMap<usize, usize> =
         kept.iter().enumerate().map(|(i, &k)| (k, i)).collect();
     kept.iter()
         .map(|&k| {
-            let mut p = parents[k];
-            while p >= 0 {
+            let mut p = parents.get(k).copied().unwrap_or(-1);
+            let mut steps = 0usize;
+            while p >= 0 && (p as usize) < n && steps < n {
                 if let Some(&i) = pos.get(&(p as usize)) {
                     return i as i64;
                 }
                 p = parents[p as usize];
+                steps += 1;
             }
             -1
         })

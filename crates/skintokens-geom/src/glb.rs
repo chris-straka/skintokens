@@ -37,9 +37,19 @@ impl Glb {
         if b.len() < 12 || u32at(0)? != MAGIC {
             bail!("not a GLB (binary glTF)");
         }
-        let total = (u32at(8)? as usize).min(b.len());
+        let version = u32at(4)?;
+        if version != 2 {
+            bail!("unsupported glTF version {version} (expected 2)");
+        }
+        let total = u32at(8)? as usize;
+        if total < 12 || total > b.len() {
+            bail!(
+                "truncated or corrupt GLB (header length {total}, file {} bytes)",
+                b.len()
+            );
+        }
         let (mut off, mut js, mut bin) = (12usize, None, Vec::new());
-        while off + 8 <= total {
+        while off < total {
             let len = u32at(off)? as usize;
             let typ = u32at(off + 4)?;
             let start = off + 8;
